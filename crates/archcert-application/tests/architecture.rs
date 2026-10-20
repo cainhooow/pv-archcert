@@ -369,6 +369,8 @@ fn runner_and_source_interfaces_contain_no_signing_capability() {
         include_str!("../src/configuration.rs"),
         include_str!("../src/semantic.rs"),
         include_str!("../src/knowledge.rs"),
+        include_str!("../src/ironcrest.rs"),
+        include_str!("../src/ironcrest/workflow.rs"),
         include_str!("../../archcert-domain/src/source.rs"),
         include_str!("../../archcert-domain/src/materialization.rs"),
     ] {

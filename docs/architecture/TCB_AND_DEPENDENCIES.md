@@ -1,5 +1,26 @@
 # Current trusted computing base and dependency review
 
+## Ironcrest work in progress
+
+The optional review path adds application knowledge/semantic/challenge models and
+ports, archcert-knowledge's pinned passive syntax parser, archcert-semantic's local
+exact replay, and the separate PostgreSQL pre-admission journal in migration 0004.
+IroncrestWorkflow composes the existing project-scoped immutable artifact store
+with create-only role metadata and a single non-expiring provider claim. Its
+readback/restore logic and the metadata adapter are operational TCB for review
+evidence. They have no signer or runtime capability. The semantic provider adapter
+has no database/storage adapter dependency or administrative credentials.
+
+The original certificate/controller path does not consume these new components
+yet. Full Ironcrest admission, issuance binding and process recovery are not
+implemented or qualified. See ADRs 0041–0043 and the current architecture snapshot.
+IRONCREST_DEPENDENCY_REVIEW.md documents newly active parser risk; the journal
+reuses existing SQLx/PostgreSQL/serialization dependencies without new packages,
+services or license exceptions. Historical job/attempt/fencing tables and signing
+semantics remain unchanged.
+
+## Existing certification path
+
 Scope: M1–M5 authenticated source acceptance, materialization, isolated engineering execution,
 deterministic policy eligibility and development certificate issuance/verification.
 This inventory separates what must be trusted for current observations from future

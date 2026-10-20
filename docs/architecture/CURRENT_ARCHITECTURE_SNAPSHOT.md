@@ -41,9 +41,22 @@ are vocabulary only. The opt-in CLI integration test executes good and defective
 fixtures through the unchanged rootless runner. Test-source confidentiality during
 target execution is not established. These are engineering tests, not certification.
 
-Durable semantic metadata/controller admission, checkpoint recovery, the separately
-versioned Ironcrest issuance profile and evidence-manifest extension are not yet
-implemented. Existing certification paths do not consume the new semantic gate.
+Migration 0004 and the application IroncrestRepository port now add a separate
+project-scoped pre-admission journal. It checks repository grants and accepted
+target/baseline identities, freezes authority/source pins and eight create-only
+artifact roles, and grants at most one non-expiring provider invocation claim.
+IroncrestWorkflow publishes through the existing immutable artifact store, verifies
+readback, restores accepted/staged responses without another provider call and
+persists the gate only for the exact accepted review. A claimed invocation with
+no recoverable response blocks. Real PostgreSQL and private filesystem regressions
+cover concurrent claims, immutable roles, scope rejection, interrupted response
+publication, reconnect, repeated preparation/gate and no duplicate accepted review.
+Historical job/attempt tables, leases and readiness requirements are unchanged;
+optional journal readiness requires migration 4 explicitly.
+
+Controller execution admission, actual process crash checkpoints, the separately
+versioned Ironcrest issuance profile and evidence-manifest extension remain
+unimplemented. Existing certification paths do not consume the new semantic gate.
 Ironcrest source-to-certificate and semantic-veto-before-signing guarantees therefore
 remain NOT PROVEN. The baseline controller still accepts only its historical policy.
 ADR 0043 defines the required pre-admission review session and recovery boundary:

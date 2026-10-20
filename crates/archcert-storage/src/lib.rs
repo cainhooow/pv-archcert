@@ -1,5 +1,6 @@
 //! PostgreSQL transactional control-plane adapter. No target execution or signing.
 pub mod artifacts;
+mod ironcrest;
 mod runtime;
 use archcert_application::jobs::*;
 use archcert_domain::{

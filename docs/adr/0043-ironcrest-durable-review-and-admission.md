@@ -1,6 +1,8 @@
 # ADR 0043: Review before immutable execution admission
 
-Status: Accepted design; not yet implemented. Date: October 20, 2026.
+Status: Partially implemented: session journal, publication and accepted-review
+restore. Execution admission and issuance integration remain outstanding.
+Date: October 20, 2026.
 Extends ADRs 0035–0037 and 0041–0042.
 
 ## Context
@@ -32,7 +34,7 @@ Preserve the reserved job identity and exact final plan/profile/policy pins at t
 admission boundary; no later mutation or implicit latest selection is allowed.
 
 Use the existing project-scoped ImmutableArtifactStore for bytes. Add separately
-versioned PostgreSQL session metadata and create-only role references for knowledge,
+versioned PostgreSQL session metadata and create-only role references for the authority profile, knowledge,
 impact, request, accepted review/failure, gate, challenge plan and challenge result.
 Each role records schema/producer/digest/size and STAGING/AVAILABLE. Availability
 requires bounded verified readback. Existing historical artifact rows, migrations

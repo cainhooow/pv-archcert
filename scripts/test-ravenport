@@ -2,4 +2,4 @@
 set -eu
 cd "$(dirname "$0")/.."
 : "${ARCHCERT_TEST_DATABASE_URL:?set a development PostgreSQL URL; tests create isolated schemas}"
-cargo test -p archcert-storage --test postgres --locked -- --ignored --nocapture
+cargo test -p archcert-storage --test postgres --test ironcrest --locked -- --ignored --nocapture

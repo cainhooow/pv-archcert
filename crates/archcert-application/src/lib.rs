@@ -8,6 +8,7 @@ pub mod challenges;
 pub mod configuration;
 pub mod execution;
 pub mod ingress;
+pub mod ironcrest;
 pub mod jobs;
 pub mod knowledge;
 pub mod materialization;

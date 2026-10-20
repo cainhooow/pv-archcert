@@ -635,6 +635,10 @@ impl SemanticReviewArtifact {
     pub fn error(&self) -> Option<SemanticReviewError> {
         self.body.error
     }
+    /// Frozen authority review audit time in UTC Unix seconds.
+    pub fn timestamp(&self) -> u64 {
+        self.body.timestamp
+    }
 }
 fn validate_response(
     request: &SemanticReviewRequest,
