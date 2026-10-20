@@ -1,0 +1,478 @@
+{
+  "certificate": "NOT ISSUED",
+  "evaluation": {
+    "blocking_findings": [
+      "bcd52c4807724dd614ffbbf2a8a109499fe325dec6086cc0f096510825d621dc",
+      "cce36cb44b2ededbca153a48dec16bf0b6dc852e8ca1851dbe00e0bdedddfe84",
+      "36551e1d6716ccf5ab52723ab55090ba2bf73509547de3186f5a24f23e5e8a28"
+    ],
+    "eligibility": "NOT_ELIGIBLE",
+    "evaluated_at": 1792462951,
+    "evaluator_version": "archcert-policy-evaluator-v1/0.1.0",
+    "findings": [
+      {
+        "blocking": true,
+        "id": "bcd52c4807724dd614ffbbf2a8a109499fe325dec6086cc0f096510825d621dc",
+        "observations": [],
+        "property": "BUILD_COMPLETES",
+        "reason": "REQUIRED_AUTHORITY_STEP_MISSING",
+        "severity": "P1",
+        "status": "NOT_PROVEN"
+      },
+      {
+        "blocking": true,
+        "id": "cce36cb44b2ededbca153a48dec16bf0b6dc852e8ca1851dbe00e0bdedddfe84",
+        "observations": [],
+        "property": "TEST_SUITE_COMPLETES",
+        "reason": "REQUIRED_AUTHORITY_STEP_MISSING",
+        "severity": "P1",
+        "status": "NOT_PROVEN"
+      },
+      {
+        "blocking": true,
+        "id": "36551e1d6716ccf5ab52723ab55090ba2bf73509547de3186f5a24f23e5e8a28",
+        "observations": [],
+        "property": "TYPECHECK_COMPLETES",
+        "reason": "REQUIRED_AUTHORITY_STEP_MISSING",
+        "severity": "P1",
+        "status": "NOT_PROVEN"
+      }
+    ],
+    "plan_sha256": "394062de021f07b186ff0308d846707184197f1e836b055a0e5a983c177113e9",
+    "policy": {
+      "id": "archcert-development-v1",
+      "sha256": "e128e7a0cfeaf0f11917a35cc655b0e9fe6ea96dcf550bea5d25898ea8f7b9ae",
+      "version": "1.0.0"
+    },
+    "properties": [
+      {
+        "actual_evidence": [],
+        "applicability": "APPLICABLE",
+        "blocking": true,
+        "description": "The authority-selected build command completed with exit zero; no build artifact security claim.",
+        "property": "BUILD_COMPLETES",
+        "reason": "REQUIRED_AUTHORITY_STEP_MISSING",
+        "required_evidence": [
+          {
+            "execution": null,
+            "fact": "ExecutionFinished",
+            "kind": "OBSERVATION",
+            "step": "build"
+          }
+        ],
+        "severity": "P1",
+        "verdict": "NOT_PROVEN"
+      },
+      {
+        "actual_evidence": [
+          {
+            "id": {
+              "execution": "3f9708a6-689c-4aa3-92b7-c2d03ea5047e",
+              "kind": "NetworkDenied",
+              "step": "bottle-version"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "24f6f60b65cb7dee9b5e9c14b257e5f7c7d8ef1ab05f2774d2fd0ef09fba0169"
+          }
+        ],
+        "applicability": "APPLICABLE",
+        "blocking": false,
+        "description": "Denied external network configuration was established before every planned execution.",
+        "property": "NETWORK_ISOLATION_ESTABLISHED",
+        "reason": "EVIDENCE_ESTABLISHED",
+        "required_evidence": [
+          {
+            "execution": "3f9708a6-689c-4aa3-92b7-c2d03ea5047e",
+            "fact": "NetworkDenied",
+            "kind": "OBSERVATION",
+            "step": "bottle-version"
+          }
+        ],
+        "severity": "P0",
+        "verdict": "PROVEN"
+      },
+      {
+        "actual_evidence": [
+          {
+            "id": {
+              "execution": "3f9708a6-689c-4aa3-92b7-c2d03ea5047e",
+              "kind": "EnvironmentEstablished",
+              "step": "bottle-version"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "a5cd163e4d46e442f4e3846bfa5fc5ad0cb75f1d5f790290bedbe3a1f56c4d37"
+          }
+        ],
+        "applicability": "APPLICABLE",
+        "blocking": false,
+        "description": "Authority sandbox configuration was established before every planned execution; toolchain versions remain unobserved.",
+        "property": "SANDBOX_ENVIRONMENT_ESTABLISHED",
+        "reason": "EVIDENCE_ESTABLISHED",
+        "required_evidence": [
+          {
+            "execution": "3f9708a6-689c-4aa3-92b7-c2d03ea5047e",
+            "fact": "EnvironmentEstablished",
+            "kind": "OBSERVATION",
+            "step": "bottle-version"
+          }
+        ],
+        "severity": "P0",
+        "verdict": "PROVEN"
+      },
+      {
+        "actual_evidence": [
+          {
+            "kind": "SOURCE_SNAPSHOT",
+            "sha256": "e3f098f88ca986831b531f2f055c76513ad55360785d81f5f43c34a4d98c92b0"
+          }
+        ],
+        "applicability": "APPLICABLE",
+        "blocking": false,
+        "description": "The immutable accepted snapshot contains no unresolved required LFS or submodule source.",
+        "property": "SOURCE_COMPLETE",
+        "reason": "EVIDENCE_ESTABLISHED",
+        "required_evidence": [
+          {
+            "kind": "SOURCE_SNAPSHOT"
+          }
+        ],
+        "severity": "P0",
+        "verdict": "PROVEN"
+      },
+      {
+        "actual_evidence": [
+          {
+            "id": {
+              "execution": "3f9708a6-689c-4aa3-92b7-c2d03ea5047e",
+              "kind": "SourceIdentityMatched",
+              "step": "bottle-version"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "f6f7bc55f311eb1ab996cde163790d4817e09b3cbe76c48741a58a87c9c488f9"
+          }
+        ],
+        "applicability": "APPLICABLE",
+        "blocking": false,
+        "description": "The isolated source view matched the accepted exact source before each planned execution.",
+        "property": "SOURCE_IDENTITY_VERIFIED",
+        "reason": "EVIDENCE_ESTABLISHED",
+        "required_evidence": [
+          {
+            "execution": "3f9708a6-689c-4aa3-92b7-c2d03ea5047e",
+            "fact": "SourceIdentityMatched",
+            "kind": "OBSERVATION",
+            "step": "bottle-version"
+          }
+        ],
+        "severity": "P0",
+        "verdict": "PROVEN"
+      },
+      {
+        "actual_evidence": [],
+        "applicability": "APPLICABLE",
+        "blocking": true,
+        "description": "The authority-selected test command completed with exit zero; no test coverage or absence-of-defects claim.",
+        "property": "TEST_SUITE_COMPLETES",
+        "reason": "REQUIRED_AUTHORITY_STEP_MISSING",
+        "required_evidence": [
+          {
+            "execution": null,
+            "fact": "ExecutionFinished",
+            "kind": "OBSERVATION",
+            "step": "test"
+          }
+        ],
+        "severity": "P1",
+        "verdict": "NOT_PROVEN"
+      },
+      {
+        "actual_evidence": [],
+        "applicability": "APPLICABLE",
+        "blocking": true,
+        "description": "The authority-selected typecheck command completed with exit zero; no type system soundness claim.",
+        "property": "TYPECHECK_COMPLETES",
+        "reason": "REQUIRED_AUTHORITY_STEP_MISSING",
+        "required_evidence": [
+          {
+            "execution": null,
+            "fact": "ExecutionFinished",
+            "kind": "OBSERVATION",
+            "step": "typecheck"
+          }
+        ],
+        "severity": "P1",
+        "verdict": "NOT_PROVEN"
+      }
+    ],
+    "source": {
+      "commit": "8ec5fe29420d14998c0d86885083983eaea8b839",
+      "snapshot_sha256": "e3f098f88ca986831b531f2f055c76513ad55360785d81f5f43c34a4d98c92b0",
+      "tree": "e0851c0b9e8f8c96e3d3bf2a1eb6bc07d9ed1667"
+    }
+  },
+  "expected_executions": [
+    {
+      "execution": "3f9708a6-689c-4aa3-92b7-c2d03ea5047e",
+      "step": "bottle-version"
+    }
+  ],
+  "kind": "UNSIGNED POLICY EVALUATION",
+  "notice": "NOT A CERTIFICATE",
+  "plan": {
+    "steps": [
+      {
+        "command": {
+          "args": [
+            "/source/bottle.py",
+            "--version"
+          ],
+          "program": "python3",
+          "working_directory": "/source"
+        },
+        "evidence": "EXECUTION",
+        "id": "bottle-version",
+        "origin": "PROJECT_REQUESTED",
+        "profile": {
+          "image": "python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "limits": {
+            "cpu_millis": 1000,
+            "excerpt_bytes": 8192,
+            "memory_bytes": 268435456,
+            "output_bytes": 16777216,
+            "pids": 64,
+            "scratch_bytes": 33554432,
+            "stderr_bytes": 1048576,
+            "stdout_bytes": 1048576,
+            "timeout_ms": 30000
+          },
+          "name": "python",
+          "programs": [
+            "python3"
+          ]
+        }
+      }
+    ]
+  },
+  "source": {
+    "created_at": 1792462941,
+    "entry_count": 220,
+    "identity": {
+      "commit": "8ec5fe29420d14998c0d86885083983eaea8b839",
+      "snapshot_sha256": "e3f098f88ca986831b531f2f055c76513ad55360785d81f5f43c34a4d98c92b0",
+      "tree": "e0851c0b9e8f8c96e3d3bf2a1eb6bc07d9ed1667"
+    },
+    "limits": {
+      "max_blob_bytes": 8388608,
+      "max_files": 10000,
+      "max_object_bytes": 9437184,
+      "max_object_work_bytes": 268435456,
+      "max_objects": 25000,
+      "max_total_bytes": 67108864,
+      "max_tree_depth": 32
+    },
+    "object_count": 254,
+    "schema_version": 1,
+    "status": "COMPLETE",
+    "submission": {
+      "project": "00000000-0000-4000-8000-000000000004",
+      "repository": "bottlepy/bottle",
+      "requested_commit": "8ec5fe29420d14998c0d86885083983eaea8b839"
+    },
+    "total_bytes": 2917290,
+    "unresolved": [],
+    "validation_version": "archcert-loose-v1"
+  },
+  "steps": [
+    {
+      "execution": {
+        "cleanup": "Destroyed",
+        "events": [
+          "ExecutionPrepared",
+          "SandboxCreated",
+          "ExecutionStarted",
+          "ExecutionCompleted",
+          "SandboxDestroyed"
+        ],
+        "evidence": {
+          "backend": "DockerRootlessRunner",
+          "backend_version": "archcert-docker-cli-v1",
+          "base_image_id": "sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "command": {
+            "args": [
+              "/source/bottle.py",
+              "--version"
+            ],
+            "program": "python3",
+            "working_directory": "/source"
+          },
+          "container_user": "10001:10001",
+          "duration_ms": 6350,
+          "ended_at_ms": 1792462951082,
+          "environment_keys": [
+            "HOME",
+            "HOSTNAME",
+            "LANG",
+            "PATH",
+            "TMPDIR"
+          ],
+          "execution": "3f9708a6-689c-4aa3-92b7-c2d03ea5047e",
+          "execution_image_id": "sha256:9e3559326b4c2f7fb3002ffa09be2bf91821bb99f55704bac2895905ad42d833",
+          "exit_code": 0,
+          "image_digest": "python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "limits": {
+            "cpu_millis": 1000,
+            "excerpt_bytes": 8192,
+            "memory_bytes": 268435456,
+            "output_bytes": 16777216,
+            "pids": 64,
+            "scratch_bytes": 33554432,
+            "stderr_bytes": 1048576,
+            "stdout_bytes": 1048576,
+            "timeout_ms": 30000
+          },
+          "network": "Denied",
+          "observed_runtime": {
+            "client_path": "/opt/local/bin/docker",
+            "client_version": "29.8.1",
+            "runtime_information": {
+              "Architecture": "x86_64",
+              "CgroupDriver": "systemd",
+              "CgroupVersion": "2",
+              "KernelVersion": "6.8.0-117-generic",
+              "OperatingSystem": "Ubuntu 24.04.4 LTS",
+              "component/Engine": "29.5.2",
+              "component/containerd": "v2.2.4",
+              "component/docker-init": "0.19.0",
+              "component/rootlesskit": "3.3.0",
+              "component/runc": "1.3.5",
+              "component/slirp4netns": "1.2.1"
+            },
+            "server_version": "29.5.2"
+          },
+          "outcome": "Completed",
+          "producer_version": "0.1.0",
+          "profile": "python",
+          "source": {
+            "commit": "8ec5fe29420d14998c0d86885083983eaea8b839",
+            "snapshot_sha256": "e3f098f88ca986831b531f2f055c76513ad55360785d81f5f43c34a4d98c92b0",
+            "tree": "e0851c0b9e8f8c96e3d3bf2a1eb6bc07d9ed1667"
+          },
+          "started_at_ms": 1792462944732,
+          "stderr": {
+            "complete": true,
+            "excerpt": [],
+            "observed_bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "truncated": false
+          },
+          "stdout": {
+            "complete": true,
+            "excerpt": [
+              48,
+              46,
+              49,
+              52,
+              45,
+              100,
+              101,
+              118,
+              10
+            ],
+            "observed_bytes": 9,
+            "sha256": "df57366e2b2db85f9ddf86ca7ef2eb64a1db9e08950da2d548c06c996de93065",
+            "truncated": false
+          },
+          "termination": "Exit",
+          "toolchain": "NotObserved",
+          "workspace": "453f126a-6daa-4fea-acfb-8c120bff2b43"
+        }
+      },
+      "observations": [
+        {
+          "fact": {
+            "ExecutionFinished": {
+              "category": "EXECUTION",
+              "exit_code": 0,
+              "outcome": "Completed"
+            }
+          },
+          "id": {
+            "execution": "3f9708a6-689c-4aa3-92b7-c2d03ea5047e",
+            "kind": "ExecutionFinished",
+            "step": "bottle-version"
+          },
+          "plan_sha256": "394062de021f07b186ff0308d846707184197f1e836b055a0e5a983c177113e9",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "8ec5fe29420d14998c0d86885083983eaea8b839",
+            "snapshot_sha256": "e3f098f88ca986831b531f2f055c76513ad55360785d81f5f43c34a4d98c92b0",
+            "tree": "e0851c0b9e8f8c96e3d3bf2a1eb6bc07d9ed1667"
+          }
+        },
+        {
+          "fact": "SourceIdentityMatched",
+          "id": {
+            "execution": "3f9708a6-689c-4aa3-92b7-c2d03ea5047e",
+            "kind": "SourceIdentityMatched",
+            "step": "bottle-version"
+          },
+          "plan_sha256": "394062de021f07b186ff0308d846707184197f1e836b055a0e5a983c177113e9",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "8ec5fe29420d14998c0d86885083983eaea8b839",
+            "snapshot_sha256": "e3f098f88ca986831b531f2f055c76513ad55360785d81f5f43c34a4d98c92b0",
+            "tree": "e0851c0b9e8f8c96e3d3bf2a1eb6bc07d9ed1667"
+          }
+        },
+        {
+          "fact": "NetworkDenied",
+          "id": {
+            "execution": "3f9708a6-689c-4aa3-92b7-c2d03ea5047e",
+            "kind": "NetworkDenied",
+            "step": "bottle-version"
+          },
+          "plan_sha256": "394062de021f07b186ff0308d846707184197f1e836b055a0e5a983c177113e9",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "8ec5fe29420d14998c0d86885083983eaea8b839",
+            "snapshot_sha256": "e3f098f88ca986831b531f2f055c76513ad55360785d81f5f43c34a4d98c92b0",
+            "tree": "e0851c0b9e8f8c96e3d3bf2a1eb6bc07d9ed1667"
+          }
+        },
+        {
+          "fact": {
+            "EnvironmentEstablished": {
+              "toolchain": "NotObserved"
+            }
+          },
+          "id": {
+            "execution": "3f9708a6-689c-4aa3-92b7-c2d03ea5047e",
+            "kind": "EnvironmentEstablished",
+            "step": "bottle-version"
+          },
+          "plan_sha256": "394062de021f07b186ff0308d846707184197f1e836b055a0e5a983c177113e9",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "8ec5fe29420d14998c0d86885083983eaea8b839",
+            "snapshot_sha256": "e3f098f88ca986831b531f2f055c76513ad55360785d81f5f43c34a4d98c92b0",
+            "tree": "e0851c0b9e8f8c96e3d3bf2a1eb6bc07d9ed1667"
+          }
+        }
+      ],
+      "origin": "PROJECT_REQUESTED",
+      "source_cleanup": {
+        "status": "DESTROYED",
+        "workspace": "453f126a-6daa-4fea-acfb-8c120bff2b43"
+      },
+      "step": "bottle-version"
+    }
+  ]
+}

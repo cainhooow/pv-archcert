@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+: "${ARCHCERT_TEST_DOCKER:?set the absolute trusted Docker client path}"
+: "${ARCHCERT_TEST_ENDPOINT:?set an explicit rootless Unix endpoint}"
+: "${ARCHCERT_TEST_IMAGE:?set the locally provisioned pinned Python image}"
+exec cargo test -p archcert-runner --test oci --locked -- --ignored --nocapture --test-threads=1

@@ -1,0 +1,19 @@
+[advisories]
+yanked = "deny"
+
+[licenses]
+# Minimal set satisfying the locked dependencies, including AND expressions.
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "Unicode-3.0"]
+
+[licenses.private]
+# Workspace crates already declare publish=false. This does not assign a license
+# to ArchCert or exempt any third-party dependency from license checking.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

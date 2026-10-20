@@ -1,0 +1,1 @@
+{"id":"canonical-vector","producers":["archcert-docker-cli-v1/0.1.0"],"properties":[{"allow_not_applicable":false,"applicability":{"kind":"ALWAYS"},"description":"é Ω 😀 \n \t \u000f \\ \"","id":"SOURCE_COMPLETE","mandatory":true,"rule":{"kind":"SOURCE_COMPLETE"},"severity":"P0"}],"schema":1,"version":"1"}

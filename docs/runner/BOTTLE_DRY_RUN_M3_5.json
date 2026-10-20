@@ -1,0 +1,219 @@
+{
+  "kind": "ENGINEERING_EXECUTION_EVIDENCE",
+  "plan": {
+    "steps": [
+      {
+        "command": {
+          "args": [
+            "/source/bottle.py",
+            "--version"
+          ],
+          "program": "python3",
+          "working_directory": "/source"
+        },
+        "evidence": "EXECUTION",
+        "id": "bottle-version",
+        "origin": "PROJECT_REQUESTED",
+        "profile": {
+          "image": "python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "limits": {
+            "cpu_millis": 1000,
+            "excerpt_bytes": 8192,
+            "memory_bytes": 268435456,
+            "output_bytes": 16777216,
+            "pids": 64,
+            "scratch_bytes": 33554432,
+            "stderr_bytes": 1048576,
+            "stdout_bytes": 1048576,
+            "timeout_ms": 30000
+          },
+          "name": "python",
+          "programs": [
+            "python3"
+          ]
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "execution": {
+        "cleanup": "Destroyed",
+        "events": [
+          "ExecutionPrepared",
+          "SandboxCreated",
+          "ExecutionStarted",
+          "ExecutionCompleted",
+          "SandboxDestroyed"
+        ],
+        "evidence": {
+          "backend": "DockerRootlessRunner",
+          "backend_version": "archcert-docker-cli-v1",
+          "base_image_id": "sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "command": {
+            "args": [
+              "/source/bottle.py",
+              "--version"
+            ],
+            "program": "python3",
+            "working_directory": "/source"
+          },
+          "container_user": "10001:10001",
+          "duration_ms": 4510,
+          "ended_at_ms": 1792461748518,
+          "environment_keys": [
+            "HOME",
+            "HOSTNAME",
+            "LANG",
+            "PATH",
+            "TMPDIR"
+          ],
+          "execution": "db9215b4-7c8f-4132-8dad-429715370d0e",
+          "execution_image_id": "sha256:1c11eeb630300e2e797e0a79cc001c3fcffb443db4edcb69306fd089e20d58a1",
+          "exit_code": 0,
+          "image_digest": "python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "limits": {
+            "cpu_millis": 1000,
+            "excerpt_bytes": 8192,
+            "memory_bytes": 268435456,
+            "output_bytes": 16777216,
+            "pids": 64,
+            "scratch_bytes": 33554432,
+            "stderr_bytes": 1048576,
+            "stdout_bytes": 1048576,
+            "timeout_ms": 30000
+          },
+          "network": "Denied",
+          "observed_runtime": {
+            "client_path": "/opt/local/bin/docker",
+            "client_version": "29.8.1",
+            "runtime_information": {
+              "Architecture": "x86_64",
+              "CgroupDriver": "systemd",
+              "CgroupVersion": "2",
+              "KernelVersion": "6.8.0-117-generic",
+              "OperatingSystem": "Ubuntu 24.04.4 LTS",
+              "component/Engine": "29.5.2",
+              "component/containerd": "v2.2.4",
+              "component/docker-init": "0.19.0",
+              "component/rootlesskit": "3.3.0",
+              "component/runc": "1.3.5",
+              "component/slirp4netns": "1.2.1"
+            },
+            "server_version": "29.5.2"
+          },
+          "outcome": "Completed",
+          "producer_version": "0.1.0",
+          "profile": "python",
+          "source": {
+            "commit": "8ec5fe29420d14998c0d86885083983eaea8b839",
+            "snapshot_sha256": "e3f098f88ca986831b531f2f055c76513ad55360785d81f5f43c34a4d98c92b0",
+            "tree": "e0851c0b9e8f8c96e3d3bf2a1eb6bc07d9ed1667"
+          },
+          "started_at_ms": 1792461744008,
+          "stderr": {
+            "complete": true,
+            "excerpt": [],
+            "observed_bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "truncated": false
+          },
+          "stdout": {
+            "complete": true,
+            "excerpt": [
+              48,
+              46,
+              49,
+              52,
+              45,
+              100,
+              101,
+              118,
+              10
+            ],
+            "observed_bytes": 9,
+            "sha256": "df57366e2b2db85f9ddf86ca7ef2eb64a1db9e08950da2d548c06c996de93065",
+            "truncated": false
+          },
+          "termination": "Exit",
+          "toolchain": "NotObserved",
+          "workspace": "86f4e633-77cc-4908-8562-c2628f8dd015"
+        }
+      },
+      "observations": [
+        {
+          "fact": {
+            "ExecutionFinished": {
+              "category": "EXECUTION",
+              "exit_code": 0,
+              "outcome": "Completed"
+            }
+          },
+          "id": {
+            "execution": "db9215b4-7c8f-4132-8dad-429715370d0e",
+            "kind": "ExecutionFinished",
+            "step": "bottle-version"
+          },
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "source": {
+            "commit": "8ec5fe29420d14998c0d86885083983eaea8b839",
+            "snapshot_sha256": "e3f098f88ca986831b531f2f055c76513ad55360785d81f5f43c34a4d98c92b0",
+            "tree": "e0851c0b9e8f8c96e3d3bf2a1eb6bc07d9ed1667"
+          }
+        },
+        {
+          "fact": "SourceIdentityMatched",
+          "id": {
+            "execution": "db9215b4-7c8f-4132-8dad-429715370d0e",
+            "kind": "SourceIdentityMatched",
+            "step": "bottle-version"
+          },
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "source": {
+            "commit": "8ec5fe29420d14998c0d86885083983eaea8b839",
+            "snapshot_sha256": "e3f098f88ca986831b531f2f055c76513ad55360785d81f5f43c34a4d98c92b0",
+            "tree": "e0851c0b9e8f8c96e3d3bf2a1eb6bc07d9ed1667"
+          }
+        },
+        {
+          "fact": "NetworkDenied",
+          "id": {
+            "execution": "db9215b4-7c8f-4132-8dad-429715370d0e",
+            "kind": "NetworkDenied",
+            "step": "bottle-version"
+          },
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "source": {
+            "commit": "8ec5fe29420d14998c0d86885083983eaea8b839",
+            "snapshot_sha256": "e3f098f88ca986831b531f2f055c76513ad55360785d81f5f43c34a4d98c92b0",
+            "tree": "e0851c0b9e8f8c96e3d3bf2a1eb6bc07d9ed1667"
+          }
+        },
+        {
+          "fact": {
+            "EnvironmentEstablished": {
+              "toolchain": "NotObserved"
+            }
+          },
+          "id": {
+            "execution": "db9215b4-7c8f-4132-8dad-429715370d0e",
+            "kind": "EnvironmentEstablished",
+            "step": "bottle-version"
+          },
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "source": {
+            "commit": "8ec5fe29420d14998c0d86885083983eaea8b839",
+            "snapshot_sha256": "e3f098f88ca986831b531f2f055c76513ad55360785d81f5f43c34a4d98c92b0",
+            "tree": "e0851c0b9e8f8c96e3d3bf2a1eb6bc07d9ed1667"
+          }
+        }
+      ],
+      "origin": "PROJECT_REQUESTED",
+      "source_cleanup": {
+        "status": "DESTROYED",
+        "workspace": "86f4e633-77cc-4908-8562-c2628f8dd015"
+      },
+      "step": "bottle-version"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+# Project request schema. Only schema 1 is supported; unknown fields reject.
+schema = 1
+
+[project]
+# Required diagnostic name, 1..256 UTF-8 bytes, no control characters.
+name = "example-project"
+
+# Optional execution request. Without it, no project steps are requested.
+[execution]
+# Authority catalog ID. Development IDs: python, rust, node (no version assertion).
+# run additionally requires the operator to provision this profile's approved image.
+profile = "rust"
+
+# 1..32 commands; unique names, 1..64 ASCII letters/digits/underscore/hyphen.
+[[execution.commands]]
+name = "typecheck"
+# Literal program, subject to the authority's approved executable set.
+program = "cargo"
+# Required literal argv array; never shell text. At most 256 args / 64 KiB total.
+args = ["check", "--locked", "--offline"]
+# Optional, defaults to /source. /source or /work and supported descendants only.
+working_directory = "/source"
+# Optional category: EXECUTION (default), TYPECHECK, TEST or BUILD; never a verdict.
+evidence = "TYPECHECK"
+
+# Network, images, endpoints, mounts, privileges, resources and environment are
+# authority/operator inputs. They are deliberately absent from this schema.
+# Execution is read-only and offline; some commands need a prepared /work copy.

@@ -1,0 +1,576 @@
+{
+  "certificate": "NOT ISSUED",
+  "evaluation": {
+    "blocking_findings": [
+      "d631a7cf395c28d3c6159b2ae0f637fde8a884fd194110d4ce42aaa3028e8e50",
+      "982230ace93198824412ec7cdfe79c4dbca67a1519e1d278228890d95a00ed0a",
+      "b9411c60b13da19e917871dcb15c7d6e7f80cce6e38e1a50c8b615e48bd696f3",
+      "eee467c7845049c4b31c62d100d638ba8409b14e7aaa821edadd15d2e10a28eb",
+      "fca6939ed440dbc4120dbc8efbb8f820797b1b03e62327c48653d4abd1f8bd90",
+      "58d7c478a3abd61ffed760d72ed94f08f4f26606a9735ebc07981199969658f3"
+    ],
+    "eligibility": "NOT_ELIGIBLE",
+    "evaluated_at": 1792462938,
+    "evaluator_version": "archcert-policy-evaluator-v1/0.1.0",
+    "findings": [
+      {
+        "blocking": true,
+        "id": "d631a7cf395c28d3c6159b2ae0f637fde8a884fd194110d4ce42aaa3028e8e50",
+        "observations": [
+          {
+            "id": {
+              "execution": "7e8cb907-3c12-48fb-bbda-ec0a94f2a917",
+              "kind": "ExecutionFinished",
+              "step": "build"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "069237768f340ba625a1b1b27753e32175358b9d35f1f224ff5abe53d3ba9bf0"
+          }
+        ],
+        "property": "BUILD_COMPLETES",
+        "reason": "INFRASTRUCTURE_FAILURE",
+        "severity": "P1",
+        "status": "INCONCLUSIVE"
+      },
+      {
+        "blocking": true,
+        "id": "982230ace93198824412ec7cdfe79c4dbca67a1519e1d278228890d95a00ed0a",
+        "observations": [],
+        "property": "NETWORK_ISOLATION_ESTABLISHED",
+        "reason": "REQUIRED_EVIDENCE_MISSING",
+        "severity": "P0",
+        "status": "NOT_PROVEN"
+      },
+      {
+        "blocking": true,
+        "id": "b9411c60b13da19e917871dcb15c7d6e7f80cce6e38e1a50c8b615e48bd696f3",
+        "observations": [],
+        "property": "SANDBOX_ENVIRONMENT_ESTABLISHED",
+        "reason": "REQUIRED_EVIDENCE_MISSING",
+        "severity": "P0",
+        "status": "NOT_PROVEN"
+      },
+      {
+        "blocking": true,
+        "id": "eee467c7845049c4b31c62d100d638ba8409b14e7aaa821edadd15d2e10a28eb",
+        "observations": [],
+        "property": "SOURCE_IDENTITY_VERIFIED",
+        "reason": "REQUIRED_EVIDENCE_MISSING",
+        "severity": "P0",
+        "status": "NOT_PROVEN"
+      },
+      {
+        "blocking": true,
+        "id": "fca6939ed440dbc4120dbc8efbb8f820797b1b03e62327c48653d4abd1f8bd90",
+        "observations": [
+          {
+            "id": {
+              "execution": "9a046a7e-e67f-4877-80d2-734af0f07f49",
+              "kind": "ExecutionFinished",
+              "step": "test"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "cc53573bb17673f2f85a6dda32d93b29737ee2b8c1f3e737452e415ef0ebbb55"
+          }
+        ],
+        "property": "TEST_SUITE_COMPLETES",
+        "reason": "INFRASTRUCTURE_FAILURE",
+        "severity": "P1",
+        "status": "INCONCLUSIVE"
+      },
+      {
+        "blocking": true,
+        "id": "58d7c478a3abd61ffed760d72ed94f08f4f26606a9735ebc07981199969658f3",
+        "observations": [
+          {
+            "id": {
+              "execution": "cb62ebdb-2f27-4ce4-a732-10ec1df4de60",
+              "kind": "ExecutionFinished",
+              "step": "typecheck"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "5b1b3640be0c423ed2dc408956a80ee4877bb1d6b3672e3d7718aa90af0016f6"
+          }
+        ],
+        "property": "TYPECHECK_COMPLETES",
+        "reason": "INFRASTRUCTURE_FAILURE",
+        "severity": "P1",
+        "status": "INCONCLUSIVE"
+      }
+    ],
+    "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+    "policy": {
+      "id": "archcert-development-v1",
+      "sha256": "e128e7a0cfeaf0f11917a35cc655b0e9fe6ea96dcf550bea5d25898ea8f7b9ae",
+      "version": "1.0.0"
+    },
+    "properties": [
+      {
+        "actual_evidence": [
+          {
+            "id": {
+              "execution": "7e8cb907-3c12-48fb-bbda-ec0a94f2a917",
+              "kind": "ExecutionFinished",
+              "step": "build"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "069237768f340ba625a1b1b27753e32175358b9d35f1f224ff5abe53d3ba9bf0"
+          }
+        ],
+        "applicability": "APPLICABLE",
+        "blocking": true,
+        "description": "The authority-selected build command completed with exit zero; no build artifact security claim.",
+        "property": "BUILD_COMPLETES",
+        "reason": "INFRASTRUCTURE_FAILURE",
+        "required_evidence": [
+          {
+            "execution": "7e8cb907-3c12-48fb-bbda-ec0a94f2a917",
+            "fact": "ExecutionFinished",
+            "kind": "OBSERVATION",
+            "step": "build"
+          }
+        ],
+        "severity": "P1",
+        "verdict": "INCONCLUSIVE"
+      },
+      {
+        "actual_evidence": [],
+        "applicability": "APPLICABLE",
+        "blocking": true,
+        "description": "Denied external network configuration was established before every planned execution.",
+        "property": "NETWORK_ISOLATION_ESTABLISHED",
+        "reason": "REQUIRED_EVIDENCE_MISSING",
+        "required_evidence": [
+          {
+            "execution": "7e8cb907-3c12-48fb-bbda-ec0a94f2a917",
+            "fact": "NetworkDenied",
+            "kind": "OBSERVATION",
+            "step": "build"
+          },
+          {
+            "execution": "9a046a7e-e67f-4877-80d2-734af0f07f49",
+            "fact": "NetworkDenied",
+            "kind": "OBSERVATION",
+            "step": "test"
+          },
+          {
+            "execution": "cb62ebdb-2f27-4ce4-a732-10ec1df4de60",
+            "fact": "NetworkDenied",
+            "kind": "OBSERVATION",
+            "step": "typecheck"
+          }
+        ],
+        "severity": "P0",
+        "verdict": "NOT_PROVEN"
+      },
+      {
+        "actual_evidence": [],
+        "applicability": "APPLICABLE",
+        "blocking": true,
+        "description": "Authority sandbox configuration was established before every planned execution; toolchain versions remain unobserved.",
+        "property": "SANDBOX_ENVIRONMENT_ESTABLISHED",
+        "reason": "REQUIRED_EVIDENCE_MISSING",
+        "required_evidence": [
+          {
+            "execution": "7e8cb907-3c12-48fb-bbda-ec0a94f2a917",
+            "fact": "EnvironmentEstablished",
+            "kind": "OBSERVATION",
+            "step": "build"
+          },
+          {
+            "execution": "9a046a7e-e67f-4877-80d2-734af0f07f49",
+            "fact": "EnvironmentEstablished",
+            "kind": "OBSERVATION",
+            "step": "test"
+          },
+          {
+            "execution": "cb62ebdb-2f27-4ce4-a732-10ec1df4de60",
+            "fact": "EnvironmentEstablished",
+            "kind": "OBSERVATION",
+            "step": "typecheck"
+          }
+        ],
+        "severity": "P0",
+        "verdict": "NOT_PROVEN"
+      },
+      {
+        "actual_evidence": [
+          {
+            "kind": "SOURCE_SNAPSHOT",
+            "sha256": "5241a6ce473582f26aa1c6ffab22f9082ecedc26cf11d09a6e641ad79cc5d8af"
+          }
+        ],
+        "applicability": "APPLICABLE",
+        "blocking": false,
+        "description": "The immutable accepted snapshot contains no unresolved required LFS or submodule source.",
+        "property": "SOURCE_COMPLETE",
+        "reason": "EVIDENCE_ESTABLISHED",
+        "required_evidence": [
+          {
+            "kind": "SOURCE_SNAPSHOT"
+          }
+        ],
+        "severity": "P0",
+        "verdict": "PROVEN"
+      },
+      {
+        "actual_evidence": [],
+        "applicability": "APPLICABLE",
+        "blocking": true,
+        "description": "The isolated source view matched the accepted exact source before each planned execution.",
+        "property": "SOURCE_IDENTITY_VERIFIED",
+        "reason": "REQUIRED_EVIDENCE_MISSING",
+        "required_evidence": [
+          {
+            "execution": "7e8cb907-3c12-48fb-bbda-ec0a94f2a917",
+            "fact": "SourceIdentityMatched",
+            "kind": "OBSERVATION",
+            "step": "build"
+          },
+          {
+            "execution": "9a046a7e-e67f-4877-80d2-734af0f07f49",
+            "fact": "SourceIdentityMatched",
+            "kind": "OBSERVATION",
+            "step": "test"
+          },
+          {
+            "execution": "cb62ebdb-2f27-4ce4-a732-10ec1df4de60",
+            "fact": "SourceIdentityMatched",
+            "kind": "OBSERVATION",
+            "step": "typecheck"
+          }
+        ],
+        "severity": "P0",
+        "verdict": "NOT_PROVEN"
+      },
+      {
+        "actual_evidence": [
+          {
+            "id": {
+              "execution": "9a046a7e-e67f-4877-80d2-734af0f07f49",
+              "kind": "ExecutionFinished",
+              "step": "test"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "cc53573bb17673f2f85a6dda32d93b29737ee2b8c1f3e737452e415ef0ebbb55"
+          }
+        ],
+        "applicability": "APPLICABLE",
+        "blocking": true,
+        "description": "The authority-selected test command completed with exit zero; no test coverage or absence-of-defects claim.",
+        "property": "TEST_SUITE_COMPLETES",
+        "reason": "INFRASTRUCTURE_FAILURE",
+        "required_evidence": [
+          {
+            "execution": "9a046a7e-e67f-4877-80d2-734af0f07f49",
+            "fact": "ExecutionFinished",
+            "kind": "OBSERVATION",
+            "step": "test"
+          }
+        ],
+        "severity": "P1",
+        "verdict": "INCONCLUSIVE"
+      },
+      {
+        "actual_evidence": [
+          {
+            "id": {
+              "execution": "cb62ebdb-2f27-4ce4-a732-10ec1df4de60",
+              "kind": "ExecutionFinished",
+              "step": "typecheck"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "5b1b3640be0c423ed2dc408956a80ee4877bb1d6b3672e3d7718aa90af0016f6"
+          }
+        ],
+        "applicability": "APPLICABLE",
+        "blocking": true,
+        "description": "The authority-selected typecheck command completed with exit zero; no type system soundness claim.",
+        "property": "TYPECHECK_COMPLETES",
+        "reason": "INFRASTRUCTURE_FAILURE",
+        "required_evidence": [
+          {
+            "execution": "cb62ebdb-2f27-4ce4-a732-10ec1df4de60",
+            "fact": "ExecutionFinished",
+            "kind": "OBSERVATION",
+            "step": "typecheck"
+          }
+        ],
+        "severity": "P1",
+        "verdict": "INCONCLUSIVE"
+      }
+    ],
+    "source": {
+      "commit": "67085b42fe02ff0832641629a31634338214be00",
+      "snapshot_sha256": "5241a6ce473582f26aa1c6ffab22f9082ecedc26cf11d09a6e641ad79cc5d8af",
+      "tree": "c6365ec31116a8e66e83f91b058c472fe0064df7"
+    }
+  },
+  "expected_executions": [
+    {
+      "execution": "cb62ebdb-2f27-4ce4-a732-10ec1df4de60",
+      "step": "typecheck"
+    },
+    {
+      "execution": "9a046a7e-e67f-4877-80d2-734af0f07f49",
+      "step": "test"
+    },
+    {
+      "execution": "7e8cb907-3c12-48fb-bbda-ec0a94f2a917",
+      "step": "build"
+    }
+  ],
+  "kind": "UNSIGNED POLICY EVALUATION",
+  "notice": "NOT A CERTIFICATE",
+  "plan": {
+    "steps": [
+      {
+        "command": {
+          "args": [
+            "/source/checks.py",
+            "typecheck"
+          ],
+          "program": "python3",
+          "working_directory": "/source"
+        },
+        "evidence": "TYPECHECK",
+        "id": "typecheck",
+        "origin": "AUTHORITY_REQUIRED",
+        "profile": {
+          "image": "python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "limits": {
+            "cpu_millis": 1000,
+            "excerpt_bytes": 8192,
+            "memory_bytes": 268435456,
+            "output_bytes": 16777216,
+            "pids": 64,
+            "scratch_bytes": 33554432,
+            "stderr_bytes": 1048576,
+            "stdout_bytes": 1048576,
+            "timeout_ms": 30000
+          },
+          "name": "python",
+          "programs": [
+            "python3"
+          ]
+        }
+      },
+      {
+        "command": {
+          "args": [
+            "/source/checks.py",
+            "test"
+          ],
+          "program": "python3",
+          "working_directory": "/source"
+        },
+        "evidence": "TEST",
+        "id": "test",
+        "origin": "AUTHORITY_REQUIRED",
+        "profile": {
+          "image": "python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "limits": {
+            "cpu_millis": 1000,
+            "excerpt_bytes": 8192,
+            "memory_bytes": 268435456,
+            "output_bytes": 16777216,
+            "pids": 64,
+            "scratch_bytes": 33554432,
+            "stderr_bytes": 1048576,
+            "stdout_bytes": 1048576,
+            "timeout_ms": 30000
+          },
+          "name": "python",
+          "programs": [
+            "python3"
+          ]
+        }
+      },
+      {
+        "command": {
+          "args": [
+            "/source/checks.py",
+            "build"
+          ],
+          "program": "python3",
+          "working_directory": "/source"
+        },
+        "evidence": "BUILD",
+        "id": "build",
+        "origin": "AUTHORITY_REQUIRED",
+        "profile": {
+          "image": "python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "limits": {
+            "cpu_millis": 1000,
+            "excerpt_bytes": 8192,
+            "memory_bytes": 268435456,
+            "output_bytes": 16777216,
+            "pids": 64,
+            "scratch_bytes": 33554432,
+            "stderr_bytes": 1048576,
+            "stdout_bytes": 1048576,
+            "timeout_ms": 30000
+          },
+          "name": "python",
+          "programs": [
+            "python3"
+          ]
+        }
+      }
+    ]
+  },
+  "source": {
+    "created_at": 1792462938,
+    "entry_count": 1,
+    "identity": {
+      "commit": "67085b42fe02ff0832641629a31634338214be00",
+      "snapshot_sha256": "5241a6ce473582f26aa1c6ffab22f9082ecedc26cf11d09a6e641ad79cc5d8af",
+      "tree": "c6365ec31116a8e66e83f91b058c472fe0064df7"
+    },
+    "limits": {
+      "max_blob_bytes": 8388608,
+      "max_files": 10000,
+      "max_object_bytes": 9437184,
+      "max_object_work_bytes": 268435456,
+      "max_objects": 25000,
+      "max_total_bytes": 67108864,
+      "max_tree_depth": 32
+    },
+    "object_count": 3,
+    "schema_version": 1,
+    "status": "COMPLETE",
+    "submission": {
+      "project": "00000000-0000-4000-8000-000000000004",
+      "repository": "archcert/controlled-policy",
+      "requested_commit": "67085b42fe02ff0832641629a31634338214be00"
+    },
+    "total_bytes": 1000,
+    "unresolved": [],
+    "validation_version": "archcert-loose-v1"
+  },
+  "steps": [
+    {
+      "execution": {
+        "cleanup": "NotCreated",
+        "error": "RuntimeFailure",
+        "events": [
+          "ExecutionPrepared"
+        ],
+        "evidence": null
+      },
+      "observations": [
+        {
+          "fact": {
+            "ExecutionFinished": {
+              "category": "TYPECHECK",
+              "exit_code": null,
+              "outcome": "SandboxFailure"
+            }
+          },
+          "id": {
+            "execution": "cb62ebdb-2f27-4ce4-a732-10ec1df4de60",
+            "kind": "ExecutionFinished",
+            "step": "typecheck"
+          },
+          "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+          "producer": "archcert-controller-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "67085b42fe02ff0832641629a31634338214be00",
+            "snapshot_sha256": "5241a6ce473582f26aa1c6ffab22f9082ecedc26cf11d09a6e641ad79cc5d8af",
+            "tree": "c6365ec31116a8e66e83f91b058c472fe0064df7"
+          }
+        }
+      ],
+      "origin": "AUTHORITY_REQUIRED",
+      "source_cleanup": {
+        "status": "DESTROYED",
+        "workspace": "cf5ce23d-2a6a-469b-8d2b-2bfb70e25b82"
+      },
+      "step": "typecheck"
+    },
+    {
+      "execution": {
+        "cleanup": "NotCreated",
+        "error": "RuntimeFailure",
+        "events": [
+          "ExecutionPrepared"
+        ],
+        "evidence": null
+      },
+      "observations": [
+        {
+          "fact": {
+            "ExecutionFinished": {
+              "category": "TEST",
+              "exit_code": null,
+              "outcome": "SandboxFailure"
+            }
+          },
+          "id": {
+            "execution": "9a046a7e-e67f-4877-80d2-734af0f07f49",
+            "kind": "ExecutionFinished",
+            "step": "test"
+          },
+          "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+          "producer": "archcert-controller-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "67085b42fe02ff0832641629a31634338214be00",
+            "snapshot_sha256": "5241a6ce473582f26aa1c6ffab22f9082ecedc26cf11d09a6e641ad79cc5d8af",
+            "tree": "c6365ec31116a8e66e83f91b058c472fe0064df7"
+          }
+        }
+      ],
+      "origin": "AUTHORITY_REQUIRED",
+      "source_cleanup": {
+        "status": "DESTROYED",
+        "workspace": "aa70109d-1e95-42f9-84ec-7ca9f174619f"
+      },
+      "step": "test"
+    },
+    {
+      "execution": {
+        "cleanup": "NotCreated",
+        "error": "RuntimeFailure",
+        "events": [
+          "ExecutionPrepared"
+        ],
+        "evidence": null
+      },
+      "observations": [
+        {
+          "fact": {
+            "ExecutionFinished": {
+              "category": "BUILD",
+              "exit_code": null,
+              "outcome": "SandboxFailure"
+            }
+          },
+          "id": {
+            "execution": "7e8cb907-3c12-48fb-bbda-ec0a94f2a917",
+            "kind": "ExecutionFinished",
+            "step": "build"
+          },
+          "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+          "producer": "archcert-controller-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "67085b42fe02ff0832641629a31634338214be00",
+            "snapshot_sha256": "5241a6ce473582f26aa1c6ffab22f9082ecedc26cf11d09a6e641ad79cc5d8af",
+            "tree": "c6365ec31116a8e66e83f91b058c472fe0064df7"
+          }
+        }
+      ],
+      "origin": "AUTHORITY_REQUIRED",
+      "source_cleanup": {
+        "status": "DESTROYED",
+        "workspace": "4e643b1d-9eb7-42e2-a676-0ea990bb797d"
+      },
+      "step": "build"
+    }
+  ]
+}

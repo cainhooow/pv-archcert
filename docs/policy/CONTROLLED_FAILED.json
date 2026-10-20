@@ -1,0 +1,1501 @@
+{
+  "certificate": "NOT ISSUED",
+  "evaluation": {
+    "blocking_findings": [
+      "f6a73b6b47f2148574fef7c14f81f843e6ae071574f4aee24a6388779fa0e141"
+    ],
+    "eligibility": "NOT_ELIGIBLE",
+    "evaluated_at": 1792462938,
+    "evaluator_version": "archcert-policy-evaluator-v1/0.1.0",
+    "findings": [
+      {
+        "blocking": true,
+        "id": "f6a73b6b47f2148574fef7c14f81f843e6ae071574f4aee24a6388779fa0e141",
+        "observations": [
+          {
+            "id": {
+              "execution": "d38f7437-d4a4-4b02-9f75-336fc03bff7b",
+              "kind": "ExecutionFinished",
+              "step": "test"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "fcd081f7b897c22097d4c87c0ea31a1d608a42177695ddcc71c65ce23b1e4f25"
+          }
+        ],
+        "property": "TEST_SUITE_COMPLETES",
+        "reason": "TARGET_EXIT_NONZERO",
+        "severity": "P1",
+        "status": "FAILED"
+      }
+    ],
+    "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+    "policy": {
+      "id": "archcert-development-v1",
+      "sha256": "e128e7a0cfeaf0f11917a35cc655b0e9fe6ea96dcf550bea5d25898ea8f7b9ae",
+      "version": "1.0.0"
+    },
+    "properties": [
+      {
+        "actual_evidence": [
+          {
+            "id": {
+              "execution": "20450fc4-c207-4c83-9680-6ddf17c5f453",
+              "kind": "ExecutionFinished",
+              "step": "build"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "d7474101b5725c2e1abc57737a747273aaac7ab343e3f1f1820b908853a37170"
+          }
+        ],
+        "applicability": "APPLICABLE",
+        "blocking": false,
+        "description": "The authority-selected build command completed with exit zero; no build artifact security claim.",
+        "property": "BUILD_COMPLETES",
+        "reason": "EVIDENCE_ESTABLISHED",
+        "required_evidence": [
+          {
+            "execution": "20450fc4-c207-4c83-9680-6ddf17c5f453",
+            "fact": "ExecutionFinished",
+            "kind": "OBSERVATION",
+            "step": "build"
+          }
+        ],
+        "severity": "P1",
+        "verdict": "PROVEN"
+      },
+      {
+        "actual_evidence": [
+          {
+            "id": {
+              "execution": "20450fc4-c207-4c83-9680-6ddf17c5f453",
+              "kind": "NetworkDenied",
+              "step": "build"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "00ae0aa47a6357cd0e69c3e9acf9af9a2d53d5ea4e8930e03556ba14468678f6"
+          },
+          {
+            "id": {
+              "execution": "7870acc4-4e94-4609-b937-4fe357ce86ee",
+              "kind": "NetworkDenied",
+              "step": "typecheck"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "59dad8f0b29d7c6f8d8f6d718629301a3c30acd43bf5b62424df87a3dd72d30b"
+          },
+          {
+            "id": {
+              "execution": "d38f7437-d4a4-4b02-9f75-336fc03bff7b",
+              "kind": "NetworkDenied",
+              "step": "test"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "6bfbdd0d2d05b3009ed436ea3af320c87446bca1cb39a35e8b2f2e522873e47c"
+          }
+        ],
+        "applicability": "APPLICABLE",
+        "blocking": false,
+        "description": "Denied external network configuration was established before every planned execution.",
+        "property": "NETWORK_ISOLATION_ESTABLISHED",
+        "reason": "EVIDENCE_ESTABLISHED",
+        "required_evidence": [
+          {
+            "execution": "20450fc4-c207-4c83-9680-6ddf17c5f453",
+            "fact": "NetworkDenied",
+            "kind": "OBSERVATION",
+            "step": "build"
+          },
+          {
+            "execution": "d38f7437-d4a4-4b02-9f75-336fc03bff7b",
+            "fact": "NetworkDenied",
+            "kind": "OBSERVATION",
+            "step": "test"
+          },
+          {
+            "execution": "7870acc4-4e94-4609-b937-4fe357ce86ee",
+            "fact": "NetworkDenied",
+            "kind": "OBSERVATION",
+            "step": "typecheck"
+          }
+        ],
+        "severity": "P0",
+        "verdict": "PROVEN"
+      },
+      {
+        "actual_evidence": [
+          {
+            "id": {
+              "execution": "d38f7437-d4a4-4b02-9f75-336fc03bff7b",
+              "kind": "EnvironmentEstablished",
+              "step": "test"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "2d9335fc296fa4554142ffa499ccc6b52e59f98c05394d401f1318571b7bfa44"
+          },
+          {
+            "id": {
+              "execution": "20450fc4-c207-4c83-9680-6ddf17c5f453",
+              "kind": "EnvironmentEstablished",
+              "step": "build"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "622718978ff5cf41acedfed9e8316d826e2fcf02e3fe7a7cf723c6ccba737441"
+          },
+          {
+            "id": {
+              "execution": "7870acc4-4e94-4609-b937-4fe357ce86ee",
+              "kind": "EnvironmentEstablished",
+              "step": "typecheck"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "74a11a6e0a62322c801eb1e6050f15302bd2a66dc017fe28e4698a5fd44c7903"
+          }
+        ],
+        "applicability": "APPLICABLE",
+        "blocking": false,
+        "description": "Authority sandbox configuration was established before every planned execution; toolchain versions remain unobserved.",
+        "property": "SANDBOX_ENVIRONMENT_ESTABLISHED",
+        "reason": "EVIDENCE_ESTABLISHED",
+        "required_evidence": [
+          {
+            "execution": "20450fc4-c207-4c83-9680-6ddf17c5f453",
+            "fact": "EnvironmentEstablished",
+            "kind": "OBSERVATION",
+            "step": "build"
+          },
+          {
+            "execution": "d38f7437-d4a4-4b02-9f75-336fc03bff7b",
+            "fact": "EnvironmentEstablished",
+            "kind": "OBSERVATION",
+            "step": "test"
+          },
+          {
+            "execution": "7870acc4-4e94-4609-b937-4fe357ce86ee",
+            "fact": "EnvironmentEstablished",
+            "kind": "OBSERVATION",
+            "step": "typecheck"
+          }
+        ],
+        "severity": "P0",
+        "verdict": "PROVEN"
+      },
+      {
+        "actual_evidence": [
+          {
+            "kind": "SOURCE_SNAPSHOT",
+            "sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5"
+          }
+        ],
+        "applicability": "APPLICABLE",
+        "blocking": false,
+        "description": "The immutable accepted snapshot contains no unresolved required LFS or submodule source.",
+        "property": "SOURCE_COMPLETE",
+        "reason": "EVIDENCE_ESTABLISHED",
+        "required_evidence": [
+          {
+            "kind": "SOURCE_SNAPSHOT"
+          }
+        ],
+        "severity": "P0",
+        "verdict": "PROVEN"
+      },
+      {
+        "actual_evidence": [
+          {
+            "id": {
+              "execution": "20450fc4-c207-4c83-9680-6ddf17c5f453",
+              "kind": "SourceIdentityMatched",
+              "step": "build"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "0735b914e30b7d40ae42b7bc4e6dd066181465d6771b571bbc92c458a3c0007e"
+          },
+          {
+            "id": {
+              "execution": "d38f7437-d4a4-4b02-9f75-336fc03bff7b",
+              "kind": "SourceIdentityMatched",
+              "step": "test"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "2d61fc88929236098388dc47964f39009b7072450a4d0028fcb50e220c01accd"
+          },
+          {
+            "id": {
+              "execution": "7870acc4-4e94-4609-b937-4fe357ce86ee",
+              "kind": "SourceIdentityMatched",
+              "step": "typecheck"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "f206e3985a756febda934732da2283f3d73e6075c1963bfbaa64cb83a9da03a1"
+          }
+        ],
+        "applicability": "APPLICABLE",
+        "blocking": false,
+        "description": "The isolated source view matched the accepted exact source before each planned execution.",
+        "property": "SOURCE_IDENTITY_VERIFIED",
+        "reason": "EVIDENCE_ESTABLISHED",
+        "required_evidence": [
+          {
+            "execution": "20450fc4-c207-4c83-9680-6ddf17c5f453",
+            "fact": "SourceIdentityMatched",
+            "kind": "OBSERVATION",
+            "step": "build"
+          },
+          {
+            "execution": "d38f7437-d4a4-4b02-9f75-336fc03bff7b",
+            "fact": "SourceIdentityMatched",
+            "kind": "OBSERVATION",
+            "step": "test"
+          },
+          {
+            "execution": "7870acc4-4e94-4609-b937-4fe357ce86ee",
+            "fact": "SourceIdentityMatched",
+            "kind": "OBSERVATION",
+            "step": "typecheck"
+          }
+        ],
+        "severity": "P0",
+        "verdict": "PROVEN"
+      },
+      {
+        "actual_evidence": [
+          {
+            "id": {
+              "execution": "d38f7437-d4a4-4b02-9f75-336fc03bff7b",
+              "kind": "ExecutionFinished",
+              "step": "test"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "fcd081f7b897c22097d4c87c0ea31a1d608a42177695ddcc71c65ce23b1e4f25"
+          }
+        ],
+        "applicability": "APPLICABLE",
+        "blocking": true,
+        "description": "The authority-selected test command completed with exit zero; no test coverage or absence-of-defects claim.",
+        "property": "TEST_SUITE_COMPLETES",
+        "reason": "TARGET_EXIT_NONZERO",
+        "required_evidence": [
+          {
+            "execution": "d38f7437-d4a4-4b02-9f75-336fc03bff7b",
+            "fact": "ExecutionFinished",
+            "kind": "OBSERVATION",
+            "step": "test"
+          }
+        ],
+        "severity": "P1",
+        "verdict": "FAILED"
+      },
+      {
+        "actual_evidence": [
+          {
+            "id": {
+              "execution": "7870acc4-4e94-4609-b937-4fe357ce86ee",
+              "kind": "ExecutionFinished",
+              "step": "typecheck"
+            },
+            "kind": "OBSERVATION",
+            "sha256": "a11df5d425f7ff8decc8d0c7765a24f5bbb1111372e6803b4ff466fa16288fee"
+          }
+        ],
+        "applicability": "APPLICABLE",
+        "blocking": false,
+        "description": "The authority-selected typecheck command completed with exit zero; no type system soundness claim.",
+        "property": "TYPECHECK_COMPLETES",
+        "reason": "EVIDENCE_ESTABLISHED",
+        "required_evidence": [
+          {
+            "execution": "7870acc4-4e94-4609-b937-4fe357ce86ee",
+            "fact": "ExecutionFinished",
+            "kind": "OBSERVATION",
+            "step": "typecheck"
+          }
+        ],
+        "severity": "P1",
+        "verdict": "PROVEN"
+      }
+    ],
+    "source": {
+      "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+      "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+      "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+    }
+  },
+  "expected_executions": [
+    {
+      "execution": "7870acc4-4e94-4609-b937-4fe357ce86ee",
+      "step": "typecheck"
+    },
+    {
+      "execution": "d38f7437-d4a4-4b02-9f75-336fc03bff7b",
+      "step": "test"
+    },
+    {
+      "execution": "20450fc4-c207-4c83-9680-6ddf17c5f453",
+      "step": "build"
+    }
+  ],
+  "kind": "UNSIGNED POLICY EVALUATION",
+  "notice": "NOT A CERTIFICATE",
+  "plan": {
+    "steps": [
+      {
+        "command": {
+          "args": [
+            "/source/checks.py",
+            "typecheck"
+          ],
+          "program": "python3",
+          "working_directory": "/source"
+        },
+        "evidence": "TYPECHECK",
+        "id": "typecheck",
+        "origin": "AUTHORITY_REQUIRED",
+        "profile": {
+          "image": "python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "limits": {
+            "cpu_millis": 1000,
+            "excerpt_bytes": 8192,
+            "memory_bytes": 268435456,
+            "output_bytes": 16777216,
+            "pids": 64,
+            "scratch_bytes": 33554432,
+            "stderr_bytes": 1048576,
+            "stdout_bytes": 1048576,
+            "timeout_ms": 30000
+          },
+          "name": "python",
+          "programs": [
+            "python3"
+          ]
+        }
+      },
+      {
+        "command": {
+          "args": [
+            "/source/checks.py",
+            "test"
+          ],
+          "program": "python3",
+          "working_directory": "/source"
+        },
+        "evidence": "TEST",
+        "id": "test",
+        "origin": "AUTHORITY_REQUIRED",
+        "profile": {
+          "image": "python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "limits": {
+            "cpu_millis": 1000,
+            "excerpt_bytes": 8192,
+            "memory_bytes": 268435456,
+            "output_bytes": 16777216,
+            "pids": 64,
+            "scratch_bytes": 33554432,
+            "stderr_bytes": 1048576,
+            "stdout_bytes": 1048576,
+            "timeout_ms": 30000
+          },
+          "name": "python",
+          "programs": [
+            "python3"
+          ]
+        }
+      },
+      {
+        "command": {
+          "args": [
+            "/source/checks.py",
+            "build"
+          ],
+          "program": "python3",
+          "working_directory": "/source"
+        },
+        "evidence": "BUILD",
+        "id": "build",
+        "origin": "AUTHORITY_REQUIRED",
+        "profile": {
+          "image": "python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "limits": {
+            "cpu_millis": 1000,
+            "excerpt_bytes": 8192,
+            "memory_bytes": 268435456,
+            "output_bytes": 16777216,
+            "pids": 64,
+            "scratch_bytes": 33554432,
+            "stderr_bytes": 1048576,
+            "stdout_bytes": 1048576,
+            "timeout_ms": 30000
+          },
+          "name": "python",
+          "programs": [
+            "python3"
+          ]
+        }
+      }
+    ]
+  },
+  "source": {
+    "created_at": 1792462928,
+    "entry_count": 1,
+    "identity": {
+      "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+      "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+      "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+    },
+    "limits": {
+      "max_blob_bytes": 8388608,
+      "max_files": 10000,
+      "max_object_bytes": 9437184,
+      "max_object_work_bytes": 268435456,
+      "max_objects": 25000,
+      "max_total_bytes": 67108864,
+      "max_tree_depth": 32
+    },
+    "object_count": 3,
+    "schema_version": 1,
+    "status": "COMPLETE",
+    "submission": {
+      "project": "00000000-0000-4000-8000-000000000004",
+      "repository": "archcert/controlled-policy",
+      "requested_commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1"
+    },
+    "total_bytes": 1004,
+    "unresolved": [],
+    "validation_version": "archcert-loose-v1"
+  },
+  "steps": [
+    {
+      "execution": {
+        "cleanup": "Destroyed",
+        "events": [
+          "ExecutionPrepared",
+          "SandboxCreated",
+          "ExecutionStarted",
+          "ExecutionCompleted",
+          "SandboxDestroyed"
+        ],
+        "evidence": {
+          "backend": "DockerRootlessRunner",
+          "backend_version": "archcert-docker-cli-v1",
+          "base_image_id": "sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "command": {
+            "args": [
+              "/source/checks.py",
+              "typecheck"
+            ],
+            "program": "python3",
+            "working_directory": "/source"
+          },
+          "container_user": "10001:10001",
+          "duration_ms": 3336,
+          "ended_at_ms": 1792462931916,
+          "environment_keys": [
+            "HOME",
+            "HOSTNAME",
+            "LANG",
+            "PATH",
+            "TMPDIR"
+          ],
+          "execution": "7870acc4-4e94-4609-b937-4fe357ce86ee",
+          "execution_image_id": "sha256:82ddaccac33ed68c824f8603e875a10cdf2d31ea66c44c6c36c74571ce2e8dc1",
+          "exit_code": 0,
+          "image_digest": "python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "limits": {
+            "cpu_millis": 1000,
+            "excerpt_bytes": 8192,
+            "memory_bytes": 268435456,
+            "output_bytes": 16777216,
+            "pids": 64,
+            "scratch_bytes": 33554432,
+            "stderr_bytes": 1048576,
+            "stdout_bytes": 1048576,
+            "timeout_ms": 30000
+          },
+          "network": "Denied",
+          "observed_runtime": {
+            "client_path": "/opt/local/bin/docker",
+            "client_version": "29.8.1",
+            "runtime_information": {
+              "Architecture": "x86_64",
+              "CgroupDriver": "systemd",
+              "CgroupVersion": "2",
+              "KernelVersion": "6.8.0-117-generic",
+              "OperatingSystem": "Ubuntu 24.04.4 LTS",
+              "component/Engine": "29.5.2",
+              "component/containerd": "v2.2.4",
+              "component/docker-init": "0.19.0",
+              "component/rootlesskit": "3.3.0",
+              "component/runc": "1.3.5",
+              "component/slirp4netns": "1.2.1"
+            },
+            "server_version": "29.5.2"
+          },
+          "outcome": "Completed",
+          "producer_version": "0.1.0",
+          "profile": "python",
+          "source": {
+            "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+            "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+            "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+          },
+          "started_at_ms": 1792462928579,
+          "stderr": {
+            "complete": true,
+            "excerpt": [],
+            "observed_bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "truncated": false
+          },
+          "stdout": {
+            "complete": true,
+            "excerpt": [],
+            "observed_bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "truncated": false
+          },
+          "termination": "Exit",
+          "toolchain": "NotObserved",
+          "workspace": "f534875f-8c9f-47d0-b9ad-6ff1b63d77f4"
+        }
+      },
+      "observations": [
+        {
+          "fact": {
+            "ExecutionFinished": {
+              "category": "TYPECHECK",
+              "exit_code": 0,
+              "outcome": "Completed"
+            }
+          },
+          "id": {
+            "execution": "7870acc4-4e94-4609-b937-4fe357ce86ee",
+            "kind": "ExecutionFinished",
+            "step": "typecheck"
+          },
+          "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+            "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+            "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+          }
+        },
+        {
+          "fact": "SourceIdentityMatched",
+          "id": {
+            "execution": "7870acc4-4e94-4609-b937-4fe357ce86ee",
+            "kind": "SourceIdentityMatched",
+            "step": "typecheck"
+          },
+          "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+            "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+            "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+          }
+        },
+        {
+          "fact": "NetworkDenied",
+          "id": {
+            "execution": "7870acc4-4e94-4609-b937-4fe357ce86ee",
+            "kind": "NetworkDenied",
+            "step": "typecheck"
+          },
+          "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+            "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+            "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+          }
+        },
+        {
+          "fact": {
+            "EnvironmentEstablished": {
+              "toolchain": "NotObserved"
+            }
+          },
+          "id": {
+            "execution": "7870acc4-4e94-4609-b937-4fe357ce86ee",
+            "kind": "EnvironmentEstablished",
+            "step": "typecheck"
+          },
+          "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+            "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+            "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+          }
+        }
+      ],
+      "origin": "AUTHORITY_REQUIRED",
+      "source_cleanup": {
+        "status": "DESTROYED",
+        "workspace": "f534875f-8c9f-47d0-b9ad-6ff1b63d77f4"
+      },
+      "step": "typecheck"
+    },
+    {
+      "execution": {
+        "cleanup": "Destroyed",
+        "events": [
+          "ExecutionPrepared",
+          "SandboxCreated",
+          "ExecutionStarted",
+          "ExecutionCompleted",
+          "SandboxDestroyed"
+        ],
+        "evidence": {
+          "backend": "DockerRootlessRunner",
+          "backend_version": "archcert-docker-cli-v1",
+          "base_image_id": "sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "command": {
+            "args": [
+              "/source/checks.py",
+              "test"
+            ],
+            "program": "python3",
+            "working_directory": "/source"
+          },
+          "container_user": "10001:10001",
+          "duration_ms": 3143,
+          "ended_at_ms": 1792462935294,
+          "environment_keys": [
+            "HOME",
+            "HOSTNAME",
+            "LANG",
+            "PATH",
+            "TMPDIR"
+          ],
+          "execution": "d38f7437-d4a4-4b02-9f75-336fc03bff7b",
+          "execution_image_id": "sha256:e5a6dc6d9c5c3d73e0a62a02552620d86ef26090cec6818fe4f0c0509a172393",
+          "exit_code": 1,
+          "image_digest": "python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "limits": {
+            "cpu_millis": 1000,
+            "excerpt_bytes": 8192,
+            "memory_bytes": 268435456,
+            "output_bytes": 16777216,
+            "pids": 64,
+            "scratch_bytes": 33554432,
+            "stderr_bytes": 1048576,
+            "stdout_bytes": 1048576,
+            "timeout_ms": 30000
+          },
+          "network": "Denied",
+          "observed_runtime": {
+            "client_path": "/opt/local/bin/docker",
+            "client_version": "29.8.1",
+            "runtime_information": {
+              "Architecture": "x86_64",
+              "CgroupDriver": "systemd",
+              "CgroupVersion": "2",
+              "KernelVersion": "6.8.0-117-generic",
+              "OperatingSystem": "Ubuntu 24.04.4 LTS",
+              "component/Engine": "29.5.2",
+              "component/containerd": "v2.2.4",
+              "component/docker-init": "0.19.0",
+              "component/rootlesskit": "3.3.0",
+              "component/runc": "1.3.5",
+              "component/slirp4netns": "1.2.1"
+            },
+            "server_version": "29.5.2"
+          },
+          "outcome": "Completed",
+          "producer_version": "0.1.0",
+          "profile": "python",
+          "source": {
+            "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+            "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+            "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+          },
+          "started_at_ms": 1792462932151,
+          "stderr": {
+            "complete": true,
+            "excerpt": [
+              70,
+              10,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              61,
+              10,
+              70,
+              65,
+              73,
+              76,
+              58,
+              32,
+              116,
+              101,
+              115,
+              116,
+              95,
+              97,
+              100,
+              100,
+              32,
+              40,
+              95,
+              95,
+              109,
+              97,
+              105,
+              110,
+              95,
+              95,
+              46,
+              84,
+              101,
+              115,
+              116,
+              115,
+              46,
+              116,
+              101,
+              115,
+              116,
+              95,
+              97,
+              100,
+              100,
+              41,
+              10,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              10,
+              84,
+              114,
+              97,
+              99,
+              101,
+              98,
+              97,
+              99,
+              107,
+              32,
+              40,
+              109,
+              111,
+              115,
+              116,
+              32,
+              114,
+              101,
+              99,
+              101,
+              110,
+              116,
+              32,
+              99,
+              97,
+              108,
+              108,
+              32,
+              108,
+              97,
+              115,
+              116,
+              41,
+              58,
+              10,
+              32,
+              32,
+              70,
+              105,
+              108,
+              101,
+              32,
+              34,
+              47,
+              115,
+              111,
+              117,
+              114,
+              99,
+              101,
+              47,
+              99,
+              104,
+              101,
+              99,
+              107,
+              115,
+              46,
+              112,
+              121,
+              34,
+              44,
+              32,
+              108,
+              105,
+              110,
+              101,
+              32,
+              49,
+              52,
+              44,
+              32,
+              105,
+              110,
+              32,
+              116,
+              101,
+              115,
+              116,
+              95,
+              97,
+              100,
+              100,
+              10,
+              32,
+              32,
+              32,
+              32,
+              115,
+              101,
+              108,
+              102,
+              46,
+              97,
+              115,
+              115,
+              101,
+              114,
+              116,
+              69,
+              113,
+              117,
+              97,
+              108,
+              40,
+              97,
+              100,
+              100,
+              40,
+              50,
+              44,
+              32,
+              51,
+              41,
+              44,
+              32,
+              53,
+              41,
+              10,
+              32,
+              32,
+              32,
+              32,
+              126,
+              126,
+              126,
+              126,
+              126,
+              126,
+              126,
+              126,
+              126,
+              126,
+              126,
+              126,
+              126,
+              126,
+              126,
+              126,
+              94,
+              94,
+              94,
+              94,
+              94,
+              94,
+              94,
+              94,
+              94,
+              94,
+              94,
+              94,
+              94,
+              94,
+              10,
+              65,
+              115,
+              115,
+              101,
+              114,
+              116,
+              105,
+              111,
+              110,
+              69,
+              114,
+              114,
+              111,
+              114,
+              58,
+              32,
+              54,
+              32,
+              33,
+              61,
+              32,
+              53,
+              10,
+              10,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              45,
+              10,
+              82,
+              97,
+              110,
+              32,
+              49,
+              32,
+              116,
+              101,
+              115,
+              116,
+              32,
+              105,
+              110,
+              32,
+              48,
+              46,
+              48,
+              48,
+              49,
+              115,
+              10,
+              10,
+              70,
+              65,
+              73,
+              76,
+              69,
+              68,
+              32,
+              40,
+              102,
+              97,
+              105,
+              108,
+              117,
+              114,
+              101,
+              115,
+              61,
+              49,
+              41,
+              10
+            ],
+            "observed_bytes": 476,
+            "sha256": "9d745d1fbf14f78a65ac11007603e602a4ba803d38b3e21e6abf4f042e74d9f7",
+            "truncated": false
+          },
+          "stdout": {
+            "complete": true,
+            "excerpt": [
+              84,
+              69,
+              83,
+              84,
+              83,
+              32,
+              80,
+              65,
+              83,
+              83,
+              69,
+              68,
+              10
+            ],
+            "observed_bytes": 13,
+            "sha256": "4ee7e385092f81a296397ce9380f618037a49243551a3fec822de9f357a22775",
+            "truncated": false
+          },
+          "termination": "Exit",
+          "toolchain": "NotObserved",
+          "workspace": "8a620caa-106c-4ee8-a613-20dce7349029"
+        }
+      },
+      "observations": [
+        {
+          "fact": {
+            "ExecutionFinished": {
+              "category": "TEST",
+              "exit_code": 1,
+              "outcome": "Completed"
+            }
+          },
+          "id": {
+            "execution": "d38f7437-d4a4-4b02-9f75-336fc03bff7b",
+            "kind": "ExecutionFinished",
+            "step": "test"
+          },
+          "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+            "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+            "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+          }
+        },
+        {
+          "fact": "SourceIdentityMatched",
+          "id": {
+            "execution": "d38f7437-d4a4-4b02-9f75-336fc03bff7b",
+            "kind": "SourceIdentityMatched",
+            "step": "test"
+          },
+          "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+            "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+            "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+          }
+        },
+        {
+          "fact": "NetworkDenied",
+          "id": {
+            "execution": "d38f7437-d4a4-4b02-9f75-336fc03bff7b",
+            "kind": "NetworkDenied",
+            "step": "test"
+          },
+          "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+            "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+            "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+          }
+        },
+        {
+          "fact": {
+            "EnvironmentEstablished": {
+              "toolchain": "NotObserved"
+            }
+          },
+          "id": {
+            "execution": "d38f7437-d4a4-4b02-9f75-336fc03bff7b",
+            "kind": "EnvironmentEstablished",
+            "step": "test"
+          },
+          "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+            "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+            "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+          }
+        }
+      ],
+      "origin": "AUTHORITY_REQUIRED",
+      "source_cleanup": {
+        "status": "DESTROYED",
+        "workspace": "8a620caa-106c-4ee8-a613-20dce7349029"
+      },
+      "step": "test"
+    },
+    {
+      "execution": {
+        "cleanup": "Destroyed",
+        "events": [
+          "ExecutionPrepared",
+          "SandboxCreated",
+          "ExecutionStarted",
+          "ExecutionCompleted",
+          "SandboxDestroyed"
+        ],
+        "evidence": {
+          "backend": "DockerRootlessRunner",
+          "backend_version": "archcert-docker-cli-v1",
+          "base_image_id": "sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "command": {
+            "args": [
+              "/source/checks.py",
+              "build"
+            ],
+            "program": "python3",
+            "working_directory": "/source"
+          },
+          "container_user": "10001:10001",
+          "duration_ms": 3074,
+          "ended_at_ms": 1792462938596,
+          "environment_keys": [
+            "HOME",
+            "HOSTNAME",
+            "LANG",
+            "PATH",
+            "TMPDIR"
+          ],
+          "execution": "20450fc4-c207-4c83-9680-6ddf17c5f453",
+          "execution_image_id": "sha256:d65a1418865da2ec932f5bf334261cf4629a711b8e0965104f60607c408824a1",
+          "exit_code": 0,
+          "image_digest": "python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f",
+          "limits": {
+            "cpu_millis": 1000,
+            "excerpt_bytes": 8192,
+            "memory_bytes": 268435456,
+            "output_bytes": 16777216,
+            "pids": 64,
+            "scratch_bytes": 33554432,
+            "stderr_bytes": 1048576,
+            "stdout_bytes": 1048576,
+            "timeout_ms": 30000
+          },
+          "network": "Denied",
+          "observed_runtime": {
+            "client_path": "/opt/local/bin/docker",
+            "client_version": "29.8.1",
+            "runtime_information": {
+              "Architecture": "x86_64",
+              "CgroupDriver": "systemd",
+              "CgroupVersion": "2",
+              "KernelVersion": "6.8.0-117-generic",
+              "OperatingSystem": "Ubuntu 24.04.4 LTS",
+              "component/Engine": "29.5.2",
+              "component/containerd": "v2.2.4",
+              "component/docker-init": "0.19.0",
+              "component/rootlesskit": "3.3.0",
+              "component/runc": "1.3.5",
+              "component/slirp4netns": "1.2.1"
+            },
+            "server_version": "29.5.2"
+          },
+          "outcome": "Completed",
+          "producer_version": "0.1.0",
+          "profile": "python",
+          "source": {
+            "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+            "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+            "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+          },
+          "started_at_ms": 1792462935521,
+          "stderr": {
+            "complete": true,
+            "excerpt": [],
+            "observed_bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "truncated": false
+          },
+          "stdout": {
+            "complete": true,
+            "excerpt": [],
+            "observed_bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "truncated": false
+          },
+          "termination": "Exit",
+          "toolchain": "NotObserved",
+          "workspace": "e1abeca7-a121-497e-b1bf-5d305ee3ebb0"
+        }
+      },
+      "observations": [
+        {
+          "fact": {
+            "ExecutionFinished": {
+              "category": "BUILD",
+              "exit_code": 0,
+              "outcome": "Completed"
+            }
+          },
+          "id": {
+            "execution": "20450fc4-c207-4c83-9680-6ddf17c5f453",
+            "kind": "ExecutionFinished",
+            "step": "build"
+          },
+          "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+            "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+            "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+          }
+        },
+        {
+          "fact": "SourceIdentityMatched",
+          "id": {
+            "execution": "20450fc4-c207-4c83-9680-6ddf17c5f453",
+            "kind": "SourceIdentityMatched",
+            "step": "build"
+          },
+          "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+            "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+            "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+          }
+        },
+        {
+          "fact": "NetworkDenied",
+          "id": {
+            "execution": "20450fc4-c207-4c83-9680-6ddf17c5f453",
+            "kind": "NetworkDenied",
+            "step": "build"
+          },
+          "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+            "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+            "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+          }
+        },
+        {
+          "fact": {
+            "EnvironmentEstablished": {
+              "toolchain": "NotObserved"
+            }
+          },
+          "id": {
+            "execution": "20450fc4-c207-4c83-9680-6ddf17c5f453",
+            "kind": "EnvironmentEstablished",
+            "step": "build"
+          },
+          "plan_sha256": "8ef37e471318bae8dae6778a4e023254e20a298c006f569c3dc229720d7cfb27",
+          "producer": "archcert-docker-cli-v1/0.1.0",
+          "profile": "python",
+          "schema": 1,
+          "source": {
+            "commit": "44d8bba2c0d305b4aa2870c6caafa74dbbe77fd1",
+            "snapshot_sha256": "81597c168e33b10fd28ca51aedac8612e9b65ab20f608d87049de9061abf8bf5",
+            "tree": "feb95c6e8174316a51197c83cb8d739940c2831f"
+          }
+        }
+      ],
+      "origin": "AUTHORITY_REQUIRED",
+      "source_cleanup": {
+        "status": "DESTROYED",
+        "workspace": "e1abeca7-a121-497e-b1bf-5d305ee3ebb0"
+      },
+      "step": "build"
+    }
+  ]
+}

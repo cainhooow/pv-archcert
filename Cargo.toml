@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/archcertd",
+    "apps/archcert-cli",
+    "crates/archcert-domain",
+    "crates/archcert-application",
+    "crates/archcert-protocol",
+    "crates/archcert-source",
+    "crates/archcert-materialization",
+    "crates/archcert-runner",
+    "crates/archcert-evidence",
+    "crates/archcert-policy",
+    "crates/archcert-crypto",
+]
+
+[workspace.package]
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+axum = "0.8"
+clap = { version = "4.5", features = ["derive"] }
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sha1 = "0.10"
+flate2 = { version = "1.1", default-features = false, features = ["miniz_oxide"] }
+rustix = { version = "1.1", features = ["fs", "process"] }
+unicode-normalization = "0.1"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+toml = "0.9"
+tower-http = { version = "0.6", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"

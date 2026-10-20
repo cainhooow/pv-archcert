@@ -1,0 +1,21 @@
+# Trusted operator input, outside target snapshots; not a project request.
+schema = 1
+[project]
+name = "ArchCert controlled policy demonstration"
+[execution]
+profile = "python"
+[[execution.commands]]
+name = "typecheck"
+program = "python3"
+args = ["/source/checks.py", "typecheck"]
+evidence = "TYPECHECK"
+[[execution.commands]]
+name = "test"
+program = "python3"
+args = ["/source/checks.py", "test"]
+evidence = "TEST"
+[[execution.commands]]
+name = "build"
+program = "python3"
+args = ["/source/checks.py", "build"]
+evidence = "BUILD"

@@ -1,0 +1,12 @@
+schema=1
+id='canonical-vector'
+version='1'
+producers=['archcert-docker-cli-v1/0.1.0']
+[[properties]]
+id='SOURCE_COMPLETE'
+description="é Ω 😀 \n \t \u000f \\ \""
+severity='P0'
+mandatory=true
+allow_not_applicable=false
+applicability={kind='ALWAYS'}
+rule={kind='SOURCE_COMPLETE'}

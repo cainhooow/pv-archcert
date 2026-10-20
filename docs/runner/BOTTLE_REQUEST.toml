@@ -1,0 +1,11 @@
+schema = 1
+[project]
+name = "bottle-development-dry-run"
+[execution]
+profile = "python"
+[[execution.commands]]
+name = "bottle-version"
+program = "python3"
+args = ["/source/bottle.py", "--version"]
+working_directory = "/source"
+evidence = "EXECUTION"

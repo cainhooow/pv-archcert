@@ -1,0 +1,26 @@
+[package]
+name = "archcert-cli"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "archcert"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+archcert-domain = { path = "../../crates/archcert-domain", version = "=0.1.0" }
+archcert-application = { path = "../../crates/archcert-application", version = "=0.1.0" }
+archcert-source = { path = "../../crates/archcert-source", version = "=0.1.0" }
+archcert-materialization = { path = "../../crates/archcert-materialization", version = "=0.1.0" }
+archcert-runner = { path = "../../crates/archcert-runner", version = "=0.1.0" }
+archcert-policy = { path = "../../crates/archcert-policy", version = "=0.1.0" }
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
