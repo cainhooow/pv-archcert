@@ -26,6 +26,17 @@ struct Args {
 enum Command {
     /// Explicitly provisions configured development scope grants, without schema DDL.
     Provision,
+    /// Checks control-plane/storage readiness without execution or signing.
+    Doctor,
+    /// Inspects or removes old unlocked development artifact stages, never final objects.
+    ReconcileArtifacts {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        apply: bool,
+        #[arg(long, default_value_t = 3600)]
+        minimum_age_seconds: u64,
+    },
     /// Advances one durable job, or resumes retained evaluation/signing after restart.
     RunOnce(Box<RunArgs>),
     /// Inspects or safely reconciles exact-attempt runtime ownership and durable state.
@@ -79,6 +90,34 @@ async fn main() -> Result<()> {
     )
     .await?;
     match args.command {
+        Command::Doctor => {
+            state.repository.check_readiness().await?;
+            state.artifacts.check_readiness()?;
+            println!("{{\"control_plane\":\"READY\",\"artifact_store\":\"READY\"}}");
+        }
+        Command::ReconcileArtifacts {
+            project,
+            apply,
+            minimum_age_seconds,
+        } => {
+            let project: archcert_domain::ProjectId = project.parse()?;
+            ensure!(
+                state
+                    .configuration
+                    .grants
+                    .iter()
+                    .any(|g| g.project == project),
+                "project is not provisioned for this authority"
+            );
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&state.artifacts.reconcile_staging(
+                    project,
+                    apply,
+                    minimum_age_seconds
+                )?)?
+            );
+        }
         Command::Reconcile(args) => {
             let blocked = runtime::all(&state, &args).await?;
             println!(

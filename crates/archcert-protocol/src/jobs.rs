@@ -1,5 +1,5 @@
 //! Durable HTTP DTOs map transport-independent application read models.
-use archcert_application::jobs::CertificationJob;
+use archcert_application::jobs::{CertificationJob, RuntimeCleanupState};
 use archcert_domain::{
     ProjectId, SourceIdentity,
     ingress::SourceSubmissionId,
@@ -45,6 +45,10 @@ pub struct AttemptResponse {
     pub state: AttemptState,
     /// Structured failure without private diagnostics.
     pub failure: Option<archcert_domain::jobs::FailureCategory>,
+    /// Bounded operational cleanup, without runtime endpoints or private paths.
+    pub runtime_cleanup: Option<RuntimeCleanupState>,
+    /// Irreversible execution revocation, separate from target verdict semantics.
+    pub execution_fenced: bool,
 }
 impl From<CertificationJob> for CertificationJobResponse {
     fn from(j: CertificationJob) -> Self {
@@ -61,6 +65,8 @@ impl From<CertificationJob> for CertificationJobResponse {
                     ordinal: a.ordinal,
                     state: a.state,
                     failure: a.failure,
+                    runtime_cleanup: a.runtime.as_ref().map(|r| r.cleanup),
+                    execution_fenced: a.runtime.as_ref().is_some_and(|r| r.fenced),
                 })
                 .collect(),
             certificate_sha256: j.certificate.map(|c| c.issuance.certificate_sha256),

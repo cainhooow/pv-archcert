@@ -152,6 +152,19 @@ pub struct PostgresJobRepository {
     pool: PgPool,
 }
 impl PostgresJobRepository {
+    /// Read-only readiness: required reviewed migrations must already be applied.
+    pub async fn check_readiness(&self) -> Result<()> {
+        let ready: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=3 AND success)",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db)?;
+        if !ready {
+            return Err(JobStoreError::Unavailable);
+        }
+        Ok(())
+    }
     /// Connects with bounded pool/acquisition. Never creates or migrates tables.
     pub async fn connect(url: &str) -> Result<Self> {
         let pool = sqlx::postgres::PgPoolOptions::new()

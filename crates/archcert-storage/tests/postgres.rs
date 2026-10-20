@@ -28,6 +28,7 @@ async fn database() -> R<(PostgresJobRepository, PgPool)> {
     let repo = PostgresJobRepository::from_pool(pool.clone());
     repo.migrate().await?;
     repo.migrate().await?;
+    repo.check_readiness().await?;
     Ok((repo, pool))
 }
 async fn request(repo: &PostgresJobRepository) -> R<CreateJob> {

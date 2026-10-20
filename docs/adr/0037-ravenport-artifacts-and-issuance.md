@@ -61,3 +61,12 @@ certificate instance. Signing Protobuf bytes would change canonical identities.
 Orphans consume storage until reviewed reconciliation. Availability depends on
 both metadata and verified bytes. Signing recovery needs retained original inputs
 and the selected key, and rejects uncertainty instead of manufacturing completion.
+
+Stoneward adds explicit development staging maintenance: private project-scoped
+UUID stage files are inspected with no-follow descriptors and writer locks; only
+old unlocked stages may be unlinked. Immutable digest objects are never garbage
+collected by this command. Interrupted hard-link publication remains unavailable
+until the abandoned staging link is removed and normal bytes verification passes.
+Local storage headroom and current permissions are checked before new publication.
+These controls do not provide encryption, arbitrary network-filesystem equivalence
+or demonstrated host power-loss durability.

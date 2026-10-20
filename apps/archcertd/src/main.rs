@@ -37,9 +37,10 @@ async fn main() -> anyhow::Result<()> {
     let database_url = std::env::var("ARCHCERT_DATABASE_URL")?;
     let state = Arc::new(ControlPlane::connect(&database_url, config).await?);
     // Verify migrations were applied explicitly; do not mutate schema at startup.
-    state.repository.continuations().await?;
+    state.repository.check_readiness().await?;
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
+        .route("/readyz", get(readiness))
         .route("/api/v1/certifications", post(submit))
         .route("/api/v1/certifications/{id}", get(status))
         .route("/api/v1/certifications/{id}/certificate", get(certificate))
@@ -50,6 +51,18 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+async fn readiness(State(state): State<Arc<ControlPlane>>) -> Response {
+    if state.repository.check_readiness().await.is_ok() && state.artifacts.check_readiness().is_ok()
+    {
+        (StatusCode::OK, "ready").into_response()
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "authority dependencies unavailable",
+        )
+            .into_response()
+    }
 }
 fn actor(
     state: &ControlPlane,

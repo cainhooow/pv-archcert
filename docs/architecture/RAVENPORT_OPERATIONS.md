@@ -177,3 +177,20 @@ preflight check, not full service readiness or native qualification. See
 [native qualification status](../qualification/NATIVE_LINUX_RUNNER.md) and
 [ADR 0038](../adr/0038-stoneward-native-qualification-profile.md). Current running
 attempt recovery requires the fenced reconciliation path above.
+
+`/healthz` reports only that the API process is alive. `/readyz` checks the required
+applied metadata migration and current private artifact-store permissions/capacity;
+it returns 503 during dependency outages. `archcert-controller --config ... doctor`
+performs the same dependency checks without execution or signing. No startup path
+runs migrations or marks jobs failed because infrastructure is temporarily absent.
+
+The development artifact adapter locks active staging writers. The authority-only
+`archcert-controller --config ... reconcile-artifacts --project PROJECT_UUID`
+inspects scoped stages; `--apply` removes only old unlocked private UUID staging
+files. The default minimum age is one hour. A zero-age override is for controlled
+tests/quiescent maintenance, not concurrent production uploads. Unknown names,
+types, symlinks and active writers are retained; final digest objects are never
+removed or overwritten. Partial/hard-linked publication remains unavailable until
+stage cleanup and normal digest/size verification succeed. Storage readiness/put
+also requires 1 GiB and 1024 available inodes on the artifact filesystem. These
+local POSIX/fsync/link/lock assumptions do not qualify NFS or power-loss behavior.
