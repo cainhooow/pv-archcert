@@ -42,10 +42,14 @@ The first trustworthy vertical slice is:
 ## Workspace
 
 - `apps/archcertd`: authenticated loopback durable job admission/status API.
-- `apps/archcert-cli`: command-line client.
+- `apps/archcert-cli`: command-line client and offline verification.
+- `apps/archcert-controller`: durable trusted execution/issuance orchestration.
+- `apps/archcert-worker`: credential-free execution process.
 - `crates/archcert-domain`: infrastructure-free domain language.
 - `crates/archcert-application`: application use cases and ports.
-- `crates/archcert-protocol`: generated internal Protobuf DTOs, checked conversions, and bootstrap HTTP DTOs.
+- `crates/archcert-protocol`: generated Protobuf contracts and checked HTTP/wire DTO adapters.
+- `crates/archcert-control-plane`: authenticated admission/read composition.
+- `crates/archcert-storage`: PostgreSQL metadata and immutable development objects.
 - `crates/archcert-source`: loose/packed source validation and immutable snapshot boundary.
 - `crates/archcert-gateway`: authenticated Git ingress, authorization and quarantine.
 - `crates/archcert-materialization`: verified ephemeral Unix source preparation.
@@ -56,7 +60,8 @@ The first trustworthy vertical slice is:
 - `crates/archcert-certificate`: fail-closed issuance and offline verification proofs.
 
 The local Git gateway reads loose objects; Northgate adds restricted SSH push and
-pack ingress. Production deployment qualification, durable persistence, production
+pack ingress. Ravenport adds durable development PostgreSQL jobs and immutable
+artifact storage. Production deployment qualification and production
 runner/key operations and semantic review remain deferred.
 
 ## Inspect exact source
@@ -154,7 +159,8 @@ and node. These names do not prove installed toolchain versions.
 
 Authority-required steps compose before project requests into immutable ValidationPlan
 steps. Structured ValidationObservation facts form the policy input boundary;
-observations themselves produce no verdict. The historical bootstrap API returned HTTP 501; Ravenport now admits durable jobs.
+observations themselves produce no verdict. The historical bootstrap API returned
+HTTP 501; Ravenport now admits durable jobs.
 The original bootstrap adapter still reports UNAVAILABLE. See [ADRs 0019–0021](docs/adr/0019-application-protocol-and-bootstrap-submission.md),
 [current architecture](docs/architecture/CURRENT_ARCHITECTURE_SNAPSHOT.md),
 [TCB/dependency review](docs/architecture/TCB_AND_DEPENDENCIES.md),
@@ -162,7 +168,8 @@ The original bootstrap adapter still reports UNAVAILABLE. See [ADRs 0019–0021]
 [native Linux qualification plan](docs/runner/LINUX_QUALIFICATION.md).
 
 Live isolation gates are opt-in via `./scripts/test-live-oci`; they are not run
-in standard CI. Native Linux deployment remains NOT YET QUALIFIED. Durable production jobs and deployment qualification remain deferred. Northgate
+in standard CI. Native Linux deployment remains NOT YET QUALIFIED. Production
+deployment qualification remains deferred. Northgate
 adds SSH Git transport; development certificates/signatures are implemented in M4B below.
 
 
@@ -229,7 +236,7 @@ separate verification port and operator-only private LFS/accepted-child adapter.
 Resolved content receives a new schema-2 snapshot verified through execution;
 unresolved LFS/submodules cannot execute. `./scripts/demo-northgate-resolution`
 exercises the resolved-source development certificate flow. Durable jobs/storage
-belong to Ravenport.
+are now implemented by Ravenport under its documented local development limits.
 
 M5 Northgate's final internal protocol task is complete; see the
 [Protobuf completion report](docs/MILESTONE_5_PROTOBUF_REPORT.md),
@@ -238,6 +245,25 @@ M5 Northgate's final internal protocol task is complete; see the
 Protocol Buffers are the primary internal machine-to-machine schema/wire format;
 generated common/source v1 DTOs remain in the protocol layer. They do not replace
 cryptographic canonical encodings. Operator `archcert-gateway export-proto --store
-STORE SUBMISSION_UUID` exports source-only observations in binary form. No services
-or persistence are introduced. The next milestone is
-[M5.1 Ravenport](docs/architecture/RAVENPORT_PLAN.md).
+STORE SUBMISSION_UUID` exports source-only observations in binary form. That
+Northgate slice introduced no persistence. Ravenport now supplies the durable
+control plane described in [operations](docs/architecture/RAVENPORT_OPERATIONS.md).
+
+## Ravenport durable certification
+
+Ravenport adds PostgreSQL-backed jobs/attempts, scoped idempotency, transactional
+worker leases, immutable digest-bound artifacts, structured audit and recoverable
+certificate issuance. The authenticated loopback API returns actual durable job
+state; a separate controller dispatches a credential-free Protobuf worker process.
+Policy/profile/source inputs are pinned before execution. Policy rejection never
+retries until pass. Signing retries bind the exact prepared payload/key/time.
+
+Use [operations](docs/architecture/RAVENPORT_OPERATIONS.md),
+[ADRs 0035–0037](docs/adr/0035-ravenport-durable-jobs.md), and the
+[threat model](docs/threat-model/RAVENPORT.md). `scripts/test-ravenport` runs real
+PostgreSQL concurrency tests; `scripts/demo-ravenport` reproduces authenticated
+source-to-certificate, interrupted-worker recovery, crash checkpoints and Bottle
+rejection. The development adapter uses unencrypted scoped filesystem objects,
+loopback authority authentication and explicit cleanup confirmation for lost running
+workers. Production IAM/TLS, remote workers, encrypted storage/KMS and deployment
+qualification remain separate work. Offline verification still needs no database.

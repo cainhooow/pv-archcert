@@ -1,4 +1,9 @@
-# M5.1 — Ravenport handoff plan
+# M5.1 — Historical Ravenport handoff plan
+
+This preserves the Northgate handoff before implementation. Ravenport is now
+implemented; current behavior and limits are in [operations](RAVENPORT_OPERATIONS.md),
+[the architecture snapshot](CURRENT_ARCHITECTURE_SNAPSHOT.md) and ADRs 0035–0037.
+The future-tense sections below record the original plan.
 
 M5 Northgate establishes authenticated Git ingress, immutable ordinary/resolved
 source snapshots, controlled external acquisition, execution/policy/development

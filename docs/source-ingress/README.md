@@ -51,7 +51,8 @@ archcert certify --source-submission SUBMISSION_UUID \
 Push output says SOURCE ACCEPTED or SOURCE INCOMPLETE_EXTERNAL_SOURCE. It does not
 report test/build/policy/certificate success. The later CLI call separately loads
 and verifies immutable bytes, then executes the existing development chain under
-its own authority. REST certification submission remains disabled. The source
+its own authority. Ravenport additionally admits separate authenticated durable
+certification jobs; see [operations](../architecture/RAVENPORT_OPERATIONS.md). The source
 store is reusable across separately selected authority/execution/policy requests.
 
 With the existing rootless OCI environment and pinned image:
