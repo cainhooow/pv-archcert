@@ -6,6 +6,11 @@ use std::{
 };
 
 fn allowed_inward_dependency(package: &str, dependency: &str) -> bool {
+    if package == "archcert-runner"
+        && (dependency == "archcert-semantic" || is_semantic_provider_dependency(dependency))
+    {
+        return false;
+    }
     if ["archcert-domain", "archcert-application"].contains(&package)
         && is_semantic_provider_dependency(dependency)
     {
@@ -257,6 +262,12 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
                     "database/object-store authority enters worker: {name}"
                 );
             }
+            if root == "archcert-runner" {
+                assert!(
+                    name != "archcert-semantic" && !is_semantic_provider_dependency(&name),
+                    "semantic provider enters execution graph: {name}"
+                );
+            }
             pending.extend(graph.get(&name).into_iter().flatten().cloned());
         }
     }
@@ -304,6 +315,9 @@ fn guard_rejects_forbidden_dependencies_including_renamed_package_names() {
         ("archcert-semantic", "archcert-crypto"),
         ("archcert-semantic", "archcert-storage"),
         ("archcert-semantic", "archcert-runner"),
+        ("archcert-runner", "archcert-semantic"),
+        ("archcert-runner", "async-openai"),
+        ("archcert-runner", "anthropic"),
         ("archcert-application", "archcert-protocol"),
         ("archcert-domain", "archcert-proto"),
         ("archcert-domain", "prost"),
@@ -353,6 +367,8 @@ fn runner_and_source_interfaces_contain_no_signing_capability() {
         include_str!("../src/execution.rs"),
         include_str!("../src/source.rs"),
         include_str!("../src/configuration.rs"),
+        include_str!("../src/semantic.rs"),
+        include_str!("../src/knowledge.rs"),
         include_str!("../../archcert-domain/src/source.rs"),
         include_str!("../../archcert-domain/src/materialization.rs"),
     ] {

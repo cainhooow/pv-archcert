@@ -47,6 +47,8 @@ The first trustworthy vertical slice is:
 - `apps/archcert-worker`: credential-free execution process.
 - `crates/archcert-domain`: infrastructure-free domain language.
 - `crates/archcert-application`: application use cases and ports.
+- `crates/archcert-knowledge`: passive bounded Rust syntax extraction over accepted source.
+- `crates/archcert-semantic`: local exact semantic replay and an unavailable default adapter.
 - `crates/archcert-protocol`: generated Protobuf contracts and checked HTTP/wire DTO adapters.
 - `crates/archcert-control-plane`: authenticated admission/read composition.
 - `crates/archcert-storage`: PostgreSQL metadata and immutable development objects.
@@ -62,7 +64,9 @@ The first trustworthy vertical slice is:
 The local Git gateway reads loose objects; Northgate adds restricted SSH push and
 pack ingress. Ravenport adds durable development PostgreSQL jobs and immutable
 artifact storage. Production deployment qualification and production
-runner/key operations and semantic review remain deferred.
+runner/key operations remain deferred. Ironcrest knowledge, semantic review and
+bounded authority challenge primitives are implemented; durable controller and
+issuance integration remains in progress. They do not currently gate certificates.
 
 ## Inspect exact source
 
