@@ -55,6 +55,19 @@ response bytes can be pinned before the adapter call. This does not establish
 exactly-once external inference. No external provider or disclosure authorization
 is added by this decision.
 
+## Versioned authority profile
+
+The application now constructs `ironcrest-controlled-v1` version `1.0.0` as an
+immutable authority capability. Its canonical artifact pins the selected policy,
+extractor registry, sorted authority knowledge bundles, controlled challenge
+registry, mandatory local replay review, gate algorithm, required idempotency
+challenge, knowledge/semantic limits and denied external disclosure. Request and
+session validation reject mismatched selections. There is no repository parser or
+deserialization path that grants this capability. The profile currently supports
+the controlled settlement API only; it makes no general challenge support claim.
+Historical policy bundles and certificates retain their existing identities and
+semantics. This profile capability alone does not implement admission or issuance.
+
 ## Continuation and signing
 
 After admission, use the unchanged worker, rootless runner, exact-attempt gates,

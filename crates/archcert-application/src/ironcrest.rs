@@ -12,7 +12,9 @@ use archcert_domain::{
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+mod profile;
 mod workflow;
+pub use profile::*;
 pub use workflow::*;
 
 /// An authority-selected accepted baseline, never a target-selected revision.

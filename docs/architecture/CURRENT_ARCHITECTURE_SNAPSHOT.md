@@ -41,6 +41,13 @@ are vocabulary only. The opt-in CLI integration test executes good and defective
 fixtures through the unchanged rootless runner. Test-source confidentiality during
 target execution is not established. These are engineering tests, not certification.
 
+The application now provides a separately versioned `ironcrest-controlled-v1`
+authority profile capability. It pins mandatory local replay, denied external
+disclosure, policy/extractor/knowledge/challenge identities, limits, required
+idempotency replay and gate semantics. Session/request validation rejects weaker
+or foreign authority pins. This capability is not yet wired into certification;
+historical policy and certificate behavior remain unchanged.
+
 Migration 0004 and the application IroncrestRepository port now add a separate
 project-scoped pre-admission journal. It checks repository grants and accepted
 target/baseline identities, freezes authority/source pins and eight create-only
