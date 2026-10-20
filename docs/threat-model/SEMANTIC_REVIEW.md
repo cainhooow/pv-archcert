@@ -1,6 +1,6 @@
 # Ironcrest semantic review threat model
 
-Scope: the design in ADRs 0041–0042. Implementation and executed validation are
+Scope: the design in ADRs 0041–0043. Implementation and executed validation are
 listed separately in the current architecture snapshot. This is an engineering
 review, not independent certification. Authority provisioning, controller, storage,
 build/toolchain and OS remain trusted. Repository bytes and semantic output are

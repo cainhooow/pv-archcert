@@ -1,6 +1,6 @@
 # Current architecture snapshot — Stoneward with Ironcrest work in progress
 
-Ironcrest architecture is defined in ADRs 0041–0042 and
+Ironcrest architecture is defined in ADRs 0041–0043 and
 threat-model/SEMANTIC_REVIEW.md. The design adds immutable knowledge, bounded
 semantic veto and authority challenge selection above the existing trust core.
 These components are not yet integrated with durable certification or qualified;
@@ -46,6 +46,9 @@ versioned Ironcrest issuance profile and evidence-manifest extension are not yet
 implemented. Existing certification paths do not consume the new semantic gate.
 Ironcrest source-to-certificate and semantic-veto-before-signing guarantees therefore
 remain NOT PROVEN. The baseline controller still accepts only its historical policy.
+ADR 0043 defines the required pre-admission review session and recovery boundary:
+the final challenge plan must be frozen before a new immutable job is admitted.
+An admitted Ravenport plan may never be patched to add semantic challenges.
 
 ArchCert accepts authenticated SSH Git pushes with bounded SHA-1/SHA-256 packs
 or explicit local loose objects, seals an independently hashed
