@@ -8,15 +8,16 @@ macOS does not qualify this deployment path. No environment is currently qualifi
 
 | Environment | Status | Evidence |
 | --- | --- | --- |
-| macOS x86_64 controller / Colima Ubuntu 24.04.4, Linux 6.8, rootless Docker 29.5.2 / runc 1.3.5 / containerd 2.2.4 | DEVELOPMENT TESTED | Historical M3–M5.1 execution demonstrations |
+| macOS x86_64 controller / Colima Ubuntu 24.04.4, Linux 6.8.0-117-generic, rootless Docker 29.5.2 / runc 1.3.5 / containerd 2.2.4 | DEVELOPMENT TESTED | M3–M5.1 demonstrations and M5.2 live regressions |
 | Native Linux | NOT QUALIFIED | Qualification host not yet available |
 | Docker Desktop | NOT QUALIFIED | No qualification run |
 | Podman | NOT QUALIFIED | No supported adapter or qualification run |
 | gVisor | NOT IMPLEMENTED | Future isolation tier |
 | Firecracker | NOT IMPLEMENTED | Future isolation tier |
 
-The historical VM versions above come from the execution threat model. They are
-not current host observations. Current baseline gates ran on Darwin 25.6.0 x86_64.
+The M5.2 development regression observed the exact VM/kernel/runtime versions
+above, cgroup v2/systemd, rootlesskit 3.3.0 and builtin seccomp/rootless/cgroupns
+reports. Its controller and default gates ran on Darwin 25.6.0 x86_64.
 
 The intended qualification profile is one dedicated native Linux x86_64 host,
 cgroup v2 with systemd delegation, rootless Docker, runc and builtin seccomp.
@@ -81,6 +82,17 @@ worker death and prevent late target creation before claiming that an empty runt
 inventory permits retry. Lease expiry only fences authoritative database writes.
 
 ## Results and limitations
+
+Development-only regression, October 20, 2026: all 15 live OCI groups passed under
+Colima using the pre-provisioned Python image
+`python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f`.
+Observed behavior includes actual OOM/PID/tmpfs enforcement, CPU throttling, dropped
+capabilities, unprivileged identity, private namespaces, denied external IPv4/IPv6
+TCP/UDP routes and available private IPv4/IPv6 loopback. The namespace had IPv6
+enabled with only ::1 configured. All four writable tmpfs areas produced ENOSPC;
+detached/double-fork timeout cases ended with no owned container/image remaining.
+Bounded raw engineering evidence remains outside Git. These observations do not
+qualify native execution, automatic orphan recovery or shared-kernel escape resistance.
 
 Native commands executed: **none**. Native distribution, kernel, architecture,
 runtime, cgroup mode, security modules and filesystem: **not observed**.

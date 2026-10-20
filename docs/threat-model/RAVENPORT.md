@@ -33,6 +33,23 @@ ArtifactCipher reserves a maintained-provider encryption boundary: root KEK ->
 organization/project KEK -> per-artifact DEK. The supplied storage is explicitly
 unencrypted development storage, not simulated production encryption.
 
+## Stoneward operational boundaries under qualification
+
+These are current controls and open requirements, not claims that automatic
+reconciliation or native service recovery has been implemented.
+
+| Threat | Security property | Current mitigation | Remaining risk / required qualification |
+| --- | --- | --- | --- |
+| Orphan container or preparation image after worker crash | No owned target survives recovery | Random execution names and owner/workspace labels; bounded in-process removal; RUNNING recovery requires operator confirmation | Durable job/attempt ownership labels and fenced restart reconciliation remain outstanding; never prune the daemon globally |
+| Stale lease with a live or suspended worker | No duplicate physical target execution | Expired lease cannot publish/renew; RUNNING recovery blocks without confirmation | Lease expiry is not worker death; even an empty inventory does not prevent a stale worker from creating a later target; automated retry must prevent future creation as well as confirm old target death |
+| Daemon restart or runtime transport loss | Infrastructure uncertainty cannot become a target verdict | Runtime/inspect failure rejects positive evidence; cleanup failure remains separate | Native interruption/live-restore behavior and orphan continuation require actual tests; do not infer all targets stopped when API disappears |
+| Host reboot | Durable state remains authoritative across lost processes | PostgreSQL state and create-only artifact publication are independent of process memory | HOST REBOOT RECOVERY NOT QUALIFIED; filesystem and runtime boot behavior remain unobserved |
+| Cleanup failure or crash during cleanup | No successful certification from unknown cleanup | Separate sandbox/source cleanup flags gate controller observations and issuance | Operational succeeded/incomplete/deferred/failed states, durable retries and restart-safe fencing remain outstanding |
+| Resource exhaustion | Target budgets remain bounded and infrastructure uncertainty stays inconclusive | Finite memory/swap/PID/CPU/tmpfs/output/time limits; hostile fixtures test actual enforcement | Colima evidence does not qualify native cgroup delegation; per-container limits do not bound global concurrency or kernel/daemon overhead |
+| Host disk or inode exhaustion | Authority cannot silently accumulate unlimited runtime/staging state | Finite transfer/output bounds and create-only artifact publication | Host capacity thresholds, owned-object reconciliation and staging reclamation remain outstanding; immutable objects must not be overwritten/deleted to manufacture progress |
+| Service manager confusion or startup dependency outage | PostgreSQL remains control-plane truth | Run-once controller re-reads durable state; failed DB operations cannot fabricate transitions | Native systemd ordering/restart/readiness behavior remains unqualified; process alive does not mean ready; setup/migration authority must remain separate |
+| Runtime/DB disagreement or unknown ownership | Only demonstrably owned resources can be destroyed | Existing explicit authority-only manual recovery | No automatic classifier yet; DB state, exact attempt, lease, worker loss and runtime ownership must be reconciled before destructive actions; unknown attempts remain blocked/reported |
+
 ## Focused implementation review
 
 Searches covered DB/object credentials in runner inputs/environment; private keys

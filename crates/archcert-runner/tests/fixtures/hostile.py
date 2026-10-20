@@ -28,7 +28,7 @@ elif mode in ("stdout-flood", "stderr-flood"):
     fd = 1 if mode == "stdout-flood" else 2
     while True:
         os.write(fd, b"F" * 8192)
-elif mode in ("timeout", "children"):
+elif mode in ("timeout", "children", "double-fork"):
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     if mode == "children":
         child = os.fork()
@@ -36,6 +36,15 @@ elif mode in ("timeout", "children"):
             os.setsid()
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
             Path("/work/child.pid").write_text(str(os.getpid()))
+    if mode == "double-fork":
+        child = os.fork()
+        if child == 0:
+            os.setsid()
+            if os.fork() != 0:
+                os._exit(0)
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        else:
+            os.waitpid(child, 0)
     print(mode + "-started", flush=True)
     while True:
         pass
@@ -98,7 +107,12 @@ elif mode == "filesystem":
     assert Path("/source/accepted.txt").read_bytes() == b"accepted bytes\n"
     for path in ["/work/a", "/output/a", "/tmp/a", "/home/archcert/a"]:
         Path(path).write_text("scratch")
-    for path in ["/var/run/docker.sock", "/run/docker.sock", "/run/user/501/docker.sock"]:
+    for path in ["/var/run/docker.sock", "/run/docker.sock",
+                 "/run/containerd/containerd.sock", "/run/podman/podman.sock",
+                 "/run/crio/crio.sock", "/run/cri-dockerd.sock",
+                 "/run/k3s/containerd/containerd.sock",
+                 *map(str, Path("/run/user").glob("*/docker.sock")),
+                 *map(str, Path("/run/user").glob("*/podman/podman.sock"))]:
         assert not Path(path).exists(), path
     print("filesystem-blocked")
 elif mode == "network":
@@ -111,7 +125,8 @@ elif mode == "network":
         pass
     else:
         raise AssertionError("DNS unexpectedly succeeded")
-    for address, port in [("169.254.169.254", 80), ("192.168.5.2", 80),
+    for address, port in [("169.254.169.254", 80), ("169.254.170.2", 80),
+                          ("100.100.100.200", 80), ("192.168.5.2", 80),
                           ("10.0.2.2", 80), ("172.17.0.1", 80), ("192.0.2.1", 8080)]:
         connection = socket.socket()
         connection.settimeout(0.25)
@@ -126,6 +141,13 @@ elif mode == "network":
             raise AssertionError("network escape: " + address)
         finally:
             connection.close()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as datagram:
+            try:
+                datagram.sendto(b"archcert-denied", (address, 53))
+            except OSError as error:
+                assert error.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH), (address, repr(error))
+            else:
+                raise AssertionError("UDP route available: " + address)
     for url in ["http://169.254.169.254/latest/meta-data/", "http://192.168.5.2:18080/marker"]:
         try:
             urllib.request.urlopen(url, timeout=0.25)
@@ -135,18 +157,94 @@ elif mode == "network":
             raise AssertionError("HTTP escape: " + url)
     assert set(os.listdir("/sys/class/net")) == {"lo"}
     print("network-blocked")
+elif mode == "ipv6":
+    try:
+        probe = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    except OSError as error:
+        assert error.errno in (errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT), repr(error)
+        print(json.dumps({"ipv6_socket": "unavailable", "errno": error.errno}))
+    else:
+        probe.close()
+        for kind in (socket.SOCK_STREAM, socket.SOCK_DGRAM):
+            for address, scope in [("2001:db8::1", 0), ("fd00:ec2::254", 0),
+                                   ("fe80::1", socket.if_nametoindex("lo"))]:
+                with socket.socket(socket.AF_INET6, kind) as connection:
+                    connection.settimeout(0.25)
+                    try:
+                        endpoint = (address, 80, 0, scope)
+                        if kind == socket.SOCK_STREAM:
+                            connection.connect(endpoint)
+                        else:
+                            connection.sendto(b"archcert-denied", endpoint)
+                    except OSError as error:
+                        assert error.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH), (address, repr(error))
+                    else:
+                        raise AssertionError("IPv6 route available: " + address)
+        addresses = Path("/proc/net/if_inet6")
+        disabled = Path("/proc/sys/net/ipv6/conf/all/disable_ipv6")
+        print(json.dumps({"ipv6_socket": "available", "external_routes": "denied",
+                          "addresses": addresses.read_text() if addresses.exists() else None,
+                          "disabled": disabled.read_text().strip() if disabled.exists() else None}))
+elif mode == "loopback":
+    # A positive local exchange documents the network namespace's remaining path.
+    with socket.socket() as listener, socket.socket() as client:
+        listener.settimeout(1)
+        client.settimeout(1)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        client.connect(listener.getsockname())
+        accepted, _ = listener.accept()
+        with accepted:
+            accepted.settimeout(1)
+            client.sendall(b"local")
+            assert accepted.recv(5) == b"local"
+    ipv6 = "available"
+    try:
+        with socket.socket(socket.AF_INET6) as listener, socket.socket(socket.AF_INET6) as client:
+            listener.settimeout(1)
+            client.settimeout(1)
+            listener.bind(("::1", 0))
+            listener.listen(1)
+            client.connect(listener.getsockname())
+            accepted, _ = listener.accept()
+            with accepted:
+                accepted.settimeout(1)
+                client.sendall(b"local")
+                assert accepted.recv(5) == b"local"
+    except OSError as error:
+        assert error.errno in (errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT,
+                               errno.EADDRNOTAVAIL, errno.ENETUNREACH), repr(error)
+        ipv6 = "unavailable:" + str(error.errno)
+    print(json.dumps({"ipv4_loopback": "available", "ipv6_loopback": ipv6}))
 elif mode == "process":
     assert os.getuid() == 10001 and os.getgid() == 10001
+    assert set(os.getgroups()) <= {10001}, os.getgroups()
     processes = [int(p.name) for p in Path("/proc").iterdir() if p.name.isdigit()]
     assert processes == [1], processes
     status = Path("/proc/self/status").read_text()
-    assert "CapEff:\t0000000000000000" in status
+    for capability in ("CapEff", "CapPrm", "CapBnd"):
+        assert capability + ":\t0000000000000000" in status, status
     assert "NoNewPrivs:\t1" in status
     assert "Seccomp:\t2" in status
     assert b"archcert-host-only-process-marker" not in Path("/proc/1/cmdline").read_bytes()
     for pid in sys.argv[2:]:
         assert not Path("/proc/" + pid).exists()
     print("process-isolated")
+    uid_map = Path("/proc/self/uid_map").read_text()
+    gid_map = Path("/proc/self/gid_map").read_text()
+    # A full identity mapping would contradict the expected rootless boundary.
+    for mapping in (uid_map, gid_map):
+        rows = [list(map(int, row.split())) for row in mapping.splitlines()]
+        assert rows and [0, 0, 4294967295] not in rows, mapping
+    print(json.dumps({"uid_map": uid_map, "gid_map": gid_map,
+                      "groups": os.getgroups()}))
+    for action in (lambda: os.setuid(0), lambda: os.setgid(0)):
+        try:
+            action()
+        except OSError as error:
+            assert error.errno == errno.EPERM, error
+        else:
+            raise AssertionError("privileged identity obtained")
 elif mode == "resources":
     assert Path("/sys/fs/cgroup/memory.max").read_text().strip() == sys.argv[2]
     assert Path("/sys/fs/cgroup/pids.max").read_text().strip() == sys.argv[3]
@@ -154,8 +252,10 @@ elif mode == "resources":
     assert Path("/sys/fs/cgroup/memory.swap.max").read_text().strip() == "0"
     print("resources-enforced")
 elif mode == "disk":
+    directory = sys.argv[2] if len(sys.argv) > 2 else "/work"
+    assert directory in ("/work", "/tmp", "/output", "/home/archcert")
     try:
-        with open("/work/fill", "wb") as target:
+        with open(directory + "/fill", "wb") as target:
             for _ in range(100):
                 target.write(b"d" * 1024 * 1024)
     except OSError as error:
@@ -163,6 +263,28 @@ elif mode == "disk":
         print("disk-limit-blocked")
     else:
         raise AssertionError("scratch disk not bounded")
+elif mode == "cpu-throttling":
+    def cpu_stat():
+        return dict((key, int(value)) for key, value in
+                    (line.split() for line in Path("/sys/fs/cgroup/cpu.stat").read_text().splitlines()))
+    assert Path("/sys/fs/cgroup/cpu.max").read_text().strip() == "10000 100000"
+    before = cpu_stat()
+    started = time.process_time()
+    while time.process_time() - started < 0.4:
+        pass
+    after = cpu_stat()
+    assert after["nr_throttled"] > before["nr_throttled"], (before, after)
+    assert after["throttled_usec"] > before["throttled_usec"], (before, after)
+    print(json.dumps({"before": before, "after": after}))
+elif mode == "process-churn":
+    assert Path("/sys/fs/cgroup/pids.max").read_text().strip() == "16"
+    for _ in range(100):
+        child = os.fork()
+        if child == 0:
+            os.execl("/bin/sh", "sh", "-c", "sh -c 'sh -c true'")
+        _, status = os.waitpid(child, 0)
+        assert os.waitstatus_to_exitcode(status) == 0, status
+    print("bounded-process-churn")
 elif mode == "cwd":
     assert os.getcwd() == sys.argv[2]
     print(os.getcwd())

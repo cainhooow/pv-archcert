@@ -23,7 +23,7 @@ cargo deny check
 ./scripts/check-architecture
 ```
 
-These are STATIC / DEFAULT GATES. Eleven OCI tests are explicitly ignored here.
+These are STATIC / DEFAULT GATES. Fifteen OCI tests are explicitly ignored here.
 The architecture test is also part of the default workspace tests.
 
 ## Live OCI gates, opt-in
@@ -35,11 +35,17 @@ ARCHCERT_TEST_IMAGE='python@sha256:AUTHORITY_APPROVED_DIGEST' \
 ./scripts/test-live-oci
 ```
 
-This runs all eleven tests serially and fails on missing settings/prerequisites.
+This runs all fifteen tests serially and fails on missing settings/prerequisites.
 LIVE OCI GATES — NOT RUN IN STANDARD CI. Use the same pinned image and explicit
 endpoint for independent cleanup queries. The simulator tests use trusted host
 /usr/bin/python3 and never execute project code. Run default and live suites
 sequentially to avoid competing resource-exhaustion fixtures/compiler workloads.
+
+Set `ARCHCERT_TEST_EVIDENCE_DIR` to a new directory under ignored `target/` to
+retain each successful execution's bounded JSON evidence, including runtime
+identity and captured fixture observations. Files use fresh execution UUID names
+and create-new writes; no existing output is replaced. These are engineering test
+artifacts, not durable Ravenport publication or certification evidence by themselves.
 
 Live tests exercise canary exclusion, source read-only behavior, absent sockets,
 loopback-only network/no-route assertions, UID/capability/seccomp state, actual
@@ -49,6 +55,19 @@ Linux daemon host strengthens the filesystem probe. Verify a numeric HTTP canary
 outside isolation before negative network tests; do not use actual secrets.
 See [native qualification](LINUX_QUALIFICATION.md) for the complete deployment
 checklist. Colima development results do not qualify native production Linux.
+
+Stoneward extends the suite with per-path tmpfs exhaustion, observed CPU throttling,
+process churn/nested shells, double-fork descendants, IPv4/IPv6 TCP/UDP route denial
+and a positive private loopback exchange. The IPv6 fixture reports AF_INET6
+availability and namespace address/disable observations. Available sockets must
+fail numeric external TCP and UDP probes with no-route errors, including link-local
+and metadata addresses. An unavailable protocol is reported as unavailable.
+
+Process checks observe UID/GID, supplementary groups, UID/GID mappings, CapEff,
+CapPrm, CapBnd, NoNewPrivs and Seccomp. setuid/setgid denial is a representative
+privilege probe; it does not independently attribute denial to builtin seccomp or
+prove every elevation path blocked. Every execution independently checks both
+container and preparation-image absence afterward using a cleared CLI environment.
 
 ## Project requests and authority setup
 

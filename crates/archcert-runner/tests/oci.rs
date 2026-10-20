@@ -15,7 +15,7 @@ use archcert_domain::{
 };
 use archcert_materialization::{AuthorityWorkspaceRoot, UnixSourceMaterializer};
 use archcert_runner::{DockerRootlessRunner, DockerRuntime};
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf, process::Command};
+use std::{fs, io::Write, os::unix::fs::PermissionsExt, path::PathBuf, process::Command};
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 const FIXTURE: &[u8] = include_bytes!("fixtures/hostile.py");
 
@@ -107,7 +107,12 @@ fn execute(
     );
     // Independent daemon query proves no job-labelled child or stopped container
     // survives cleanup. Do not infer child death from stdout.
-    let listing = Command::new(cli)
+    let config = tempfile::tempdir()?;
+    let listing = Command::new(&cli)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .arg("--config")
+        .arg(config.path())
         .args([
             "--host",
             &endpoint,
@@ -121,6 +126,32 @@ fn execute(
         .output()?;
     assert!(listing.status.success());
     assert!(listing.stdout.is_empty());
+    let images = Command::new(&cli)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .arg("--config")
+        .arg(config.path())
+        .args([
+            "--host",
+            &endpoint,
+            "image",
+            "ls",
+            "--quiet",
+            "--filter",
+            &format!("label=archcert.job={}", result.evidence.execution),
+        ])
+        .output()?;
+    assert!(images.status.success());
+    assert!(images.stdout.is_empty(), "job-local image survived cleanup");
+    if let Some(directory) = std::env::var_os("ARCHCERT_TEST_EVIDENCE_DIR") {
+        let directory = PathBuf::from(directory);
+        fs::create_dir_all(&directory)?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(directory.join(format!("{}.json", result.evidence.execution)))?;
+        file.write_all(&serde_json::to_vec(&result)?)?;
+    }
     Ok(result)
 }
 fn completed(mode: &str, extra: &[String]) -> TestResult {
@@ -177,7 +208,7 @@ fn stdout_stderr_prefixes_binary_and_terminal_bytes_are_safe() -> TestResult {
 #[test]
 #[ignore = "requires rootless OCI"]
 fn timeout_infinite_loop_and_detached_children_are_destroyed() -> TestResult {
-    for mode in ["timeout", "children"] {
+    for mode in ["timeout", "children", "double-fork"] {
         let limits = ExecutionLimits {
             timeout_ms: 1500,
             ..ExecutionLimits::default()
@@ -281,6 +312,10 @@ fn clean_environment_and_host_credential_canary() -> TestResult {
             "GITHUB_TOKEN",
             "NPM_TOKEN",
             "DOCKER_HOST",
+            "DOCKER_CONTEXT",
+            "DOCKER_TLS_VERIFY",
+            "DOCKER_CERT_PATH",
+            "DOCKER_API_VERSION",
             "KUBECONFIG",
         ] {
             child.env(key, canary);
@@ -342,6 +377,92 @@ fn dns_tcp_http_metadata_and_host_gateway_have_no_route() -> TestResult {
     completed("network", &[])
 }
 #[test]
+#[ignore = "requires rootless OCI; records IPv6 unavailability or explicit TCP/UDP no-route behavior"]
+fn ipv6_metadata_and_external_routes_are_denied() -> TestResult {
+    let result = execute("ipv6", &[], ExecutionLimits::default(), "/source")?;
+    assert_eq!(result.evidence.outcome, ExecutionOutcome::Completed);
+    assert_eq!(
+        result.evidence.exit_code,
+        Some(0),
+        "{:?}",
+        result.evidence.stderr.excerpt
+    );
+    let observation: serde_json::Value = serde_json::from_slice(&result.evidence.stdout.excerpt)?;
+    assert!(matches!(
+        observation["ipv6_socket"].as_str(),
+        Some("available" | "unavailable")
+    ));
+    if observation["ipv6_socket"] == "available" {
+        assert_eq!(observation["external_routes"], "denied");
+    }
+    // Retain the actual disabled/address facts in the operator's bounded test log.
+    println!("IPv6 observation: {observation}");
+    Ok(())
+}
+#[test]
+#[ignore = "requires rootless OCI"]
+fn loopback_remains_private_and_available() -> TestResult {
+    let result = execute("loopback", &[], ExecutionLimits::default(), "/source")?;
+    assert_eq!(result.evidence.outcome, ExecutionOutcome::Completed);
+    assert_eq!(
+        result.evidence.exit_code,
+        Some(0),
+        "{:?}",
+        result.evidence.stderr.excerpt
+    );
+    let observation: serde_json::Value = serde_json::from_slice(&result.evidence.stdout.excerpt)?;
+    assert_eq!(observation["ipv4_loopback"], "available");
+    println!("Private loopback observation: {observation}");
+    Ok(())
+}
+#[test]
+#[ignore = "requires rootless OCI and actual cgroup v2 CPU throttling"]
+fn cpu_quota_throttles_target_execution() -> TestResult {
+    let result = execute(
+        "cpu-throttling",
+        &[],
+        ExecutionLimits {
+            cpu_millis: 100,
+            timeout_ms: 15000,
+            ..ExecutionLimits::default()
+        },
+        "/source",
+    )?;
+    assert_eq!(result.evidence.outcome, ExecutionOutcome::Completed);
+    assert_eq!(
+        result.evidence.exit_code,
+        Some(0),
+        "{:?}",
+        result.evidence.stderr.excerpt
+    );
+    println!(
+        "CPU throttling observation: {}",
+        String::from_utf8_lossy(&result.evidence.stdout.excerpt)
+    );
+    Ok(())
+}
+#[test]
+#[ignore = "requires rootless OCI"]
+fn process_churn_and_nested_shells_remain_within_pid_limit() -> TestResult {
+    let result = execute(
+        "process-churn",
+        &[],
+        ExecutionLimits {
+            pids: 16,
+            ..ExecutionLimits::default()
+        },
+        "/source",
+    )?;
+    assert_eq!(result.evidence.outcome, ExecutionOutcome::Completed);
+    assert_eq!(
+        result.evidence.exit_code,
+        Some(0),
+        "{:?}",
+        result.evidence.stderr.excerpt
+    );
+    Ok(())
+}
+#[test]
 #[ignore = "requires rootless OCI"]
 fn host_process_observation_is_blocked_and_user_is_unprivileged() -> TestResult {
     completed("process", &[std::process::id().to_string()])
@@ -357,5 +478,8 @@ fn working_directory_and_bounded_temporary_disk() -> TestResult {
     )?;
     assert_eq!(result.evidence.exit_code, Some(0));
     assert_eq!(result.evidence.stdout.excerpt, b"/work\n");
-    completed("disk", &[])
+    for path in ["/work", "/tmp", "/output", "/home/archcert"] {
+        completed("disk", &[path.into()])?;
+    }
+    Ok(())
 }

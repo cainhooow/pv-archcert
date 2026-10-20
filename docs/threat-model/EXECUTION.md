@@ -53,6 +53,16 @@ escaping source links, host paths/socket, proc/capability/user state and denied
 DNS/TCP/HTTP/metadata/gateway routes. They assert runtime removal independently
 of target stdout. Ordinary container tests are not proof of escape resistance.
 
+Stoneward adds explicit IPv6 TCP/UDP no-route probes and protocol-availability
+observations, IPv4 UDP denial, positive private loopback exchanges, per-path tmpfs
+exhaustion, measured CPU throttling, process churn/nested shells, double-fork
+descendants, supplementary group/UID-map checks, CapPrm/CapBnd observations and
+representative setuid/setgid denial. Socket probes include rootless user sockets,
+containerd, Podman and CRI paths. Independent post-execution queries check both
+containers and preparation images with no ambient Docker context/TLS environment.
+Optional create-new bounded JSON test artifacts retain actual runtime/fixture
+observations. These fixtures remain opt-in; their existence is not a native pass.
+
 Observed platform: macOS controller -> forwarded Unix socket -> rootless Docker
 29.5.2/runc 1.3.5/containerd 2.2.4 on Ubuntu 24.04.4 Linux 6.8 in a dedicated
 Colima VM. macOS HOME sharing and agent forwarding were disabled. Docker Desktop,
