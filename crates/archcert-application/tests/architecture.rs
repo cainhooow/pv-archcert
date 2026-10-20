@@ -49,6 +49,16 @@ fn allowed_inward_dependency(package: &str, dependency: &str) -> bool {
                 && !["reqwest", "tokio", "rustix", "sqlx"].contains(&dependency)
                 && !is_semantic_provider_dependency(dependency)
         }
+        "archcert-semantic" => {
+            (!dependency.starts_with("archcert-")
+                || [
+                    "archcert-domain",
+                    "archcert-application",
+                    "archcert-knowledge",
+                ]
+                .contains(&dependency))
+                && !["reqwest", "rustix", "sqlx"].contains(&dependency)
+        }
         "archcert-policy" => {
             (!dependency.starts_with("archcert-")
                 || ["archcert-domain", "archcert-application"].contains(&dependency))
@@ -223,6 +233,7 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
         "archcert-application",
         "archcert-policy",
         "archcert-knowledge",
+        "archcert-semantic",
     ] {
         let mut pending = vec![root.to_owned()];
         let mut seen = BTreeSet::new();
@@ -240,7 +251,7 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
                 .contains(&name.as_str()),
                 "signing authority enters forbidden graph {root}: {name}"
             );
-            if root == "archcert-worker" {
+            if ["archcert-worker", "archcert-semantic"].contains(&root) {
                 assert!(
                     !is_persistence_dependency(&name),
                     "database/object-store authority enters worker: {name}"
@@ -290,6 +301,9 @@ fn guard_rejects_forbidden_dependencies_including_renamed_package_names() {
         ("archcert-knowledge", "archcert-crypto"),
         ("archcert-knowledge", "archcert-storage"),
         ("archcert-knowledge", "archcert-runner"),
+        ("archcert-semantic", "archcert-crypto"),
+        ("archcert-semantic", "archcert-storage"),
+        ("archcert-semantic", "archcert-runner"),
         ("archcert-application", "archcert-protocol"),
         ("archcert-domain", "archcert-proto"),
         ("archcert-domain", "prost"),

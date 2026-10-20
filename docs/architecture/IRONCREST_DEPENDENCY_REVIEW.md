@@ -1,6 +1,6 @@
 # Ironcrest dependency review
 
-Scope: passive knowledge extraction. Date: October 20, 2026. This is a scoped
+Scope: passive knowledge extraction and local semantic replay. Date: October 20, 2026. This is a scoped
 dependency review, not an independent source audit or parser safety proof.
 
 ## Rust syntax parser
@@ -40,7 +40,11 @@ bounds do not prove stack usage, parser correctness, global availability or abse
 of dependency vulnerabilities. Source-process isolation for parsing is not implemented.
 
 No generic graph library/database, AI SDK, SaaS client, shell runner or additional
-service is introduced. Application/domain have no parser/provider SDK dependency;
+service is introduced. Local replay reuses async-trait and existing serialization;
+it adds no external package or runtime network/process dependency. The controlled
+challenge uses Python/SQLite supplied by the existing authority-selected pinned
+Python image. It executes only through the existing isolated runner, never as a
+host-side knowledge/provider operation. Application/domain have no parser/provider SDK dependency;
 the parser lives in archcert-knowledge behind the application extractor port.
 
 Validation commands and actual outcomes are retained in the intentionally untracked

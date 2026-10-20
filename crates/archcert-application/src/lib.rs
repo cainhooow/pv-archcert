@@ -4,12 +4,14 @@ use archcert_domain::GitObjectId;
 use thiserror::Error;
 
 pub mod artifacts;
+pub mod challenges;
 pub mod configuration;
 pub mod execution;
 pub mod ingress;
 pub mod jobs;
 pub mod knowledge;
 pub mod materialization;
+pub mod semantic;
 pub mod source;
 pub mod validation;
 pub mod worker;

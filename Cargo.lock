@@ -117,13 +117,16 @@ dependencies = [
  "archcert-crypto",
  "archcert-domain",
  "archcert-gateway",
+ "archcert-knowledge",
  "archcert-materialization",
  "archcert-policy",
  "archcert-runner",
+ "archcert-semantic",
  "archcert-source",
  "clap",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -295,6 +298,18 @@ dependencies = [
  "sha2 0.10.9",
  "tar",
  "tempfile",
+]
+
+[[package]]
+name = "archcert-semantic"
+version = "0.1.0"
+dependencies = [
+ "archcert-application",
+ "archcert-domain",
+ "archcert-knowledge",
+ "async-trait",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

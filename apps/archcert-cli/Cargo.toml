@@ -24,6 +24,9 @@ serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+archcert-knowledge = { path = "../../crates/archcert-knowledge", version = "=0.1.0" }
+archcert-semantic = { path = "../../crates/archcert-semantic", version = "=0.1.0" }
+tokio.workspace = true
 
 [lints]
 workspace = true

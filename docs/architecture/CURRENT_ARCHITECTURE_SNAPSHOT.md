@@ -16,8 +16,35 @@ is retained without an invented schema. Canonical knowledge/impact artifacts car
 extractor versions, authority identities, exact source/baseline pins, bounds and
 blind spots. Missing or uncertain baseline/relationships expand to full review.
 No runtime/provider/signing boundary is changed. Parser limits and residual risks
-are documented in IRONCREST_DEPENDENCY_REVIEW.md. Persistence, semantic review,
-challenge execution and issuance binding remain outstanding at this checkpoint.
+are documented in IRONCREST_DEPENDENCY_REVIEW.md.
+
+The application SemanticReviewer port now prepares bounded canonical context with
+a separate fixed authority contract, labeled untrusted repository bytes, approved
+authority identities, exact source/baseline/knowledge/impact/policy/job bindings and
+optional untrusted claim/evidence links. Strict semantic responses have no policy
+verdict or signing representation. Immutable review artifacts retain exact accepted
+response bytes/digests, adapter/model metadata, request identity, time and classified
+failure/truncation state; restore validates exact expected inputs without a provider
+call. The deterministic gate supports BLOCK, REQUIRE_MORE_EVIDENCE and CONTINUE;
+CONTINUE adds no deterministic property. archcert-semantic provides local exact
+replay and an unavailable default only. No external source disclosure or AI service
+is configured. Timeout/crash tests simulate classified transport failures; there is
+no live provider process or remote transport to qualify.
+
+The controlled authority challenge registry supports bounded idempotency replay
+against a documented settlement.py fixture API, with an authority-owned SQLite
+final-state assertion. Proposals cannot specify commands, image, mounts, network,
+privilege, endpoints, budgets or credentials. The registry constructs a new additive
+authority plan; it never mutates an admitted pinned plan. Other challenge categories
+are vocabulary only. The opt-in CLI integration test executes good and defective
+fixtures through the unchanged rootless runner. Test-source confidentiality during
+target execution is not established. These are engineering tests, not certification.
+
+Durable semantic metadata/controller admission, checkpoint recovery, the separately
+versioned Ironcrest issuance profile and evidence-manifest extension are not yet
+implemented. Existing certification paths do not consume the new semantic gate.
+Ironcrest source-to-certificate and semantic-veto-before-signing guarantees therefore
+remain NOT PROVEN. The baseline controller still accepts only its historical policy.
 
 ArchCert accepts authenticated SSH Git pushes with bounded SHA-1/SHA-256 packs
 or explicit local loose objects, seals an independently hashed

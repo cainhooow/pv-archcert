@@ -11,6 +11,7 @@ members = [
     "crates/archcert-control-plane",
     "crates/archcert-application",
     "crates/archcert-knowledge",
+    "crates/archcert-semantic",
     "crates/archcert-protocol",
     "crates/archcert-source",
     "crates/archcert-gateway",
