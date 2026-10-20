@@ -356,26 +356,57 @@ async fn negative_policy_never_retries_until_pass() -> R {
 #[tokio::test]
 #[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
 async fn inconclusive_evidence_is_terminal_and_cannot_be_reinterpreted() -> R {
-    let (repo, _) = database().await?;
+    let (repo, pool) = database().await?;
     let id = repo.create(request(&repo).await?).await?.id;
     let a = repo.claim("uncertain", 30).await?.ok_or("no claim")?;
-    repo.start(&a.lease).await?;
-    let r = make_available(&repo, id, Some(a.lease.attempt), "EXECUTION").await?;
-    repo.accept_evidence(&a.lease, &r).await?;
-    let e = make_available(&repo, id, None, "EVALUATION").await?;
-    repo.record_evaluation(id, &e, EvaluationDecision::Inconclusive)
-        .await?;
-    let job = repo.get(id).await?;
-    assert_eq!(job.state, JobState::Inconclusive);
-    assert_eq!(job.failure, Some(FailureCategory::InfrastructureFailure));
-    assert!(job.evaluation_at.is_some());
-    assert!(
-        repo.record_evaluation(id, &e, EvaluationDecision::Eligible)
+    let started = std::time::Instant::now();
+    let result: R = async {
+        repo.start(&a.lease)
             .await
-            .is_err()
-    );
-    assert!(repo.claim("retry", 30).await?.is_none());
-    Ok(())
+            .map_err(|e| format!("start: {e}"))?;
+        let r = make_available(&repo, id, Some(a.lease.attempt), "EXECUTION")
+            .await
+            .map_err(|e| format!("publish execution: {e}"))?;
+        repo.accept_evidence(&a.lease, &r)
+            .await
+            .map_err(|e| format!("accept execution: {e}"))?;
+        let e = make_available(&repo, id, None, "EVALUATION")
+            .await
+            .map_err(|e| format!("publish evaluation: {e}"))?;
+        repo.record_evaluation(id, &e, EvaluationDecision::Inconclusive)
+            .await
+            .map_err(|e| format!("record inconclusive: {e}"))?;
+        let job = repo.get(id).await?;
+        assert_eq!(job.state, JobState::Inconclusive);
+        assert_eq!(job.failure, Some(FailureCategory::InfrastructureFailure));
+        assert!(job.evaluation_at.is_some());
+        assert!(
+            repo.record_evaluation(id, &e, EvaluationDecision::Eligible)
+                .await
+                .is_err()
+        );
+        assert!(repo.claim("retry", 30).await?.is_none());
+        Ok(())
+    }
+    .await;
+    if let Err(error) = &result {
+        // Failure-only observations preserve the original assertions and lease rules.
+        let state: serde_json::Value = sqlx::query_scalar(
+            "SELECT jsonb_build_object('database_time',clock_timestamp(),
+             'job_state',j.state,'attempt_state',a.state,'leased_at',a.leased_at,
+             'lease_until',a.lease_until,'artifacts',(SELECT jsonb_agg(to_jsonb(r))
+             FROM artifacts r WHERE r.job=j.id)) FROM certification_jobs j
+             JOIN certification_attempts a ON a.job=j.id WHERE j.id=$1",
+        )
+        .bind(id.to_string())
+        .fetch_one(&pool)
+        .await?;
+        eprintln!(
+            "inconclusive transition failed: {error}; elapsed={:?}; state={state}",
+            started.elapsed()
+        );
+    }
+    result
 }
 
 #[tokio::test]

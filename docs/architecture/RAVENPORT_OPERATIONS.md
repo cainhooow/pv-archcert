@@ -199,3 +199,27 @@ removed or overwritten. Partial/hard-linked publication remains unavailable unti
 stage cleanup and normal digest/size verification succeed. Storage readiness/put
 also requires 1 GiB and 1024 available inodes on the artifact filesystem. These
 local POSIX/fsync/link/lock assumptions do not qualify NFS or power-loss behavior.
+
+## Database clock stability in virtualized development
+
+PostgreSQL wall-clock time governs leases. Keep one consistent time authority for
+the database host. Competing guest NTP and host-to-guest clock synchronization can
+step the guest clock forward beyond a lease and then backward. This correctly
+causes fenced operations to reject even when little client monotonic time elapsed;
+it is not permission to extend an expired worker's authority.
+
+An Ironcrest continuation reproduced an inconclusive-state fixture failure at
+`accept_evidence`: a 30-second lease expired during 441 ms of client elapsed time,
+with RUNNING job/attempt and AVAILABLE execution metadata. The Colima/Lima host
+agent repeatedly corrected approximately 41-second offsets while guest
+`systemd-timesyncd` also synchronized against NTP. An isolated fixture and parallel
+historical fixtures both failed under that clock conflict. The development run
+used a single clock authority before repetition; no production lease/fence rule,
+assertion, timeout or expected result was relaxed. See the intentionally untracked
+M6 report for exact repetition counts and retained engineering evidence.
+
+The inconclusive regression emits its failing transition, database timestamp,
+lease timestamps, job/attempt state and artifact availability on an error. Preserve
+these observations when diagnosing a future failure. Do not treat a successful
+retry as proof that a prior ownership/state failure was harmless. Stable wall-clock
+provisioning remains an operational prerequisite, including outside this VM.
