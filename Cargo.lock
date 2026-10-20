@@ -329,6 +329,8 @@ dependencies = [
  "archcert-runner",
  "archcert-source",
  "clap",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

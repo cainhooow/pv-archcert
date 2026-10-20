@@ -146,3 +146,12 @@ The authority-only --stop-after test flag exits the controller at explicit lease
 artifact staging, evidence, evaluation, prepared issuance, signed, or certificate
 upload boundaries. It is not read from project configuration or HTTP input.
 The demonstration restores each stage using a new process and preserves attempts.
+
+Stoneward adds a credential-free runtime diagnostic:
+`archcert-worker --docker /absolute/docker --endpoint unix:///authority/rootless.sock doctor`.
+It reports observed prerequisite identity without reading stdin or starting a
+container; an invalid/unavailable runtime exits nonzero. This is a runtime
+preflight check, not full service readiness or native qualification. See
+[native qualification status](../qualification/NATIVE_LINUX_RUNNER.md) and
+[ADR 0038](../adr/0038-stoneward-native-qualification-profile.md). Current running
+attempt recovery still requires the explicit authority cleanup path above.

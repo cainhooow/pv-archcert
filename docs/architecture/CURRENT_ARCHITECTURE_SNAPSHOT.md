@@ -201,3 +201,13 @@ execution/evaluation/signing do not repeat target commands. Lease expiry recover
 preserves prior attempts and requires confirmed runtime cleanup after target start.
 See RAVENPORT_OPERATIONS.md for the explicit supervisor/run-once deployment and
 its local development role/encryption/cleanup limitations.
+
+## Stoneward qualification in progress
+
+The pre-change capability matrix remains in the intentionally untracked M5.2
+baseline working record. Native Linux remains NOT YET QUALIFIED; authoritative
+status and support limits are in qualification/NATIVE_LINUX_RUNNER.md. Worker
+`doctor` reports runtime prerequisites without accepting an execution assignment
+or gaining control-plane credentials. Runtime evidence now retains the explicitly
+selected Unix endpoint and reported daemon ID/security options/default runtime.
+These observations do not attest runtime binaries or establish native deployment.

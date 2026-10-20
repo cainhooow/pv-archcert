@@ -11,7 +11,7 @@ use serde_json::Value;
 use std::{
     collections::BTreeSet,
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::Command,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -32,9 +32,15 @@ impl DockerRuntime {
     pub fn new(executable: PathBuf, endpoint: String) -> Result<Self, ExecutionError> {
         if !executable.is_absolute()
             || !executable.is_file()
-            || !endpoint
-                .strip_prefix("unix://")
-                .is_some_and(|p| Path::new(p).is_absolute() && !p.contains('\0'))
+            || endpoint.len() > 4096
+            || endpoint.bytes().any(|b| b.is_ascii_control())
+            || !endpoint.strip_prefix("unix://").is_some_and(|p| {
+                Path::new(p).is_absolute()
+                    && Path::new(p).file_name().is_some()
+                    && Path::new(p)
+                        .components()
+                        .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
+            })
         {
             return Err(ExecutionError::InvalidRuntimeConfiguration);
         }
@@ -111,15 +117,26 @@ impl DockerRuntime {
             return Err(ExecutionError::RuntimeFailure);
         }
         let mut runtime_information = std::collections::BTreeMap::new();
+        runtime_information.insert("authority/endpoint".into(), self.endpoint.clone());
         for key in [
+            "ID",
             "KernelVersion",
             "OperatingSystem",
             "Architecture",
             "CgroupVersion",
             "CgroupDriver",
+            "DefaultRuntime",
         ] {
-            runtime_information.insert(key.into(), field(&info, key)?.into());
+            let value = field(&info, key)?;
+            if value.is_empty() {
+                return Err(ExecutionError::EnvironmentNotProven);
+            }
+            runtime_information.insert(key.into(), value.into());
         }
+        runtime_information.insert(
+            "SecurityOptions".into(),
+            info["SecurityOptions"].to_string(),
+        );
         let components = version["Server"]["Components"]
             .as_array()
             .ok_or(ExecutionError::RuntimeFailure)?;
@@ -199,6 +216,7 @@ fn verify_daemon(info: &Value) -> Result<(), ExecutionError> {
     if info["OSType"] != "linux"
         || info["CgroupVersion"] != "2"
         || info["CgroupDriver"] != "systemd"
+        || info["DefaultRuntime"] != "runc"
         || !contains("name=rootless")
         || !contains("name=seccomp,profile=builtin")
         || [
@@ -407,6 +425,8 @@ impl DockerRootlessRunner {
             "--name",
             &lease.prep,
             "--network=none",
+            "--runtime=runc",
+            "--cgroupns=private",
             "--entrypoint",
             "/usr/bin/env",
         ]);
@@ -809,7 +829,7 @@ mod tests {
     fn daemon() -> Value {
         serde_json::json!({"OSType":"linux","CgroupVersion":"2","CgroupDriver":"systemd",
         "SecurityOptions":["name=rootless","name=seccomp,profile=builtin"],"MemoryLimit":true,"SwapLimit":true,
-        "PidsLimit":true,"CpuCfsQuota":true,"CpuCfsPeriod":true,"Runtimes":{"runc":{}},"ServerVersion":"test", "KernelVersion":"test-kernel", "OperatingSystem":"test-linux", "Architecture":"test-arch", "Warnings":null})
+        "PidsLimit":true,"CpuCfsQuota":true,"CpuCfsPeriod":true,"Runtimes":{"runc":{}},"DefaultRuntime":"runc","ID":"test-daemon","ServerVersion":"test", "KernelVersion":"test-kernel", "OperatingSystem":"test-linux", "Architecture":"test-arch", "Warnings":null})
     }
     fn mock(mode: &str) -> Result<(tempfile::TempDir, DockerRuntime), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -893,6 +913,7 @@ mod tests {
             "CpuCfsQuota",
             "CpuCfsPeriod",
             "Runtimes",
+            "DefaultRuntime",
         ] {
             let mut invalid = daemon();
             invalid[key] = Value::Null;
@@ -956,6 +977,42 @@ mod tests {
             "test-runtime"
         );
         assert!(identity.client_path.ends_with("runtime-mock"));
+        assert_eq!(identity.runtime_information["ID"], "test-daemon");
+        assert_eq!(
+            identity.runtime_information["authority/endpoint"],
+            "unix:///not-a-real-runtime.sock"
+        );
+        Ok(())
+    }
+    #[test]
+    fn runtime_endpoint_is_bounded_local_authority_configuration() -> TestResult {
+        let (_temp, runtime) = mock("removed")?;
+        for endpoint in [
+            "tcp://127.0.0.1:2375",
+            "ssh://runtime.example",
+            "unix://relative.sock",
+            "unix:///",
+            "unix:///run/../rootful.sock",
+            "unix:///run/rootless\n.sock",
+            "unix:///run/rootless\0.sock",
+        ] {
+            assert!(DockerRuntime::new(runtime.executable.clone(), endpoint.into()).is_err());
+        }
+        assert!(
+            DockerRuntime::new(
+                runtime.executable.clone(),
+                format!("unix:///{}", "a".repeat(4096))
+            )
+            .is_err()
+        );
+        let command = runtime.command(&strings(&["info"]));
+        let args: Vec<_> = command.get_args().map(|s| s.to_string_lossy()).collect();
+        assert!(args.windows(2).any(|a| a == ["--host", &runtime.endpoint]));
+        assert!(
+            !args
+                .iter()
+                .any(|s| s.contains("--context") || s.contains("--tls"))
+        );
         Ok(())
     }
     #[test]
@@ -1061,6 +1118,10 @@ mod tests {
             "GITHUB_TOKEN",
             "NPM_TOKEN",
             "DOCKER_HOST",
+            "DOCKER_CONTEXT",
+            "DOCKER_TLS_VERIFY",
+            "DOCKER_CERT_PATH",
+            "DOCKER_API_VERSION",
             "KUBECONFIG",
         ] {
             assert!(env.get(key).is_none(), "{key}");

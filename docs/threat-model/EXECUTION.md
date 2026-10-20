@@ -29,6 +29,14 @@ service exposed to the target. Compromise of this TCB invalidates isolation.
 | Runner evidence spoofing | Target cannot assert success/certification | Controller-built source/argv/runtime status/hashes; false PASS text fixture exits 7; client/runtime exit mismatch fails | Runtime/controller compromise invalidates observations; durable authenticated evidence storage is deferred |
 | Cleanup failure / late daemon response / crash | No false successful destruction or certification | UUID names and job/workspace/owner labels chosen before create; bounded explicit cleanup on success/error/unwind; failure separate with evidence | Fatal abort/power loss/outstanding daemon operations can leave labelled orphans; persistent reconciliation and secure media erasure are deferred |
 | Authority configuration downgrade | Project input cannot alter isolation/resource authority | Private ExecutionProfile fields; no project deserialization; strict TOML request DTOs; no mounts/privilege/network/env API; stopped config rejection matrix | Authority/operator mistakes and malicious changes to trusted ArchCert code are outside project-input validation |
+| Runtime endpoint substitution | Only operator-selected runtime authority is used | Explicit bounded Unix endpoint, absolute client path, env_clear and empty private Docker config; no project context/socket/TLS fields; selected endpoint and reported daemon ID retained in execution evidence | Socket forwarding/replacement and same-UID/runtime administrators remain trusted; observed identity is not attestation and a local socket does not prove native execution |
+
+The worker `doctor` command observes the same required rootless/cgroup-v2/systemd,
+builtin-seccomp, resource-support and runc reports as execution preflight. It does
+not execute a live enforcement probe or establish full worker readiness. Native
+Linux qualification is tracked in
+[the qualification report](../qualification/NATIVE_LINUX_RUNNER.md); no native
+guarantee is inferred from default tests or runtime-reported configuration alone.
 
 ## What the tests establish
 

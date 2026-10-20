@@ -15,7 +15,7 @@ use archcert_materialization::{AuthorityWorkspaceRoot, UnixSourceMaterializer};
 use archcert_protocol::protobuf::worker::{decode_assignment, encode_result};
 use archcert_runner::{DockerRootlessRunner, DockerRuntime};
 use archcert_source::{MemorySourceStore, read_snapshot};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::{
     io::{Read, Write},
     path::PathBuf,
@@ -23,14 +23,30 @@ use std::{
 #[derive(Parser)]
 struct Args {
     #[arg(long)]
-    workspace_root: PathBuf,
+    workspace_root: Option<PathBuf>,
     #[arg(long)]
     docker: PathBuf,
     #[arg(long)]
     endpoint: String,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+#[derive(Subcommand)]
+enum Command {
+    /// Observes runtime prerequisites without accepting an assignment or starting a target.
+    Doctor,
 }
 fn main() -> Result<()> {
     let args = Args::parse();
+    if matches!(args.command, Some(Command::Doctor)) {
+        let runner = DockerRootlessRunner::new(DockerRuntime::new(args.docker, args.endpoint)?);
+        let observed = runner.verify_environment()?;
+        println!("{}", serde_json::to_string(&observed)?);
+        return Ok(());
+    }
+    let workspace_root = args.workspace_root.ok_or_else(|| {
+        anyhow::anyhow!("--workspace-root is required when executing an assignment")
+    })?;
     let mut bytes = Vec::new();
     std::io::stdin()
         .take(MAX_ASSIGNMENT_BYTES as u64 + 1)
@@ -51,8 +67,7 @@ fn main() -> Result<()> {
     let plan = pinned_plan(inputs)?;
     let mut store = MemorySourceStore::default();
     store.retain(snapshot)?;
-    let materializer =
-        UnixSourceMaterializer::new(AuthorityWorkspaceRoot::open(&args.workspace_root)?);
+    let materializer = UnixSourceMaterializer::new(AuthorityWorkspaceRoot::open(&workspace_root)?);
     let runner = DockerRootlessRunner::new(DockerRuntime::new(args.docker, args.endpoint)?);
     let mut steps = Vec::new();
     for step in plan.steps() {
