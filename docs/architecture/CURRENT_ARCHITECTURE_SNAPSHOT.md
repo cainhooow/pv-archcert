@@ -176,3 +176,9 @@ ImmutableArtifactStore now has an explicitly unencrypted local development
 adapter: project-scoped SHA-256 keys, atomic create-only publication, fsync and
 bounded verified retrieval. ArtifactCipher defines the future encryption seam.
 No production encryption provider or MinIO-specific semantics are implemented.
+
+Ravenport worker process models and execution.v1 Protobuf assignment/result
+contracts are implemented. Checked adapters retain existing operational evidence
+serialization and canonical source identities. Pinned authority plans reconstruct
+only from retained commands/image and must match their stored digest. Source
+artifact acceptance and actual lease authority remain separate from wire decoding.

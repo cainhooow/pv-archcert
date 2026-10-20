@@ -14,6 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let files = [
         root.join("archcert/common/v1/identity.proto"),
         root.join("archcert/source/v1/source.proto"),
+        root.join("archcert/execution/v1/worker.proto"),
     ];
     for file in &files {
         println!("cargo:rerun-if-changed={}", file.display());

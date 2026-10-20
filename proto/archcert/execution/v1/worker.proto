@@ -1,0 +1,44 @@
+syntax = "proto3";
+package archcert.execution.v1;
+import "archcert/common/v1/identity.proto";
+
+// Private authority-launched stdio boundary, not a public RPC. No lease token,
+// credentials, runtime endpoint, object locator or signing capability crosses it.
+message WorkerAssignment {
+  uint32 contract_version = 1;
+  string job_id = 2;
+  string attempt_id = 3;
+  archcert.common.v1.ProjectId project = 4;
+  archcert.common.v1.RepositoryId repository = 5;
+  archcert.common.v1.SourceSubmissionId submission = 6;
+  archcert.common.v1.SourceIdentity source = 7;
+  archcert.common.v1.GitActorId actor = 8;
+  string policy_id = 9;
+  string policy_version = 10;
+  archcert.common.v1.Sha256Digest policy_sha256 = 11;
+  string profile = 12;
+  string image = 13;
+  archcert.common.v1.Sha256Digest plan_sha256 = 14;
+  string authority_toml = 15;
+  uint32 maximum_attempts = 16;
+  // Existing bounded snapshot artifact codec; never trusted without reload/rehash.
+  bytes source_artifact = 17;
+}
+message CompletedExecution {
+  string step_id = 1;
+  string execution_id = 2;
+  // Existing operational ExecutionEvidence JSON schema, bounded and checked by
+  // protocol/application adapters. No policy verdict; bytes are not signable.
+  optional bytes execution_evidence_json = 3;
+  bool source_cleanup_confirmed = 4;
+  bool sandbox_cleanup_confirmed = 5;
+}
+message WorkerResult {
+  uint32 contract_version = 1;
+  string job_id = 2;
+  string attempt_id = 3;
+  archcert.common.v1.SourceIdentity source = 4;
+  archcert.common.v1.Sha256Digest plan_sha256 = 5;
+  string producer = 6;
+  repeated CompletedExecution executions = 7;
+}

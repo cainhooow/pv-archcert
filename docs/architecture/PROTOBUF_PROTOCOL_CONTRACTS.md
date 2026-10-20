@@ -192,3 +192,31 @@ the authority signer into a general-purpose signing oracle. The existing canonic
 certificate preparation/eligibility boundary must precede signing. Actual signer
 RPC, durable jobs, persistence, recovery, distributed workers, and production RPC
 remain M5.1 or later scope.
+
+## Ravenport worker process boundary
+
+execution/v1/worker.proto now defines WorkerAssignment, WorkerResult and
+CompletedExecution for a real authority-launched worker process over private
+stdio. The assignment pins job/attempt, full source scope/identity, policy identity,
+profile/image, authority command recipe and plan digest, plus bounded source
+artifact bytes. It carries no lease token, database/object-store credential,
+signing key, runtime endpoint or host path. Runtime configuration is separately
+operator-provisioned to the execution process, never target RunnerInput.
+
+The worker rehydrates the existing source artifact through Northgate's checked
+codec and compares complete scope/identity before materialization. Result records
+bind job/attempt/source/plan/step/execution and explicit cleanup confirmations.
+The existing operational ExecutionEvidence JSON representation is a nested bounded
+payload in CompletedExecution, not Protobuf JSON or a signable canonical payload.
+Checked command/identity deserialization and application binding checks precede
+persistence; retained result bytes have an independent artifact SHA-256.
+
+Private process pipes authenticate the selected local executable under the trusted
+controller OS identity. No public network worker service is exposed. Evaluated
+network gRPC/tonic and deferred it: this actual boundary uses a local child process,
+so adding RPC authentication/transport would add TCB without a deployment need.
+Remote workers require a separately authenticated capability transport, not merely
+these DTOs. The worker receives no signing protocol, and arbitrary-data signing
+remains forbidden. Bare contracts require version 1; input/result bounds are 80 MiB
+and 16 MiB respectively; source artifacts additionally cap at 72 MiB. Unknown
+required/default semantics reject. Existing source golden fixtures remain unchanged.

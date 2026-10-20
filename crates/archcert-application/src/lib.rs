@@ -11,6 +11,7 @@ pub mod jobs;
 pub mod materialization;
 pub mod source;
 pub mod validation;
+pub mod worker;
 
 /// Transport-independent certification submission request; no HTTP semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]

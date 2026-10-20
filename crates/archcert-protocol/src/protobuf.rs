@@ -29,3 +29,14 @@ pub mod source {
         include!(concat!(env!("OUT_DIR"), "/archcert.source.v1.rs"));
     }
 }
+
+/// Private worker process protocol conversions.
+pub mod worker;
+/// Execution transport contracts, owned exclusively by this protocol adapter.
+#[allow(missing_docs)]
+pub mod execution {
+    /// Version 1 worker assignment/result contracts.
+    pub mod v1 {
+        include!(concat!(env!("OUT_DIR"), "/archcert.execution.v1.rs"));
+    }
+}

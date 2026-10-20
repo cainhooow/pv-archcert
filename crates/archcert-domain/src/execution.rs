@@ -1,18 +1,32 @@
 //! Hostile execution contracts. These types confer no certification verdict.
 
 use crate::{Sha256Digest, SourceIdentity, materialization::WorkspaceId};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use thiserror::Error;
 use uuid::Uuid;
 
 /// Authority-generated job identity, also used for orphan discovery.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String")]
 pub struct ExecutionId(Uuid);
 impl ExecutionId {
     /// Generates a new opaque execution identity.
     pub fn new() -> Self {
         Self(Uuid::new_v4())
+    }
+}
+impl TryFrom<String> for ExecutionId {
+    type Error = ExecutionError;
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        let id = Uuid::parse_str(&text).map_err(|_| ExecutionError::SourceIntegrity)?;
+        if id.get_version_num() != 4
+            || id.get_variant() != uuid::Variant::RFC4122
+            || id.to_string() != text
+        {
+            return Err(ExecutionError::SourceIntegrity);
+        }
+        Ok(Self(id))
     }
 }
 impl Default for ExecutionId {
@@ -27,14 +41,14 @@ impl std::fmt::Display for ExecutionId {
 }
 
 /// Only implemented egress policy. Unsupported future policies cannot deserialize here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NetworkPolicy {
     /// No external interfaces, DNS, host gateway or metadata route.
     Denied,
 }
 
 /// Explicit authority limits. CPU is a rate ceiling, bounded in total by timeout.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionLimits {
     /// Wall-clock milliseconds, enforced by the controller.
     pub timeout_ms: u64,
@@ -93,11 +107,25 @@ impl ExecutionLimits {
 }
 
 /// Structured argv, with no implicit shell parsing.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawCommand")]
 pub struct ExecutionCommand {
     program: String,
     args: Vec<String>,
     working_directory: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawCommand {
+    program: String,
+    args: Vec<String>,
+    working_directory: String,
+}
+impl TryFrom<RawCommand> for ExecutionCommand {
+    type Error = ExecutionError;
+    fn try_from(c: RawCommand) -> Result<Self, Self::Error> {
+        Self::new(c.program, c.args, c.working_directory)
+    }
 }
 impl ExecutionCommand {
     /// Accepts a program name or absolute sandbox path and literal arguments.
@@ -319,7 +347,7 @@ impl ExecutionState {
 }
 
 /// Execution outcome only; zero exit does not certify a project.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExecutionOutcome {
     /// Target exited (possibly nonzero).
     Completed,
@@ -335,7 +363,7 @@ pub enum ExecutionOutcome {
     Terminated,
 }
 /// Observed termination cause; never infer a PID/CPU exhaustion from arbitrary log text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TerminationReason {
     /// Ordinary process exit.
     Exit,
@@ -354,7 +382,7 @@ pub enum TerminationReason {
 }
 
 /// Bounded hostile bytes. JSON escapes byte values by serializing an integer array.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapturedStream {
     /// SHA-256 of every byte actually observed, including bytes outside the prefix.
     pub sha256: Sha256Digest,
@@ -369,7 +397,7 @@ pub struct CapturedStream {
 }
 
 /// Observed CLI/daemon reports. This is not executable attestation or provenance.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObservedRuntimeIdentity {
     /// Configured client path; replacement of the binary is outside this observation.
     pub client_path: String,
@@ -381,14 +409,14 @@ pub struct ObservedRuntimeIdentity {
     pub runtime_information: BTreeMap<String, String>,
 }
 /// Image/profile naming cannot establish a toolchain version.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolchainObservation {
     /// No controlled toolchain/version probe was performed.
     NotObserved,
 }
 
 /// Structured runner/controller evidence. Target files and log claims have no authority.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionEvidence {
     /// Authority execution/job ID.
     pub execution: ExecutionId,
