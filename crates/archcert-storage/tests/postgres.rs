@@ -195,7 +195,7 @@ async fn expired_worker_is_fenced_and_history_survives_retry() -> R {
         .execute(&pool)
         .await?;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    repo.recover(id, false).await?;
+    repo.recover(id, first.lease.attempt).await?;
     let second = repo
         .claim("replacement", 5)
         .await?
@@ -208,12 +208,47 @@ async fn expired_worker_is_fenced_and_history_survives_retry() -> R {
             .is_err()
     );
     repo.start(&second.lease).await?;
+    let binding = RuntimeBinding {
+        endpoint: "unix:///test-only.sock".into(),
+        daemon_id: "test-runtime".into(),
+        gate_root: "/authority/gates".into(),
+    };
+    repo.bind_runtime(&second.lease, &binding).await?;
     sqlx::query("UPDATE certification_attempts SET lease_until=leased_at+1 WHERE state='RUNNING'")
         .execute(&pool)
         .await?;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    assert!(repo.recover(id, false).await.is_err());
-    repo.recover(id, true).await?;
+    assert!(repo.recover(id, second.lease.attempt).await.is_err());
+    assert!(
+        repo.finish_cleanup(
+            id,
+            second.lease.attempt,
+            &binding,
+            RuntimeCleanupState::Succeeded
+        )
+        .await
+        .is_err()
+    );
+    repo.fence_runtime(id, second.lease.attempt, &binding)
+        .await?;
+    repo.finish_cleanup(
+        id,
+        second.lease.attempt,
+        &binding,
+        RuntimeCleanupState::Failed,
+    )
+    .await?;
+    assert!(repo.recover(id, second.lease.attempt).await.is_err());
+    repo.fence_runtime(id, second.lease.attempt, &binding)
+        .await?;
+    repo.finish_cleanup(
+        id,
+        second.lease.attempt,
+        &binding,
+        RuntimeCleanupState::Succeeded,
+    )
+    .await?;
+    repo.recover(id, second.lease.attempt).await?;
     let job = repo.get(id).await?;
     assert_eq!(job.state, JobState::Inconclusive);
     assert_eq!(job.attempts.len(), 2);
@@ -247,7 +282,7 @@ async fn staging_and_signing_recovery_require_exact_durable_bindings() -> R {
         .await?;
     repo.accept_evidence(&a.lease, &r).await?;
     assert!(repo.renew(&a.lease, 30).await.is_err());
-    assert!(repo.recover(id, true).await.is_err());
+    assert!(repo.recover(id, a.lease.attempt).await.is_err());
     let repo = PostgresJobRepository::from_pool(pool.clone());
     assert_eq!(repo.get(id).await?.state, JobState::Evaluating);
     let evaluation = make_available(&repo, id, None, "EVALUATION").await?;
@@ -295,7 +330,7 @@ async fn staging_and_signing_recovery_require_exact_durable_bindings() -> R {
     let job = repo.get(id).await?;
     assert_eq!(job.state, JobState::Completed);
     assert_eq!(job.certificate, Some(cert));
-    assert!(repo.recover(id, true).await.is_err());
+    assert!(repo.recover(id, a.lease.attempt).await.is_err());
     assert!(repo.claim("another", 5).await?.is_none());
     Ok(())
 }
@@ -313,7 +348,7 @@ async fn negative_policy_never_retries_until_pass() -> R {
         .await?;
     assert_eq!(repo.get(id).await?.state, JobState::NotEligible);
     assert!(repo.claim("retry", 30).await?.is_none());
-    assert!(repo.recover(id, true).await.is_err());
+    assert!(repo.recover(id, a.lease.attempt).await.is_err());
     Ok(())
 }
 
@@ -339,5 +374,97 @@ async fn inconclusive_evidence_is_terminal_and_cannot_be_reinterpreted() -> R {
             .is_err()
     );
     assert!(repo.claim("retry", 30).await?.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn runtime_cleanup_requires_exact_binding_revocation_and_durable_success() -> R {
+    let (repo, pool) = database().await?;
+    let id = repo.create(request(&repo).await?).await?.id;
+    let a = repo
+        .claim("runtime-worker", 5)
+        .await?
+        .ok_or("missing claim")?;
+    repo.start(&a.lease).await?;
+    let binding = RuntimeBinding {
+        endpoint: "unix:///dedicated.sock".into(),
+        daemon_id: "dedicated-runtime".into(),
+        gate_root: "/authority/gates".into(),
+    };
+    repo.bind_runtime(&a.lease, &binding).await?;
+    assert!(repo.cleanup_candidate(id, a.lease.attempt).await.is_err());
+    assert!(
+        repo.fence_runtime(id, a.lease.attempt, &binding)
+            .await
+            .is_err()
+    );
+    let mut wrong = binding.clone();
+    wrong.daemon_id = "another-runtime".into();
+    assert!(repo.bind_runtime(&a.lease, &wrong).await.is_err());
+    sqlx::query("UPDATE certification_attempts SET lease_until=leased_at+1 WHERE id=$1")
+        .bind(a.lease.attempt.to_string())
+        .execute(&pool)
+        .await?;
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    repo.block_cleanup(id, a.lease.attempt, &binding).await?;
+    assert!(repo.recover(id, a.lease.attempt).await.is_err());
+    assert!(
+        repo.finish_cleanup(
+            id,
+            a.lease.attempt,
+            &binding,
+            RuntimeCleanupState::Succeeded
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        repo.fence_runtime(id, AttemptId::new(), &binding)
+            .await
+            .is_err()
+    );
+    assert!(
+        repo.fence_runtime(id, a.lease.attempt, &wrong)
+            .await
+            .is_err()
+    );
+    repo.fence_runtime(id, a.lease.attempt, &binding).await?;
+    assert!(repo.renew(&a.lease, 5).await.is_err());
+    assert!(repo.bind_runtime(&a.lease, &binding).await.is_err());
+    repo.finish_cleanup(id, a.lease.attempt, &binding, RuntimeCleanupState::Failed)
+        .await?;
+    assert!(repo.recover(id, a.lease.attempt).await.is_err());
+    let repo = PostgresJobRepository::from_pool(pool.clone());
+    assert_eq!(
+        repo.cleanup_candidate(id, a.lease.attempt).await?.cleanup,
+        RuntimeCleanupState::Failed
+    );
+    repo.fence_runtime(id, a.lease.attempt, &binding).await?;
+    repo.finish_cleanup(
+        id,
+        a.lease.attempt,
+        &binding,
+        RuntimeCleanupState::Succeeded,
+    )
+    .await?;
+    assert!(
+        repo.finish_cleanup(id, a.lease.attempt, &binding, RuntimeCleanupState::Failed)
+            .await
+            .is_err()
+    );
+    assert!(repo.recover(id, AttemptId::new()).await.is_err());
+    repo.recover(id, a.lease.attempt).await?;
+    let next = repo.claim("replacement", 5).await?.ok_or("missing retry")?;
+    assert_ne!(next.lease.attempt, a.lease.attempt);
+    assert!(repo.recover(id, a.lease.attempt).await.is_err());
+    let events: Vec<String> =
+        sqlx::query_scalar("SELECT event FROM audit_events WHERE attempt=$1 ORDER BY sequence")
+            .bind(a.lease.attempt.to_string())
+            .fetch_all(&pool)
+            .await?;
+    assert!(events.iter().any(|e| e == "ExecutionFenced"));
+    assert!(events.iter().any(|e| e == "CleanupBlocked"));
+    assert!(events.iter().any(|e| e == "CleanupSucceeded"));
     Ok(())
 }

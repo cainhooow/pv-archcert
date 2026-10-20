@@ -1,5 +1,6 @@
 //! PostgreSQL transactional control-plane adapter. No target execution or signing.
 pub mod artifacts;
+mod runtime;
 use archcert_application::jobs::*;
 use archcert_domain::{
     ProjectId,
@@ -68,7 +69,7 @@ async fn load(c: &mut PgConnection, id: JobId) -> Result<CertificationJob> {
         .ok_or(JobStoreError::Precondition)?;
     let inputs: JobInputs = decode(row.try_get("inputs").map_err(db)?)?;
     inputs.validate()?;
-    let rows = sqlx::query("SELECT * FROM certification_attempts WHERE job=$1 ORDER BY ordinal")
+    let rows = sqlx::query("SELECT a.*,r.binding AS runtime_binding,r.fenced AS runtime_fenced,r.cleanup AS runtime_cleanup FROM certification_attempts a LEFT JOIN attempt_runtime r ON r.attempt=a.id WHERE a.job=$1 ORDER BY a.ordinal")
         .bind(id.to_string())
         .fetch_all(c)
         .await
@@ -90,6 +91,15 @@ async fn load(c: &mut PgConnection, id: JobId) -> Result<CertificationJob> {
                 .map(|v| decode(Value::String(v)))
                 .transpose()?,
             evidence: optional(&r, "evidence")?,
+            runtime: optional::<RuntimeBinding>(&r, "runtime_binding")?
+                .map(|binding| -> Result<AttemptRuntime> {
+                    Ok(AttemptRuntime {
+                        binding,
+                        fenced: r.try_get("runtime_fenced").map_err(db)?,
+                        cleanup: state(&r, "runtime_cleanup")?,
+                    })
+                })
+                .transpose()?,
         });
     }
     Ok(CertificationJob {
@@ -114,7 +124,7 @@ async fn fenced(c: &mut PgConnection, lease: &Lease) -> Result<CertificationJob>
     if job.state != JobState::Running {
         return Err(JobStoreError::Precondition);
     }
-    let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM certification_attempts WHERE id=$1 AND job=$2 AND worker=$3 AND token=$4 AND state IN ('LEASED','RUNNING') AND lease_until > floor(extract(epoch FROM clock_timestamp())))")
+    let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM certification_attempts a WHERE id=$1 AND job=$2 AND worker=$3 AND token=$4 AND state IN ('LEASED','RUNNING') AND lease_until > floor(extract(epoch FROM clock_timestamp())) AND NOT EXISTS(SELECT 1 FROM attempt_runtime r WHERE r.attempt=a.id AND r.fenced))")
         .bind(lease.attempt.to_string()).bind(lease.job.to_string()).bind(&lease.worker).bind(lease.token.to_string()).fetch_one(c).await.map_err(db)?;
     if !valid {
         return Err(JobStoreError::Precondition);
@@ -421,18 +431,22 @@ impl JobRepository for PostgresJobRepository {
         }
         tx.commit().await.map_err(db)
     }
-    async fn recover(&self, id: JobId, cleanup: bool) -> Result<()> {
+    async fn recover(&self, id: JobId, expected: AttemptId) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(db)?;
         let job = load(&mut tx, id).await?;
         if job.state != JobState::Running {
             return Err(JobStoreError::Precondition);
         }
         let a = job.attempts.last().ok_or(JobStoreError::Precondition)?;
-        if a.lease_until > now(&mut tx).await? {
+        if a.id != expected || a.lease_until > now(&mut tx).await? {
             return Err(JobStoreError::Precondition);
         }
-        // Never requeue a RUNNING target unless authority confirms it is stopped/cleaned.
-        if a.state == AttemptState::Running && !cleanup {
+        // A caller assertion cannot substitute for durable exact-attempt cleanup.
+        if a.state == AttemptState::Running
+            && a.runtime
+                .as_ref()
+                .is_none_or(|r| !r.fenced || r.cleanup != RuntimeCleanupState::Succeeded)
+        {
             return Err(JobStoreError::Precondition);
         }
         let next = if job.attempts.len() < usize::from(job.inputs.maximum_attempts) {
@@ -470,6 +484,12 @@ impl JobRepository for PostgresJobRepository {
         )
         .await?;
         job.state.transition(JobState::Evaluating)?;
+        sqlx::query("UPDATE attempt_runtime SET fenced=true WHERE job=$1 AND attempt=$2")
+            .bind(lease.job.to_string())
+            .bind(lease.attempt.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
         sqlx::query("UPDATE certification_attempts SET state='EVIDENCE_READY',evidence=$2,ended_at=$3 WHERE id=$1").bind(lease.attempt.to_string()).bind(json(reference)?).bind(now(&mut tx).await?).execute(&mut *tx).await.map_err(db)?;
         sqlx::query("UPDATE certification_jobs SET state='EVALUATING',evaluation_at=floor(extract(epoch FROM clock_timestamp())) WHERE id=$1")
             .bind(lease.job.to_string())

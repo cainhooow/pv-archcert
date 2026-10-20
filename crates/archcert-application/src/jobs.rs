@@ -49,6 +49,59 @@ pub struct Lease {
     /// Secret fencing capability.
     pub token: LeaseToken,
 }
+
+/// Immutable authority runtime location. Reports identify configuration, not attestation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeBinding {
+    /// Explicit authority-selected endpoint, never selected by a project.
+    pub endpoint: String,
+    /// Observed daemon identity.
+    pub daemon_id: String,
+    /// Canonical private local authority gate directory.
+    pub gate_root: String,
+}
+impl RuntimeBinding {
+    /// Checks bounded opaque authority identity fields without granting execution.
+    pub fn validate(&self) -> Result<(), JobStoreError> {
+        if [&self.endpoint, &self.daemon_id, &self.gate_root]
+            .iter()
+            .any(|s| s.is_empty() || s.len() > 4096 || s.bytes().any(|b| b.is_ascii_control()))
+        {
+            return Err(JobStoreError::Invalid);
+        }
+        Ok(())
+    }
+}
+
+/// Operational cleanup never changes execution or certification verdict semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RuntimeCleanupState {
+    /// No runtime authority was ever granted.
+    NotRequired,
+    /// Runtime authority exists; cleanup has not been confirmed.
+    Pending,
+    /// A fenced reconciler is inspecting/removing owned objects.
+    InProgress,
+    /// Authority revoked and runtime absence independently confirmed.
+    Succeeded,
+    /// Cleanup encountered an operational error and may be retried.
+    Failed,
+    /// Live worker, uncertain runtime operation or identity disagreement prevents recovery.
+    Blocked,
+}
+
+/// Durable runtime control state for an exact immutable attempt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttemptRuntime {
+    /// Immutable host/runtime/gate binding.
+    pub binding: RuntimeBinding,
+    /// Irreversible revocation; never reenabled for this attempt.
+    pub fenced: bool,
+    /// Separate bounded cleanup result.
+    pub cleanup: RuntimeCleanupState,
+}
 /// Immutable metadata for an exact artifact. Availability requires verified stored bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -83,6 +136,8 @@ pub struct CertificationAttempt {
     pub failure: Option<FailureCategory>,
     /// Exact accepted evidence artifact, if any.
     pub evidence: Option<ArtifactReference>,
+    /// Operational runtime authority and cleanup, separate from target outcomes.
+    pub runtime: Option<AttemptRuntime>,
 }
 /// Frozen issuance binding, created before calling the signer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,8 +219,8 @@ pub trait JobRepository: Send + Sync {
     async fn start(&self, lease: &Lease) -> Result<(), JobStoreError>;
     /// Renew an unexpired lease under bounded lifetime.
     async fn renew(&self, lease: &Lease, lease_seconds: u32) -> Result<(), JobStoreError>;
-    /// Expire a lost attempt; requeue only after an authority has confirmed cleanup.
-    async fn recover(&self, id: JobId, cleanup_confirmed: bool) -> Result<(), JobStoreError>;
+    /// Recover only the exact expired attempt after durable fencing/cleanup if started.
+    async fn recover(&self, id: JobId, expected: AttemptId) -> Result<(), JobStoreError>;
     /// Accept only a validated AVAILABLE bound evidence reference under the current lease.
     async fn accept_evidence(
         &self,

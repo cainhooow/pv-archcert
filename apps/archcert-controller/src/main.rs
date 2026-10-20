@@ -87,7 +87,10 @@ async fn main() -> Result<()> {
             cleanup_confirmed,
         } => {
             let id = JobId::parse(&job)?;
-            state.repository.recover(id, cleanup_confirmed).await?;
+            let view = state.repository.get(id).await?;
+            let attempt = view.attempts.last().context("missing attempt")?.id;
+            let _ = cleanup_confirmed; // Legacy assertion grants no recovery authority.
+            state.repository.recover(id, attempt).await?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&state.repository.get(id).await?)?

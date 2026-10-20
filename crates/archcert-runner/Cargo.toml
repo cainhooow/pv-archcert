@@ -8,6 +8,7 @@ publish.workspace = true
 archcert-domain = { path = "../archcert-domain", version = "=0.1.0" }
 archcert-application = { path = "../archcert-application", version = "=0.1.0" }
 serde_json.workspace = true
+serde.workspace = true
 sha2.workspace = true
 hex.workspace = true
 rustix.workspace = true
