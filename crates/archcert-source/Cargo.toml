@@ -11,6 +11,11 @@ sha1.workspace = true
 sha2.workspace = true
 hex.workspace = true
 flate2.workspace = true
+gix-pack = { version = "=0.76.0", default-features = false }
+gix-hash = { version = "=0.28.0", features = ["sha1", "sha256"] }
+gix-zlib = "=0.3.0"
+serde.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true

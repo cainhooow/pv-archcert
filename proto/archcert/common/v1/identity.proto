@@ -1,0 +1,29 @@
+syntax = "proto3";
+package archcert.common.v1;
+
+// Transport identities only. Decoding does not establish authority, and binary
+// Protobuf serialization is not ArchCert cryptographic canonicalization.
+message ProjectId { string value = 1; }
+message RepositoryId { string value = 1; }
+message SourceSubmissionId { string value = 1; }
+message GitActorId { string value = 1; }
+// Exactly 32 bytes: SHA-256 of the public SSH wire-key blob.
+message DeviceKeyId { bytes sha256 = 1; }
+message Sha256Digest { bytes sha256 = 1; }
+
+enum GitObjectAlgorithm {
+  GIT_OBJECT_ALGORITHM_UNSPECIFIED = 0;
+  GIT_OBJECT_ALGORITHM_SHA1 = 1;
+  GIT_OBJECT_ALGORITHM_SHA256 = 2;
+}
+message GitObjectId {
+  GitObjectAlgorithm algorithm = 1;
+  // Exactly 20 bytes for SHA-1 or 32 bytes for SHA-256. Never truncated/padded.
+  bytes digest = 2;
+}
+message SourceIdentity {
+  GitObjectId commit = 1;
+  GitObjectId tree = 2;
+  // Existing explicitly canonicalized source identity, not a hash of this DTO.
+  Sha256Digest snapshot = 3;
+}

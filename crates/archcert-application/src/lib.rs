@@ -5,6 +5,7 @@ use thiserror::Error;
 
 pub mod configuration;
 pub mod execution;
+pub mod ingress;
 pub mod materialization;
 pub mod source;
 pub mod validation;
@@ -58,4 +59,19 @@ impl SubmitCertification for BootstrapSubmitCertification {
         }
         Ok(SubmitCertificationResult::Unavailable)
     }
+}
+
+/// Credential-free contracts for controlled external source acquisition.
+pub mod external_source;
+
+/// Future control-plane job request for already accepted immutable source.
+/// This is distinct from SourceSubmission and creates no job by construction.
+#[derive(Debug, Clone)]
+pub struct CertificationJobRequest {
+    /// Exact accepted scoped source; no repository URL or mutable ref.
+    pub source: archcert_domain::materialization::SnapshotReference,
+    /// Separately selected authority policy identity.
+    pub policy_sha256: archcert_domain::Sha256Digest,
+    /// Authority execution profile selection, independent of ingress.
+    pub execution_profile: String,
 }

@@ -1,0 +1,70 @@
+syntax = "proto3";
+package archcert.source.v1;
+
+import "archcert/common/v1/identity.proto";
+import "google/protobuf/timestamp.proto";
+
+enum SubmissionStatus {
+  SUBMISSION_STATUS_UNSPECIFIED = 0;
+  SUBMISSION_STATUS_RECEIVED = 1;
+  SUBMISSION_STATUS_QUARANTINED = 2;
+  SUBMISSION_STATUS_VALIDATING = 3;
+  SUBMISSION_STATUS_INCOMPLETE_EXTERNAL_SOURCE = 4;
+  SUBMISSION_STATUS_ACCEPTED = 5;
+  SUBMISSION_STATUS_REJECTED = 6;
+}
+enum SourceCompleteness {
+  SOURCE_COMPLETENESS_UNSPECIFIED = 0;
+  SOURCE_COMPLETENESS_COMPLETE = 1;
+  SOURCE_COMPLETENESS_INCOMPLETE_EXTERNAL_SOURCE = 2;
+}
+enum SourceTransport {
+  SOURCE_TRANSPORT_UNSPECIFIED = 0;
+  SOURCE_TRANSPORT_SSH_PUBLIC_KEY = 1;
+  SOURCE_TRANSPORT_AUTHORITY_PRIVATE_SOURCE_RESOLUTION = 2;
+}
+message ActorIdentity {
+  archcert.common.v1.GitActorId actor = 1;
+  archcert.common.v1.DeviceKeyId device = 2;
+}
+message GitSubmission {
+  // Mutable provenance only; never immutable source identity. At most one ref.
+  repeated string submitted_refs = 1;
+  archcert.common.v1.GitObjectId requested_commit = 2;
+  archcert.common.v1.GitObjectAlgorithm object_algorithm = 3;
+  SourceTransport transport = 4;
+}
+// A summary of the existing resolved binding, not an executable recipe, source
+// bytes, credential, acquisition locator, or authorization grant.
+message SourceResolutionSummary {
+  archcert.common.v1.SourceSubmissionId parent_submission = 1;
+  archcert.common.v1.SourceIdentity original = 2;
+  archcert.common.v1.GitActorId resolver_actor = 3;
+  uint64 lfs_resolved = 4;
+  uint64 submodules_resolved = 5;
+}
+message SourceState {
+  archcert.common.v1.SourceIdentity identity = 1;
+  // Source canonicalization schema 1 or 2, independent of this package's v1.
+  uint32 schema_version = 2;
+  SourceCompleteness completeness = 3;
+  uint64 lfs_unresolved = 4;
+  uint64 submodules_unresolved = 5;
+  SourceResolutionSummary resolution = 6;
+}
+// Source-only ingress observation. It cannot create a trusted snapshot, job,
+// certification, network permission, or signer capability.
+message SourceSubmission {
+  // Must be 1. Package identity alone is not encoded in bare Protobuf messages.
+  uint32 contract_version = 1;
+  archcert.common.v1.SourceSubmissionId submission = 2;
+  archcert.common.v1.ProjectId project = 3;
+  archcert.common.v1.RepositoryId repository = 4;
+  ActorIdentity actor = 5;
+  GitSubmission git = 6;
+  SourceState source = 7;
+  SubmissionStatus status = 8;
+  // Operational whole UTC seconds only; excluded from source identity.
+  google.protobuf.Timestamp received_at = 9;
+  google.protobuf.Timestamp accepted_at = 10;
+}

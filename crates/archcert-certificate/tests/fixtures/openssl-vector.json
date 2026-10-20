@@ -1,0 +1,37 @@
+{
+  "payload": {
+    "schema": 1,
+    "kind": "ARCHCERT_CERTIFICATE",
+    "authority": "DEVELOPMENT ONLY / NOT PRODUCTION AUTHORITY",
+    "scope": "EXACT_SOURCE",
+    "project": "00000000-0000-4000-8000-000000000004",
+    "repository": "fixture/independent-vector",
+    "source": {
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "snapshot_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "policy": {
+      "id": "archcert-development-v1",
+      "version": "1.0.0",
+      "sha256": "e128e7a0cfeaf0f11917a35cc655b0e9fe6ea96dcf550bea5d25898ea8f7b9ae"
+    },
+    "plan_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "evaluation_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "evidence_manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "findings": [],
+    "archcert_version": "0.1.0",
+    "evaluator_version": "archcert-policy-evaluator-v1/0.1.0",
+    "certifier": "independent-format-vector",
+    "runner": "archcert-docker-cli-v1/0.1.0",
+    "isolation_level": "ROOTLESS_OCI_SHARED_KERNEL",
+    "issued_at": 1700000000,
+    "expiration": "NO EXPIRATION SEMANTICS YET",
+    "revocation": "NOT IMPLEMENTED",
+    "signature_algorithm": "Ed25519",
+    "signing_key_id": "58cf0bc2df3981e75f6d1abd31ffae0ee416072d9b18e9bc18e5435f342e53ab"
+  },
+  "certificate_sha256": "54ffd406f94a694ef44c3c1baee35f3c0adcaf613869834037d1f805b9f0adfa",
+  "signature": "3a52fc3e003c472166c2e78e9f3aa9afe472c8703c5ce9a5ae62d897f2acdf8511c24f0baff90c9e0f333efd86e3f400462e9a7909cbd3582b283b334993910a",
+  "public_key": "81bc9f78e8d161faf8ca4ef3e44524210da1fee99f665afd891eeece20200ca0"
+}

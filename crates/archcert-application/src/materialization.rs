@@ -148,6 +148,11 @@ pub trait MaterializedSource {
 /// authority budgets, without reopening diagnostic paths or following symlinks.
 /// Returned bytes carry no descriptors, credentials or cleanup/store authority.
 pub trait VerifiedSourceExport: MaterializedSource {
+    /// Credential-free canonicalization recipe for independently rehashing exports.
+    /// Existing schema-1 adapters retain their original manifest identity.
+    fn source_binding(&self) -> archcert_domain::source::SourceBinding {
+        archcert_domain::source::SourceBinding::default()
+    }
     /// Performs final integrity verification and returns bounded owned source bytes.
     fn verified_files(
         &self,

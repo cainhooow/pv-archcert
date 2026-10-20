@@ -1,4 +1,4 @@
-//! Source infrastructure: bounded local loose Git objects and owned immutable storage.
+//! Source infrastructure: bounded loose/packed Git objects and immutable storage.
 //!
 //! This adapter never invokes Git or reads project configuration, references,
 //! hooks, alternates, LFS endpoints or the developer's working tree.
@@ -6,7 +6,14 @@
 #[cfg(unix)]
 mod loose;
 #[cfg(unix)]
+mod pack;
+#[cfg(unix)]
 pub use loose::LocalGitGateway;
+#[cfg(unix)]
+pub use pack::{GitObjectFormat, PackLimits, PackedGitGateway, receive_pack};
+
+mod artifact;
+pub use artifact::{read_snapshot, write_snapshot};
 
 use archcert_application::source::SourceStore;
 use archcert_domain::source::{SourceError, SourceSnapshot};

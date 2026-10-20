@@ -9,6 +9,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub mod execution;
+pub mod ingress;
 pub mod materialization;
 pub mod source;
 /// Unique identifier of a registered project.
@@ -26,6 +27,14 @@ impl ProjectId {
 impl Default for ProjectId {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl std::str::FromStr for ProjectId {
+    type Err = uuid::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(value).map(Self)
     }
 }
 
@@ -155,8 +164,6 @@ pub enum CertificationStatus {
     SourceAccepted,
     /// Independent checks are executing.
     Running,
-    /// All mandatory policy requirements passed.
-    Certified,
     /// At least one blocking policy failed.
     Rejected,
     /// The system could not establish a safe final verdict.

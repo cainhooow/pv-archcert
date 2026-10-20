@@ -856,3 +856,35 @@ fn applicability_uses_authority_policy_profile_even_with_an_empty_or_changed_pro
     assert_eq!(e.eligibility, CertificationEligibility::NotEligible);
     Ok(())
 }
+
+#[test]
+fn incomplete_source_is_never_eligible_even_when_authority_properties_are_not_applicable() -> R {
+    let mut f = fixture()?;
+    f.snapshot = SourceSnapshot::seal(
+        ProjectId::new(),
+        RepositoryId::parse("fixture/incomplete")?,
+        GitObjectId::parse("a".repeat(40))?,
+        GitObjectId::parse("b".repeat(40))?,
+        vec![SourceFile::new(
+            SourcePath::from_bytes(b"module")?,
+            SourceMode::Submodule,
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_vec(),
+        )],
+        1,
+        1,
+    )?;
+    let text = DEVELOPMENT_POLICY
+        .replace(
+            "applicability = { kind = \"ALWAYS\" }",
+            "applicability = { kind = \"POLICY_PROFILES\", profiles = [\"other-policy\"] }",
+        )
+        .replace(
+            "allow_not_applicable = false",
+            "allow_not_applicable = true",
+        );
+    let b = PolicyBundle::read(text.as_bytes())?;
+    let e = run(&f, &b, &[], &[], 1)?;
+    assert!(e.properties.iter().all(|p| p.verdict == V::NotApplicable));
+    assert_eq!(e.eligibility, CertificationEligibility::NotEligible);
+    Ok(())
+}

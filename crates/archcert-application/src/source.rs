@@ -38,6 +38,10 @@ pub struct ValidatedSource {
 
 /// Untrusted reception boundary. Implementations must not execute repository code.
 pub trait GitGateway {
+    /// Versioned adapter/validator semantics for evidence, never source identity.
+    fn validation_version(&self) -> &'static str {
+        "archcert-loose-v1"
+    }
     /// Opens a quarantined source without interpreting target configuration or refs.
     fn quarantine(
         &self,
@@ -89,6 +93,9 @@ pub struct SourceEvidence {
     pub validation_version: String,
     /// Canonical source schema version.
     pub schema_version: u32,
+    /// Versioned external identity recipe, present only for resolved source.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_binding: Option<archcert_domain::source::SourceBinding>,
     /// Authority UTC Unix creation seconds.
     pub created_at: u64,
     /// Authority resource budgets applied to this attempt.
@@ -186,8 +193,9 @@ pub fn ingest_source(
             total_bytes: snapshot.total_bytes(),
             unresolved: snapshot.external().to_vec(),
             status: snapshot.status(),
-            validation_version: "archcert-loose-v1".to_owned(),
+            validation_version: gateway.validation_version().to_owned(),
             schema_version: snapshot.schema_version(),
+            resolved_binding: (snapshot.schema_version() == 2).then(|| snapshot.binding().clone()),
             created_at: snapshot.created_at(),
             limits,
         };

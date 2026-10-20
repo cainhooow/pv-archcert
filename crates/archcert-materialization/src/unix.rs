@@ -134,6 +134,7 @@ pub struct MaterializedDirectory {
     destroyed: Arc<AtomicBool>,
     workspace: WorkspaceId,
     identity: archcert_domain::SourceIdentity,
+    binding: archcert_domain::source::SourceBinding,
     nodes: BTreeMap<String, Node>,
     directories: BTreeSet<String>,
     limits: MaterializationLimits,
@@ -147,6 +148,9 @@ impl MaterializedSource for MaterializedDirectory {
     }
 }
 impl archcert_application::materialization::VerifiedSourceExport for MaterializedDirectory {
+    fn source_binding(&self) -> archcert_domain::source::SourceBinding {
+        self.binding.clone()
+    }
     fn verified_files(&self) -> Result<Vec<SourceFile>, Error> {
         MaterializedDirectory::verified_files(self)
     }
@@ -168,9 +172,10 @@ impl MaterializedDirectory {
         };
         walk.visit(&self.directory, "", 0)?;
         if walk.directories != self.directories
-            || SourceManifest::new(walk.entries)
+            || self
+                .binding
+                .digest(&SourceManifest::new(walk.entries).map_err(|_| Error::VerificationFailed)?)
                 .map_err(|_| Error::VerificationFailed)?
-                .digest()
                 != self.identity.snapshot_sha256
         {
             return Err(Error::MaterializationIntegrityMismatch);
@@ -366,6 +371,7 @@ impl UnixSourceMaterializer {
         let mut pending = PendingMaterialization {
             lease,
             request: request.clone(),
+            binding: snapshot.binding().clone(),
             nodes: BTreeMap::new(),
             directories: BTreeSet::new(),
             started_at,
@@ -554,6 +560,7 @@ impl Budget {
 pub struct PendingMaterialization {
     lease: WorkspaceLease,
     request: MaterializationRequest,
+    binding: archcert_domain::source::SourceBinding,
     nodes: BTreeMap<String, Node>,
     directories: BTreeSet<String>,
     started_at: u64,
@@ -666,7 +673,12 @@ impl PendingMaterialization {
         }
         let manifest = SourceManifest::new(walk.entries)
             .map_err(|_| Error::MaterializationIntegrityMismatch)?;
-        if manifest.digest() != self.request.snapshot.identity.snapshot_sha256 {
+        if self
+            .binding
+            .digest(&manifest)
+            .map_err(|_| Error::VerificationFailed)?
+            != self.request.snapshot.identity.snapshot_sha256
+        {
             return Err(Error::MaterializationIntegrityMismatch);
         }
         Ok(manifest)
@@ -692,9 +704,13 @@ impl PendingMaterialization {
     pub fn verify_and_seal(mut self) -> Result<SealedMaterialization, MaterializationFailure> {
         let checked = (|| {
             let manifest = self.verify(false)?;
+            let observed_digest = self
+                .binding
+                .digest(&manifest)
+                .map_err(|_| Error::VerificationFailed)?;
             let verified_at = now()?;
             self.events
-                .push(MaterializationEvent::Verified(manifest.digest()));
+                .push(MaterializationEvent::Verified(observed_digest.clone()));
             let mut seal_budget = self.nodes.len();
             seal_directory(&self.lease.root, "", &self.nodes, &mut seal_budget, 0)?;
             self.verify(true)?;
@@ -706,7 +722,7 @@ impl PendingMaterialization {
                 workspace: self.lease.id,
                 materializer_version: "archcert-unix-materializer-v1".to_owned(),
                 expected_digest: self.request.snapshot.identity.snapshot_sha256.clone(),
-                observed_digest: manifest.digest(),
+                observed_digest,
                 entry_count: manifest.entries().len() as u64,
                 total_bytes_written: manifest.entries().iter().map(ManifestEntry::size).sum(),
                 status: MaterializationState::Sealed,
@@ -757,6 +773,7 @@ impl SealedMaterialization {
                 destroyed: Arc::clone(&self.pending.lease.destroyed),
                 workspace: self.pending.lease.id,
                 identity: self.evidence.snapshot.identity.clone(),
+                binding: self.pending.binding.clone(),
                 nodes: self.pending.nodes.clone(),
                 directories: self.pending.directories.clone(),
                 limits: self.pending.request.limits,

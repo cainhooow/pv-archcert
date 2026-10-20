@@ -1,0 +1,347 @@
+#!/usr/bin/env python3
+"""Real OpenSSH public-key Git push fixture. Engineering self-validation only.
+All client/host SSH private keys are temporary test harness state outside the
+ArchCert source store. No target-controlled command is executed on the host.
+"""
+import argparse
+import base64
+import hashlib
+import json
+import os
+from pathlib import Path
+import shlex
+import shutil
+import socket
+import subprocess
+import tempfile
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+PROJECT = "00000000-0000-4000-8000-000000000004"
+ACTOR = "00000000-0000-4000-8000-000000000005"
+
+
+def run(argv, *, ok=True, **kwargs):
+    result = subprocess.run([str(a) for a in argv], capture_output=True, timeout=130, **kwargs)
+    if ok and result.returncode:
+        raise RuntimeError(f"{argv[0]} failed: {result.stderr.decode(errors='replace')}")
+    return result
+
+
+class NorthgateFixture:
+    def __init__(self, binary):
+        self.temporary = tempfile.TemporaryDirectory(prefix="archcert-northgate-")
+        self.root = Path(self.temporary.name).resolve()
+        self.authority = self.root / "authority"
+        self.authority.mkdir(mode=0o700)
+        self.store = self.root / "store"
+        self.store.mkdir(mode=0o700)
+        self.binary = Path(binary).resolve()
+        self.key = self.authority / "client"
+        host = self.authority / "host"
+        for key in [self.key, host, self.authority / "unknown"]:
+            run(["/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key])
+        public = self.key.with_suffix(".pub").read_text().split()
+        fingerprint = hashlib.sha256(base64.b64decode(public[1])).hexdigest()
+        self.config = self.authority / "gateway.json"
+        self.config.write_text(json.dumps({
+            "git_executable": "/usr/bin/git", "store": str(self.store),
+            "devices": [{"actor": ACTOR, "device": fingerprint, "enabled": True,
+                         "repositories": [{"project": PROJECT, "repository": "archcert/northgate-fixture",
+                                           "route": "company/fixture.git", "object_format": "sha1"},
+                                          {"project": PROJECT, "repository": "archcert/northgate-sha256",
+                                           "route": "company/sha256.git", "object_format": "sha256"},
+                                          {"project": PROJECT, "repository": "bottlepy/bottle",
+                                           "route": "company/bottle.git", "object_format": "sha1"}]}],
+            "pack_limits": {"max_pack_bytes": 67108864, "max_objects": 25000,
+                            "max_object_bytes": 9437184, "max_decoded_bytes": 268435456,
+                            "max_delta_depth": 32, "max_expansion_ratio": 4096},
+            "session_seconds": 30, "max_submissions": 32}))
+        self.config.chmod(0o600)
+        forced = shlex.join([str(self.binary), "receive", "--config", str(self.config), "--device-key", fingerprint])
+        # authorized_keys uses its own quoted-string syntax. Paths are harness-controlled.
+        escaped = forced.replace("\\", "\\\\").replace('"', '\\"')
+        authorized = self.authority / "authorized_keys"
+        authorized.write_text(f'restrict,command="{escaped}" {public[0]} {public[1]}\n')
+        authorized.chmod(0o600)
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            self.port = sock.getsockname()[1]
+        self.user = run(["id", "-un"]).stdout.decode().strip()
+        config = self.authority / "sshd_config"
+        config.write_text(f"""Port {self.port}
+ListenAddress 127.0.0.1
+HostKey {host}
+PidFile {self.authority / 'sshd.pid'}
+AuthorizedKeysFile {authorized}
+StrictModes yes
+UsePAM no
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+DisableForwarding yes
+AllowTcpForwarding no
+AllowAgentForwarding no
+X11Forwarding no
+PermitTunnel no
+PermitTTY no
+PermitUserRC no
+PermitUserEnvironment no
+MaxAuthTries 3
+MaxSessions 1
+MaxStartups 2:100:2
+LoginGraceTime 15
+UnusedConnectionTimeout 15
+AllowUsers {self.user}
+LogLevel VERBOSE
+""")
+        self.log = (self.authority / "sshd.log").open("wb")
+        self.server = subprocess.Popen(["/usr/sbin/sshd", "-D", "-e", "-f", str(config)], stdout=self.log, stderr=self.log)
+        for _ in range(100):
+            if self.server.poll() is not None:
+                raise RuntimeError((self.authority / "sshd.log").read_text())
+            try:
+                with socket.create_connection(("127.0.0.1", self.port), timeout=.1):
+                    break
+            except OSError:
+                time.sleep(.05)
+        known = self.authority / "known_hosts"
+        known.write_text(f"[127.0.0.1]:{self.port} " + host.with_suffix(".pub").read_text())
+        self.ssh = ["/usr/bin/ssh", "-F", "/dev/null", "-p", str(self.port), "-o", "BatchMode=yes",
+                    "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes", "-o", f"UserKnownHostsFile={known}",
+                    "-o", "ConnectTimeout=5", "-i", str(self.key)]
+        self.environment = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
+                            "GIT_SSH_COMMAND": shlex.join(self.ssh),
+                            "GIT_AUTHOR_NAME": "ArchCert fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+                            "GIT_COMMITTER_NAME": "ArchCert fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+                            "GIT_AUTHOR_DATE": "2000-01-01T00:00:00Z", "GIT_COMMITTER_DATE": "2000-01-01T00:00:00Z"}
+        self.endpoint = f"{self.user}@127.0.0.1:company/fixture.git"
+
+    def git(self, repo, *args, **kwargs):
+        return run(["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-c", "gc.auto=0", *args], cwd=repo, env=self.environment, **kwargs)
+
+    def create_repository(self):
+        repo = self.root / "candidate"
+        repo.mkdir(mode=0o700)
+        self.git(repo, "init", "--template=", "--initial-branch=fixture")
+        shutil.copyfile(ROOT / "tests/fixtures/policy-target/checks.py", repo / "checks.py")
+        self.git(repo, "add", "checks.py")
+        self.git(repo, "commit", "-m", "controlled passing target")
+        assert self.git(repo, "rev-parse", "HEAD").stdout.decode().strip() == "67085b42fe02ff0832641629a31634338214be00"
+        return repo
+
+    def submissions(self):
+        return [json.loads(p.read_text()) for p in self.store.glob("*/evidence.json")]
+
+    def push(self, repo, endpoint=None):
+        before = {s["submission"] for s in self.submissions()}
+        result = self.git(repo, "push", endpoint or self.endpoint, "HEAD")
+        after = [s for s in self.submissions() if s["submission"] not in before]
+        assert len(after) == 1, after
+        assert after[0]["status"] == "ACCEPTED", after
+        assert b"SOURCE ACCEPTED" in result.stderr
+        assert b"CERTIFIED" not in result.stderr
+        return after[0]
+
+    def close(self):
+        if getattr(self, "server", None):
+            self.server.terminate()
+            self.server.wait(timeout=10)
+        if getattr(self, "log", None):
+            self.log.close()
+        self.temporary.cleanup()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--binary", default=ROOT / "target/debug/archcert-gateway", type=Path)
+    parser.add_argument("--retain", type=Path)
+    args = parser.parse_args()
+    fixture = NorthgateFixture(args.binary)
+    try:
+        repo = fixture.create_repository()
+        first = fixture.push(repo)
+        assert first["source"]["snapshot_sha256"] == "5241a6ce473582f26aa1c6ffab22f9082ecedc26cf11d09a6e641ad79cc5d8af"
+        replay = fixture.push(repo)
+        assert first["submission"] != replay["submission"] and first["source"] == replay["source"]
+        for command in ["", "id", "scp -t /tmp/test", "internal-sftp", "git-upload-pack 'company/fixture.git'", "git-receive-pack 'company/other.git'", "git-receive-pack 'company/fixture.git'; id"]:
+            denied = run([*fixture.ssh, f"{fixture.user}@127.0.0.1", command], ok=False)
+            assert denied.returncode != 0, command
+        unknown = fixture.ssh.copy()
+        unknown[-1] = str(fixture.authority / "unknown")
+        assert run([*unknown, f"{fixture.user}@127.0.0.1", "git-receive-pack 'company/fixture.git'"], ok=False).returncode != 0
+        forwarding = run([*fixture.ssh, "-o", "ExitOnForwardFailure=yes", "-R", "0:127.0.0.1:1", "-N", f"{fixture.user}@127.0.0.1"], ok=False)
+        assert forwarding.returncode != 0
+        fixture.git(repo, "tag", "-a", "tag", "-m", "annotated tag")
+        assert fixture.git(repo, "push", fixture.endpoint, "refs/tags/tag", ok=False).returncode != 0
+        commit = first["source"]["commit"]
+        pack = fixture.git(repo, "pack-objects", "--stdout", "--revs", input=(commit+"\n").encode()).stdout
+        def packet(data):
+            return f"{len(data)+4:04x}".encode()+data
+        def request(old="0"*40, new=commit, ref="refs/heads/raw", objects=pack):
+            return packet(f"{old} {new} {ref}\0report-status object-format=sha1".encode())+b"0000"+objects
+        for payload in [request(objects=b"malformed"), request(old="1"*40), request(new="0"*40),
+                        request(ref="refs/tags/raw"), request(ref="HEAD"),
+                        request(objects=pack[:-1]+bytes([pack[-1]^1]))]:
+            result = run([*fixture.ssh, f"{fixture.user}@127.0.0.1", "git-receive-pack 'company/fixture.git'"], input=payload, ok=False)
+            assert result.returncode != 0
+        # Reachable source remains valid while a malformed extra tag must fail Git fsck.
+        malformed_tag = fixture.git(repo, "hash-object", "--literally", "-w", "--stdin", "-t", "tag", input=b"malformed tag\n").stdout.decode().strip()
+        object_ids = [line.split()[0] for line in fixture.git(repo, "rev-list", "--objects", commit).stdout.decode().splitlines()]
+        bad_tag_pack = fixture.git(repo, "pack-objects", "--stdout", input=("\n".join(object_ids+[malformed_tag])+"\n").encode()).stdout
+        result = run([*fixture.ssh, f"{fixture.user}@127.0.0.1", "git-receive-pack 'company/fixture.git'"], input=request(objects=bad_tag_pack), ok=False)
+        assert result.returncode != 0
+        blob = fixture.git(repo, "rev-parse", commit+":checks.py").stdout.decode().strip()
+        for wrong in [blob, "1"*40]:
+            assert run([*fixture.ssh, f"{fixture.user}@127.0.0.1", "git-receive-pack 'company/fixture.git'"], input=request(new=wrong), ok=False).returncode != 0
+        # Environment poisoning cannot install a hook or a credential helper.
+        hook_root = fixture.authority / "hooks"
+        hook_root.mkdir(mode=0o700)
+        marker = fixture.authority / "HOOK_EXECUTED"
+        hook = hook_root / "pre-receive"
+        hook.write_text("#!/bin/sh\ntouch " + shlex.quote(str(marker))+"\n")
+        hook.chmod(0o700)
+        global_config = fixture.authority / "poison.gitconfig"
+        global_config.write_text(f"[core]\nhooksPath = {hook_root}\n[credential]\nhelper = !touch {marker}\n")
+        poisoned = {**os.environ, "HOME": str(fixture.authority), "GIT_CONFIG_GLOBAL": str(global_config),
+                    "GIT_CONFIG_SYSTEM": str(global_config), "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath",
+                    "GIT_CONFIG_VALUE_0": str(hook_root), "SSH_AUTH_SOCK": str(marker),
+                    "SSH_ORIGINAL_COMMAND": "git-receive-pack 'company/fixture.git'"}
+        fingerprint = json.loads(fixture.config.read_text())["devices"][0]["device"]
+        run([fixture.binary, "receive", "--config", fixture.config, "--device-key", fingerprint], input=request(), env=poisoned)
+        assert not marker.exists()
+        # A new branch push cannot mutate the source retained by the first session.
+        (repo / "checks.py").write_text("print('new source')\n")
+        fixture.git(repo, "add", "checks.py")
+        fixture.git(repo, "commit", "-m", "later candidate")
+        changed = fixture.push(repo)
+        assert changed["source"] != first["source"]
+        shown = json.loads(run([fixture.binary, "show", "--store", fixture.store, first["submission"]]).stdout)
+        assert shown["source"] == first["source"]
+        # Stored bytes are independently rehashed on load.
+        artifact = fixture.store / changed["submission"] / "snapshot.bin"
+        artifact.chmod(0o600)
+        content = artifact.read_bytes()
+        artifact.write_bytes(content[:-1]+bytes([content[-1]^1]))
+        artifact.chmod(0o400)
+        assert run([fixture.binary, "show", "--store", fixture.store, changed["submission"]], ok=False).returncode != 0
+        # Both supported Git object formats use the same independent manifest scheme.
+        sha_repo = fixture.root / "sha256-candidate"
+        sha_repo.mkdir(mode=0o700)
+        fixture.git(sha_repo, "init", "--template=", "--object-format=sha256", "--initial-branch=fixture")
+        shutil.copyfile(ROOT / "tests/fixtures/policy-target/checks.py", sha_repo / "checks.py")
+        fixture.git(sha_repo, "add", "checks.py")
+        fixture.git(sha_repo, "commit", "-m", "controlled passing target")
+        sha_source = fixture.push(sha_repo, f"{fixture.user}@127.0.0.1:company/sha256.git")
+        assert sha_source["object_format"] == "sha256" and len(sha_source["source"]["commit"]) == 64
+        assert sha_source["source"]["snapshot_sha256"] == first["source"]["snapshot_sha256"]
+        # Real push retains external dependencies as incomplete, without fetching URLs.
+        lfs_content = b"required external source"
+        (repo / "external.bin").write_text(f"version https://git-lfs.github.com/spec/v1\noid sha256:{hashlib.sha256(lfs_content).hexdigest()}\nsize {len(lfs_content)}\n")
+        (repo / ".gitmodules").write_text('[submodule "module"]\npath = module\nurl = http://169.254.169.254/latest/meta-data\n')
+        fixture.git(repo, "add", "external.bin", ".gitmodules")
+        fixture.git(repo, "update-index", "--add", "--cacheinfo", f"160000,{commit},module")
+        fixture.git(repo, "commit", "-m", "incomplete external source")
+        before = {s["submission"] for s in fixture.submissions()}
+        received = fixture.git(repo, "push", fixture.endpoint, "HEAD")
+        incomplete = [s for s in fixture.submissions() if s["submission"] not in before][0]
+        assert incomplete["status"] == "INCOMPLETE_EXTERNAL_SOURCE" and incomplete["completeness"] == "INCOMPLETE_EXTERNAL_SOURCE"
+        assert incomplete["lfs_unresolved"] == 1 and incomplete["submodules_unresolved"] == 1
+        gitlink = next(e for e in incomplete["external_sources"] if e["kind"] == "SUBMODULE")
+        assert gitlink["repository"] is None and gitlink["location"] == "AUTHORITY_UNMAPPED" and gitlink["resolution"] == "UNRESOLVED"
+        assert "169.254.169.254" not in json.dumps(incomplete)
+        assert b"SOURCE INCOMPLETE_EXTERNAL_SOURCE" in received.stderr
+        # Operator resolution creates a new immutable schema-2 submission. Candidate
+        # URLs are ignored; authority permits this exact child and private LFS object.
+        lfs_root = fixture.authority / "lfs"
+        lfs_root.mkdir(mode=0o700)
+        digest = hashlib.sha256(lfs_content).hexdigest()
+        lfs_object = lfs_root / digest
+        lfs_object.write_bytes(lfs_content)
+        lfs_object.chmod(0o600)
+        resolution_config = fixture.authority / "resolution.json"
+        parent_reference = {"project": PROJECT, "repository": incomplete["repository"], "identity": incomplete["source"]}
+        resolution = {"store": str(fixture.store), "resolver_actor": ACTOR,
+                      "parent_submission": incomplete["submission"], "parent": parent_reference,
+                      "lfs_root": str(lfs_root),
+                      "lfs": [{"path": "external.bin", "sha256": digest, "size": len(lfs_content)}],
+                      "submodules": [{"path": "module", "submission": first["submission"],
+                                      "source": {"project": PROJECT, "repository": first["repository"], "identity": first["source"]}}]}
+        def resolve(configuration, ok):
+            resolution_config.write_text(json.dumps(configuration))
+            resolution_config.chmod(0o600)
+            return run([fixture.binary, "resolve", incomplete["submission"], "--config", resolution_config], ok=ok)
+        # Wrong digest/size, missing grants, cross-repository substitution, and
+        # linked external storage fail without any accepted publication.
+        previous_accepted = {s["submission"] for s in fixture.submissions() if s["status"] == "ACCEPTED"}
+        lfs_object.write_bytes(b"x" * len(lfs_content))
+        assert resolve(resolution, False).returncode != 0
+        lfs_object.unlink()
+        lfs_target = fixture.authority / "unapproved-lfs"
+        lfs_target.write_bytes(lfs_content)
+        lfs_target.chmod(0o600)
+        lfs_object.symlink_to(lfs_target)
+        assert resolve(resolution, False).returncode != 0
+        lfs_object.unlink()
+        lfs_object.write_bytes(lfs_content)
+        lfs_object.chmod(0o600)
+        wrong = json.loads(json.dumps(resolution))
+        wrong["submodules"][0]["source"]["repository"] = "authority/wrong-repository"
+        assert resolve(wrong, False).returncode != 0
+        assert previous_accepted == {s["submission"] for s in fixture.submissions() if s["status"] == "ACCEPTED"}
+        resolved = json.loads(resolve(resolution, True).stdout)
+        assert resolved["source_schema"] == 2 and resolved["completeness"] == "COMPLETE"
+        assert resolved["source"]["snapshot_sha256"] != incomplete["source"]["snapshot_sha256"]
+        assert resolved["source"]["commit"] == incomplete["source"]["commit"] and resolved["source"]["tree"] == incomplete["source"]["tree"]
+        assert resolved["resolution"]["lfs_resolved"] == resolved["resolution"]["submodules_resolved"] == 1
+        assert resolved["resolution"]["parent_submission"] == incomplete["submission"]
+        lfs_object.unlink()
+        resolution_config.unlink()
+        shown = json.loads(run([fixture.binary, "show", "--store", fixture.store, resolved["submission"]]).stdout)
+        assert shown == resolved
+        assert json.loads(run([fixture.binary, "show", "--store", fixture.store, incomplete["submission"]]).stdout) == incomplete
+        # A stalled authenticated session expires and blocks a concurrent admission.
+        config = json.loads(fixture.config.read_text())
+        config["session_seconds"] = 1
+        fixture.config.write_text(json.dumps(config))
+        stalled = subprocess.Popen([str(fixture.binary), "receive", "--config", str(fixture.config), "--device-key", fingerprint],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=poisoned)
+        try:
+            time.sleep(.2)
+            denied = run([fixture.binary, "receive", "--config", fixture.config, "--device-key", fingerprint], input=request(), env=poisoned, ok=False)
+            assert denied.returncode != 0
+            assert stalled.wait(timeout=5) != 0
+        finally:
+            if stalled.poll() is None:
+                stalled.kill()
+            stalled.communicate(timeout=5)
+        config["session_seconds"] = 30
+        fixture.config.write_text(json.dumps(config))
+        # Disable an already accepted key without altering authentication material.
+        config = json.loads(fixture.config.read_text())
+        config["devices"][0]["enabled"] = False
+        fixture.config.write_text(json.dumps(config))
+        assert fixture.git(repo, "push", fixture.endpoint, "HEAD", ok=False).returncode != 0
+        if args.retain:
+            args.retain.mkdir(parents=True, exist_ok=True)
+            (args.retain / "controlled-ingress.json").write_text(json.dumps(first, indent=2)+"\n")
+            # Exercise the actual source inspection/export boundary for ordinary,
+            # SHA-256, incomplete, and resolved snapshots without changing receive.
+            for name, evidence in [("ordinary", first), ("sha256", sha_source),
+                                   ("incomplete", incomplete), ("resolved", resolved)]:
+                exported = run([fixture.binary, "export-proto", "--store", fixture.store,
+                                evidence["submission"]]).stdout
+                (args.retain / f"{name}.pb").write_bytes(exported)
+                (args.retain / f"{name}.json").write_text(json.dumps(evidence, indent=2)+"\n")
+        print("Real SSH Git push, immutable replay, key/repository authorization, shell/SCP/SFTP/forwarding restrictions: passed")
+    except Exception:
+        print(json.dumps(fixture.submissions(), indent=2), file=__import__("sys").stderr)
+        raise
+    finally:
+        fixture.close()
+
+
+if __name__ == "__main__":
+    main()

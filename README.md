@@ -2,15 +2,16 @@
 
 ArchCert is building a software certification authority. The current implementation
 produces source, materialization and isolated execution evidence, plus deterministic
-unsigned policy evaluations.
+unsigned policy evaluations and development Ed25519 certificates for exact source states.
 
 Its core rule is simple:
 
 > Trust claims less. Reproduce evidence. Bind results to immutable inputs. Sign the verdict.
 
-This repository implements Milestones 1–4A: verified source preparation, a rootless
-execution plane, authority-resolved plans and deterministic property evaluation.
-It does not issue certificates and is not a production certifier.
+This repository implements Milestones 1–4B: verified source preparation, a rootless
+execution plane, authority-resolved plans, deterministic policy evaluation and
+canonical certificate issuance with offline verification. Signing is DEVELOPMENT
+ONLY; ArchCert is not a production certifier.
 
 ## Future bootstrap goal
 
@@ -44,16 +45,19 @@ The first trustworthy vertical slice is:
 - `apps/archcert-cli`: command-line client.
 - `crates/archcert-domain`: infrastructure-free domain language.
 - `crates/archcert-application`: application use cases and ports.
-- `crates/archcert-protocol`: client/API DTOs.
-- `crates/archcert-source`: source-ingress and snapshot boundary.
+- `crates/archcert-protocol`: generated internal Protobuf DTOs, checked conversions, and bootstrap HTTP DTOs.
+- `crates/archcert-source`: loose/packed source validation and immutable snapshot boundary.
+- `crates/archcert-gateway`: authenticated Git ingress, authorization and quarantine.
 - `crates/archcert-materialization`: verified ephemeral Unix source preparation.
 - `crates/archcert-runner`: rootless OCI execution adapter and hostile fixtures.
-- `crates/archcert-evidence`: inactive generic evidence scaffold.
+- `crates/archcert-evidence`: canonical detailed evidence bundles and manifests.
 - `crates/archcert-policy`: deterministic authority policy and unsigned eligibility.
-- `crates/archcert-crypto`: inactive future signing scaffold.
+- `crates/archcert-crypto`: Ed25519 port, strict verification and isolated development key adapter.
+- `crates/archcert-certificate`: fail-closed issuance and offline verification proofs.
 
-The local Git gateway reads loose objects; production Git transport, durable
-persistence, production runner operations, signing and semantic review remain deferred.
+The local Git gateway reads loose objects; Northgate adds restricted SSH push and
+pack ingress. Production deployment qualification, durable persistence, production
+runner/key operations and semantic review remain deferred.
 
 ## Inspect exact source
 
@@ -158,7 +162,8 @@ with UNAVAILABLE. See [ADRs 0019–0021](docs/adr/0019-application-protocol-and-
 [native Linux qualification plan](docs/runner/LINUX_QUALIFICATION.md).
 
 Live isolation gates are opt-in via `./scripts/test-live-oci`; they are not run
-in standard CI. Native Linux deployment remains NOT YET QUALIFIED. Certificates, signatures, production jobs and Git transport remain deferred.
+in standard CI. Native Linux deployment remains NOT YET QUALIFIED. Durable production jobs and deployment qualification remain deferred. Northgate
+adds SSH Git transport; development certificates/signatures are implemented in M4B below.
 
 
 ## Milestone 4A: deterministic unsigned policy evaluation
@@ -176,3 +181,63 @@ See the [policy development guide](docs/policy/README.md),
 [threat model](docs/threat-model/POLICY_EVALUATION.md). Retained demonstrations cover
 PROVEN/eligible, FAILED, NOT_PROVEN (Bottle version only) and INCONCLUSIVE commands.
 Every report says UNSIGNED POLICY EVALUATION and NOT A CERTIFICATE.
+
+
+## Milestone 4B: Eldermark development certificate authority
+
+`archcert certify` executes and evaluates the exact source, rejects ineligible or
+inconsistent results before private-key loading, freezes a canonical certificate,
+signs with Ed25519, and verifies under the selected public key before reporting
+CERTIFIED. A certificate authenticates ArchCert claims for EXACT_SOURCE; it does
+not certify a branch, future source, build artifact or universal software security.
+
+```bash
+cargo run -p archcert-cli -- verify \
+  docs/certificates/development/controlled/certificate.json \
+  --public-key docs/certificates/development/controlled/public-key.hex
+```
+
+Verification is offline and requires only the certificate and an explicitly trusted
+public key. The development key here is published as test evidence, not a production
+trust anchor. NO EXPIRATION SEMANTICS YET. Revocation is NOT IMPLEMENTED.
+Use `archcert development-keygen --help` and `archcert certify --help` for development
+issuance. Private keys require an explicit owned mode-0700 directory outside target
+repositories and workspace roots. No key selection belongs in project TOML.
+
+See the [development certificate guide](docs/certificates/README.md),
+[M4B baseline](docs/MILESTONE_4B_BASELINE.md), [completion report](docs/MILESTONE_4B_REPORT.md),
+[ADRs 0025–0027](docs/adr/0025-canonical-certificate-and-evidence-manifest.md),
+[signing threat model](docs/threat-model/CERTIFICATE_SIGNING.md) and
+[crypto dependency review](docs/architecture/CRYPTO_DEPENDENCY_REVIEW.md).
+
+## Northgate authenticated Git source ingress
+
+Northgate adds an actual restricted OpenSSH `git push` path, bounded normal pack
+and delta support, explicit actor/device/repository authorization, fresh quarantine
+and immutable source reuse. Push success reports source acceptance only. A later
+`archcert certify --source-submission ID --source-store ROOT ...` independently
+invokes the existing development certification chain. Gateway dependencies exclude
+execution, policy and signing. Source schema-1 SHA-256 remains compatible.
+
+Run `./scripts/test-northgate` after building archcert-gateway-cli for real SSH
+transport/authentication/adversarial tests. `./scripts/demo-northgate` uses the
+existing rootless OCI environment for a full development certificate and Bottle
+regression. See [development ingress](docs/source-ingress/README.md),
+[baseline](docs/MILESTONE_5_BASELINE.md), [report](docs/MILESTONE_5_REPORT.md), and
+[threat model](docs/threat-model/NORTHGATE.md). External-source acquisition has a
+separate verification port and operator-only private LFS/accepted-child adapter.
+Resolved content receives a new schema-2 snapshot verified through execution;
+unresolved LFS/submodules cannot execute. `./scripts/demo-northgate-resolution`
+exercises the resolved-source development certificate flow. Durable jobs/storage
+belong to Ravenport.
+
+M5 Northgate's final internal protocol task is complete; see the
+[Protobuf completion report](docs/MILESTONE_5_PROTOBUF_REPORT.md),
+[protocol architecture](docs/architecture/PROTOBUF_PROTOCOL_CONTRACTS.md), and
+[ADR 0034](docs/adr/0034-protobuf-internal-protocol-contracts.md).
+Protocol Buffers are the primary internal machine-to-machine schema/wire format;
+generated common/source v1 DTOs remain in the protocol layer. They do not replace
+cryptographic canonical encodings. Operator `archcert-gateway export-proto --store
+STORE SUBMISSION_UUID` exports source-only observations in binary form. No services
+or persistence are introduced. The next milestone is
+[M5.1 Ravenport](docs/architecture/RAVENPORT_PLAN.md).

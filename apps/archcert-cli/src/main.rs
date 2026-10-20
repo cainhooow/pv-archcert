@@ -26,6 +26,21 @@ enum Command {
     Run(Box<RunArgs>),
     /// Runs development execution and deterministic unsigned policy evaluation; issues no certificate.
     Evaluate(Box<RunArgs>),
+    /// Issues a DEVELOPMENT CERTIFICATE after execution, eligibility, signing and verification.
+    Certify(Box<CertifyArgs>),
+    /// Verifies a certificate offline under an explicitly trusted Ed25519 public key.
+    Verify {
+        certificate: PathBuf,
+        #[arg(long)]
+        public_key: PathBuf,
+    },
+    /// Creates a DEVELOPMENT ONLY local key outside repositories and workspaces.
+    DevelopmentKeygen {
+        #[arg(long)]
+        private_key: PathBuf,
+        #[arg(long)]
+        public_key: PathBuf,
+    },
     /// Checks strict project requests against the development authority catalog; executes nothing.
     ConfigCheck {
         /// Path to the project-owned ArchCert request configuration.
@@ -34,15 +49,49 @@ enum Command {
     },
 }
 
+#[derive(Debug, clap::Args)]
+struct CertifyArgs {
+    #[command(flatten)]
+    run: RunArgs,
+    /// Explicit authority-owned DEVELOPMENT ONLY PKCS#8 private-key file.
+    #[arg(long)]
+    development_key: PathBuf,
+    /// Separately selected trusted public-key hex file.
+    #[arg(long)]
+    public_key: PathBuf,
+    /// New authority evidence directory outside source and materialization roots.
+    #[arg(long)]
+    output: PathBuf,
+}
+struct CertificationOptions {
+    key: PathBuf,
+    public_key: PathBuf,
+    output: PathBuf,
+}
+
 /// Authority/operator dry-run inputs. Repository TOML never supplies runtime settings.
 #[derive(Debug, clap::Args)]
 struct RunArgs {
     /// Explicit Git directory containing selected loose objects.
-    #[arg(long)]
-    git_dir: PathBuf,
+    #[arg(
+        long,
+        required_unless_present = "source_submission",
+        conflicts_with = "source_submission"
+    )]
+    git_dir: Option<PathBuf>,
     /// Exact full Git commit ID.
-    #[arg(long)]
-    commit: String,
+    #[arg(
+        long,
+        required_unless_present = "source_submission",
+        conflicts_with = "source_submission"
+    )]
+    commit: Option<String>,
+    /// Accepted Northgate submission UUID; no Git acquisition occurs during execution.
+    #[arg(long, requires = "source_store")]
+    source_submission: Option<String>,
+    /// Authority-owned development submission store.
+    #[arg(long, requires = "source_submission")]
+    source_store: Option<PathBuf>,
     /// Expected independent source SHA-256 (64 hexadecimal characters).
     #[arg(long)]
     snapshot: String,
@@ -83,6 +132,12 @@ struct RunArgs {
 
 #[derive(Debug, Subcommand)]
 enum SourceCommand {
+    /// Shows immutable source-ingress evidence for an accepted Northgate submission.
+    Show {
+        submission: String,
+        #[arg(long)]
+        store: PathBuf,
+    },
     /// Inspects loose objects in an explicit bare or `.git` directory (development only).
     Inspect {
         /// Explicit Git directory; working-tree files and refs are ignored.
@@ -107,8 +162,28 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Source { command } => source_command(command),
         Command::ConfigCheck { file } => config_check(&file),
-        Command::Run(args) => run_command(*args, false),
-        Command::Evaluate(args) => run_command(*args, true),
+        Command::Run(args) => run_command(*args, false, None),
+        Command::Evaluate(args) => run_command(*args, true, None),
+        Command::Certify(args) => {
+            validate_authority_paths(&args)?;
+            run_command(
+                args.run,
+                true,
+                Some(CertificationOptions {
+                    key: args.development_key,
+                    public_key: args.public_key,
+                    output: args.output,
+                }),
+            )
+        }
+        Command::Verify {
+            certificate,
+            public_key,
+        } => verify_command(&certificate, &public_key),
+        Command::DevelopmentKeygen {
+            private_key,
+            public_key,
+        } => development_keygen(&private_key, &public_key),
     }
 }
 
@@ -121,6 +196,14 @@ fn source_command(command: SourceCommand) -> Result<()> {
     };
     use archcert_source::{LocalGitGateway, MemorySourceStore};
     match command {
+        SourceCommand::Show { submission, store } => {
+            let store = archcert_gateway::DevelopmentSubmissionStore::open(&store, 32)?;
+            let source = store.load(&archcert_domain::ingress::SourceSubmissionId::parse(
+                &submission,
+            )?)?;
+            println!("{}", serde_json::to_string_pretty(&source.evidence)?);
+            Ok(())
+        }
         SourceCommand::Inspect {
             repository_path,
             commit,
@@ -217,7 +300,11 @@ fn config_check(file: &PathBuf) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn run_command(args: RunArgs, evaluate_policy: bool) -> Result<()> {
+fn run_command(
+    args: RunArgs,
+    evaluate_policy: bool,
+    certification: Option<CertificationOptions>,
+) -> Result<()> {
     use archcert_application::{
         configuration::RuntimeConfiguration,
         execution::{ExecutionFailure, SandboxRunner},
@@ -301,18 +388,63 @@ fn run_command(args: RunArgs, evaluate_policy: bool) -> Result<()> {
     // execute performs its own preflight; a failed preflight must remain observable to policy.
     let repository = RepositoryId::parse(args.repository)?;
     let project: ProjectId = serde_json::from_value(serde_json::Value::String(args.project))?;
-    let gateway = LocalGitGateway::new(repository.clone(), args.git_dir);
     let mut store = MemorySourceStore::default();
-    let source = ingest_source(
-        &gateway,
-        &mut store,
-        SourceSubmission {
-            project,
-            repository,
-            requested_commit: GitObjectId::parse(args.commit)?,
-        },
-        SourceLimits::default(),
-    )?;
+    let source = if let Some(id) = args.source_submission {
+        use archcert_application::source::{SourceEvidence, SourceIngestion, SourceStore};
+        let source_store = archcert_gateway::DevelopmentSubmissionStore::open(
+            args.source_store
+                .as_ref()
+                .context("source store required")?,
+            32,
+        )?;
+        let accepted =
+            source_store.load(&archcert_domain::ingress::SourceSubmissionId::parse(&id)?)?;
+        anyhow::ensure!(
+            accepted.snapshot.project() == project && accepted.snapshot.repository() == &repository,
+            "submission scope mismatch"
+        );
+        let snapshot = store.retain(accepted.snapshot)?;
+        let evidence = SourceEvidence {
+            submission: SourceSubmission {
+                project,
+                repository,
+                requested_commit: snapshot.identity().commit.clone(),
+            },
+            identity: snapshot.identity().clone(),
+            entry_count: snapshot.files().len() as u64,
+            object_count: snapshot.object_count(),
+            total_bytes: snapshot.total_bytes(),
+            unresolved: snapshot.external().to_vec(),
+            status: snapshot.status(),
+            validation_version: "archcert-northgate-store-v1".into(),
+            schema_version: snapshot.schema_version(),
+            resolved_binding: (snapshot.schema_version() == 2).then(|| snapshot.binding().clone()),
+            created_at: snapshot.created_at(),
+            limits: SourceLimits::default(),
+        };
+        SourceIngestion {
+            snapshot,
+            evidence,
+            events: Vec::new(),
+        }
+    } else {
+        let gateway = LocalGitGateway::new(
+            repository.clone(),
+            args.git_dir.context("Git directory required")?,
+        );
+        ingest_source(
+            &gateway,
+            &mut store,
+            SourceSubmission {
+                project,
+                repository,
+                requested_commit: GitObjectId::parse(
+                    args.commit.context("exact commit required")?,
+                )?,
+            },
+            SourceLimits::default(),
+        )?
+    };
     anyhow::ensure!(
         source.snapshot.identity().snapshot_sha256 == Sha256Digest::parse(args.snapshot)?,
         "source identity mismatch"
@@ -320,6 +452,7 @@ fn run_command(args: RunArgs, evaluate_policy: bool) -> Result<()> {
     let materializer =
         UnixSourceMaterializer::new(AuthorityWorkspaceRoot::open(&runtime.workspace_root)?);
     let mut results = Vec::new();
+    let mut execution_records = Vec::new();
     let mut successful = true;
     let mut all_observations = Vec::new();
     let mut expected_executions = Vec::new();
@@ -351,6 +484,14 @@ fn run_command(args: RunArgs, evaluate_policy: bool) -> Result<()> {
             && execution.as_ref().is_ok_and(|r| {
                 r.evidence.outcome == ExecutionOutcome::Completed && r.evidence.exit_code == Some(0)
             });
+        match &execution {
+            Ok(r) => execution_records.push(r.evidence.clone()),
+            Err(f) => {
+                if let Some(e) = &f.evidence {
+                    execution_records.push((**e).clone());
+                }
+            }
+        }
         let bound_execution = match &execution {
             Ok(result) => result.evidence.execution,
             Err(failure) => failure
@@ -421,14 +562,102 @@ fn run_command(args: RunArgs, evaluate_policy: bool) -> Result<()> {
     } else {
         None
     };
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&serde_json::json!({
-            "kind":if evaluate_policy {"UNSIGNED POLICY EVALUATION"} else {"ENGINEERING_EXECUTION_EVIDENCE"},
-            "notice":"NOT A CERTIFICATE", "certificate":"NOT ISSUED", "source":source.evidence,
-            "plan":plan, "expected_executions":expected_executions, "steps":results, "evaluation":evaluation,
-        }))?
-    );
+    let report = serde_json::json!({
+        "kind":if evaluate_policy {"UNSIGNED POLICY EVALUATION"} else {"ENGINEERING_EXECUTION_EVIDENCE"},
+        "notice":"NOT A CERTIFICATE", "certificate":"NOT ISSUED", "source":source.evidence,
+        "plan":plan, "expected_executions":expected_executions, "steps":results, "evaluation":evaluation,
+    });
+    if let Some(options) = certification {
+        // All execute calls and source cleanup attempts have ended. Refuse issuance
+        // after any execution/cleanup failure; private keys have not been loaded.
+        fs::create_dir(&options.output)
+            .context("evidence output must be a new authority directory")?;
+        fs::write(
+            options.output.join("evidence.json"),
+            serde_json::to_vec_pretty(&report)?,
+        )?;
+        let issuance = (|| -> Result<_> {
+            anyhow::ensure!(
+                successful,
+                "execution or cleanup failed; CERTIFICATE NOT ISSUED"
+            );
+            let e = evaluation.context("missing evaluation")?;
+            anyhow::ensure!(
+                e.eligibility
+                    == archcert_policy::CertificationEligibility::EligibleForCertification,
+                "evaluation not eligible; CERTIFICATE NOT ISSUED"
+            );
+            let key = read_public_key(&options.public_key)?;
+            let draft = archcert_certificate::CertificateDraft::prepare(
+                archcert_certificate::IssuanceContext {
+                    source: &source.snapshot,
+                    plan: &plan,
+                    executions: &expected_executions,
+                    observations: &all_observations,
+                    execution_records: &execution_records,
+                    bundle: &policy,
+                    selected: policy.identity(),
+                },
+                Some(e),
+                archcert_certificate::IssuanceMetadata {
+                    issued_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs(),
+                    certifier: "archcert-development-cli".into(),
+                },
+                key.clone(),
+            )?;
+            fs::write(
+                options.output.join("evidence-bundle.json"),
+                draft.evidence_bundle().canonical_bytes(),
+            )?;
+            fs::write(
+                options.output.join("evidence-manifest.json"),
+                draft.manifest().canonical_bytes(),
+            )?;
+            fs::write(
+                options.output.join("canonical-certificate.json"),
+                draft.certificate().bytes(),
+            )?;
+            // This is the first private-key operation in certify, after the complete
+            // eligibility/integrity/reference gate and after target destruction.
+            let issued = issue_development(draft, &options.key)?;
+            fs::write(
+                options.output.join("certificate.json"),
+                issued.envelope().to_json()?,
+            )?;
+            fs::write(options.output.join("public-key.hex"), key.to_hex())?;
+            let envelope: serde_json::Value =
+                serde_json::from_slice(&issued.envelope().to_json()?)?;
+            fs::write(
+                options.output.join("signature.hex"),
+                envelope["signature"].as_str().context("signature")?,
+            )?;
+            let verified = issued.verification().report();
+            fs::write(
+                options.output.join("verification.json"),
+                serde_json::to_vec_pretty(&verified)?,
+            )?;
+            Ok(verified)
+        })();
+        match issuance {
+            Ok(verified) => {
+                println!("{}", serde_json::to_string_pretty(&verified)?);
+                return Ok(());
+            }
+            Err(error) => {
+                let rejection = serde_json::json!({"certificate":"CERTIFICATE NOT ISSUED",
+                    "eligibility":report["evaluation"]["eligibility"],"reason":error.to_string()});
+                fs::write(
+                    options.output.join("rejection.json"),
+                    serde_json::to_vec_pretty(&rejection)?,
+                )?;
+                println!("{}", serde_json::to_string_pretty(&rejection)?);
+                return Err(error);
+            }
+        }
+    }
+    println!("{}", serde_json::to_string_pretty(&report)?);
     anyhow::ensure!(
         successful,
         "development execution did not complete successfully with cleanup"
@@ -437,6 +666,106 @@ fn run_command(args: RunArgs, evaluate_policy: bool) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-fn run_command(_: RunArgs, _: bool) -> Result<()> {
+fn run_command(_: RunArgs, _: bool, _: Option<CertificationOptions>) -> Result<()> {
     anyhow::bail!("execution requires Unix source preparation and a rootless Linux OCI daemon")
+}
+
+fn read_public_key(path: &std::path::Path) -> Result<archcert_crypto::PublicKey> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    fs::File::open(path)?.take(66).read_to_end(&mut bytes)?;
+    let text = std::str::from_utf8(&bytes)?;
+    Ok(archcert_crypto::PublicKey::from_hex(
+        text.strip_suffix('\n').unwrap_or(text),
+    )?)
+}
+fn verify_command(certificate: &std::path::Path, public_key: &std::path::Path) -> Result<()> {
+    let result = (|| -> Result<_> {
+        let key = read_public_key(public_key)?;
+        let envelope =
+            archcert_certificate::CertificateEnvelope::read(fs::File::open(certificate)?)?;
+        Ok(envelope.verify(&key)?.report())
+    })();
+    match result {
+        Ok(report) => {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Err(error) => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &serde_json::json!({"status":"VERIFICATION FAILED","reason":error.to_string()})
+                )?
+            );
+            Err(error)
+        }
+    }
+}
+fn validate_authority_paths(args: &CertifyArgs) -> Result<()> {
+    let git = fs::canonicalize(
+        args.run
+            .git_dir
+            .as_ref()
+            .or(args.run.source_store.as_ref())
+            .context("source root required")?,
+    )?;
+    let source_root = if git.file_name().is_some_and(|s| s == ".git") {
+        git.parent().context("repository parent")?
+    } else {
+        &git
+    };
+    let workspace = fs::canonicalize(&args.run.workspace_root)?;
+    for path in [&args.development_key, &args.public_key, &args.output] {
+        let parent = fs::canonicalize(
+            path.parent()
+                .context("explicit authority parent required")?,
+        )?;
+        anyhow::ensure!(
+            !parent.starts_with(source_root) && !parent.starts_with(&workspace),
+            "authority key and output paths must be outside source and materialization roots"
+        );
+        if path.exists() {
+            let resolved = fs::canonicalize(path)?;
+            anyhow::ensure!(
+                !resolved.starts_with(source_root) && !resolved.starts_with(&workspace),
+                "authority path resolves inside source or materialization root"
+            );
+        }
+    }
+    Ok(())
+}
+#[cfg(unix)]
+fn development_keygen(private_key: &std::path::Path, public_key: &std::path::Path) -> Result<()> {
+    use std::io::Write;
+    let mut public_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(public_key)?;
+    let key = archcert_crypto::local::LocalDevelopmentSigner::generate(private_key)?;
+    public_file.write_all(key.to_hex().as_bytes())?;
+    println!(
+        "DEVELOPMENT ONLY / NOT PRODUCTION KEY MANAGEMENT; signing key ID {}",
+        key.key_id().as_str()
+    );
+    Ok(())
+}
+#[cfg(not(unix))]
+fn development_keygen(_: &std::path::Path, _: &std::path::Path) -> Result<()> {
+    anyhow::bail!("development keys require Unix")
+}
+#[cfg(unix)]
+fn issue_development(
+    draft: archcert_certificate::CertificateDraft,
+    path: &std::path::Path,
+) -> Result<archcert_certificate::IssuedCertificate> {
+    let signer = archcert_crypto::local::LocalDevelopmentSigner::load(path)?;
+    Ok(draft.issue(&signer)?)
+}
+#[cfg(not(unix))]
+fn issue_development(
+    _: archcert_certificate::CertificateDraft,
+    _: &std::path::Path,
+) -> Result<archcert_certificate::IssuedCertificate> {
+    anyhow::bail!("development signer requires Unix")
 }

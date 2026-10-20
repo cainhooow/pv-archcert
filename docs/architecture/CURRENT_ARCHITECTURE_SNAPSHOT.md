@@ -1,95 +1,163 @@
-# Current architecture snapshot — Milestone 4A
+# Current architecture snapshot — Milestone 5 / Northgate
 
-ArchCert accepts exact supported loose Git objects, owns an independent canonical
-source identity, materializes/reverifies source, resolves execution against authority
-profiles and executes under the existing rootless OCI controls. The development
-CLI can now interpret typed observations with a deterministic authority policy and
-emit unsigned certification eligibility. It cannot issue a certificate.
+ArchCert accepts authenticated SSH Git pushes with bounded SHA-1/SHA-256 packs
+or explicit local loose objects, seals an independently hashed
+source snapshot, resolves authority execution plans, executes under rootless OCI,
+evaluates typed observations deterministically, and can issue a DEVELOPMENT ONLY
+Ed25519 certificate after full integrity validation, signing and offline verification.
+Eligibility remains unsigned and cannot itself report CERTIFIED.
 
 ```text
-HTTP (disabled submission) -> protocol DTO mappings -> application -> domain
-CLI composition ----------> application commands/ports/configuration/plans
+HTTP (disabled submission) -> protocol -> application -> domain
+Operator source export ---> protocol Protobuf adapter -> application ingress read model -> domain
+CLI execution ------------> application + source/materialization/runner adapters
 CLI evaluation -----------> policy -> application + domain
-source adapter -----------> application + domain
-materialization adapter --> application VerifiedSourceExport + domain
-runner adapter -----------> application VerifiedSourceExport/SandboxRunner + domain
+CLI certification --------> certificate -> policy + application + domain + evidence + crypto
+Evidence -----------------> policy + application + domain
+Crypto -------------------> mature Ed25519/SHA-256/key-encoding implementations
 ```
 
-No domain→policy, application→policy/HTTP, policy→runner/materialization/source/HTTP,
-or production runner→materialization edge exists. The runner's materialization
-fixture edge stays dev-only. The architecture guard checks policy dependencies
-and prevents inactive evidence/crypto scaffolds entering active CLI/daemon links.
+No signer/key dependency exists in runner, source, materialization, application,
+policy, project configuration or daemon graphs. Crypto imports no workspace crate.
+The CLI is trusted operator composition; target access to its flags/process would
+be authority access. The architecture guard enforces both direct and transitive
+signing exclusions and checks the execution interfaces for key/signing types.
 
 ```text
-ProjectConfiguration -> additional ProjectExecutionRequest
-AuthorityConfiguration + operator-owned mandatory commands -> ValidationPlan
-    -> exact-source-bound ExecutionRequest
-    -> isolated execution and separate cleanup
-    -> versioned ValidationObservations
-Authority PolicyBundle + independent policy selection
-    + accepted SourceSnapshot + exact plan + independent expected execution IDs
-    + observations -> PolicyEvaluation -> unsigned eligibility
+accepted exact SourceSnapshot
+  + immutable authority ValidationPlan
+  + separately pinned immutable PolicyBundle
+  + independent execution identities
+  + typed controller observations
+    -> PolicyEvaluation (schema 1, five verdicts, structured findings)
+    -> ELIGIBLE_FOR_CERTIFICATION gate
+    -> compare identities, resolve references, re-evaluate original inputs
+    -> canonical detailed EvidenceBundle + deterministic EvidenceManifest
+    -> owned immutable CertificateDraft / canonical payload / SHA-256 identity
+    -> CertificateSigner (key ID and exact canonical message only)
+    -> detached Ed25519 signature
+    -> offline verification under explicitly selected public key
+    -> IssuedCertificate / VerifiedCertificate -> CERTIFIED
 ```
 
-`run` returns execution evidence. `evaluate` uses the same flow and adds deterministic
-policy interpretation. It embeds the pinned `archcert-development-v1` authority
-bundle, requiring all seven generic properties. `--authority-config` is a trusted
-operator input for mandatory commands, never target-sourced policy authority.
-Project requests cannot set a policy, severity, waiver, applicability, runtime,
-image, environment, host mounts, network or limits. Requested TEST/BUILD labels
-cannot satisfy authority-command properties. Operator access is trusted authority;
-this development CLI is not a service authentication boundary.
+Execution and both sandbox/source cleanup finish before the CLI prepares a draft;
+any execution/cleanup failure rejects issuance. Private-key loading happens only
+after complete draft validation. The development signer uses explicit authority
+paths outside source/workspaces, owned private files, OS cryptographic randomness,
+PKCS#8 encoding and zeroizing buffers. No private bytes cross a runner/source/config
+port or enter OCI transfer/environment. No production custody or hardware isolation
+is claimed. The local signer shares the trusted controller OS identity.
 
-Plans are immutable and have schema-1 exact JSON identities, including command,
-profile/image/programs/limits, order, category and provenance. Observations bind
-schema, source commit/tree/snapshot, whole plan digest, step, execution, profile,
-fact kind and producer/version. Expected execution IDs arrive separately from
-controller dispatch/results; they are not selected from a convenient observation.
-A setup/runtime failure without detailed evidence produces only an unavailable
-execution fact, never invented source/sandbox/network facts.
+Every authority-relevant certificate field is inside the signed payload: exact
+project/repository/commit/tree/source digest, policy/version/digest, plan/evaluation/
+manifest digests, finding IDs, versions, certifier/runner/isolation, issuance time,
+scope, governance limitations, algorithm and stable public-key digest identity.
+Certificate ID is SHA-256 of its canonical payload; it is not the signature.
+The envelope adds only derived digest, detached signature and public material.
 
-Policy TOML is strict, bounded and declarative. Canonical JSON, sorted property/set
-arrays and SHA-256 establish identity independently of authoring whitespace/order.
-Policy selection checks exact bundle ID/version/digest. Schema/rule/version and
-producer support are explicit; no scripts, dynamic plugins or LLM are available.
-Observation order and explicit audit time do not change results or findings.
+Schema-1 canonical JSON recursively sorts fixed ASCII keys, preserves Unicode
+strings, rejects non-interoperable numbers, normalizes schema-defined sets and
+emits compact UTF-8 without BOM/newline. Parsing rejects unknown/duplicate fields,
+unknown schemas/algorithms, invalid/oversized fields and encodings within a 64 KiB
+predecode envelope bound. Independent fixed Python/OpenSSL vectors supplement
+Rust permutation, tampering, substitution and key-isolation tests.
 
-| Layer/vocabulary | Meaning |
+The small certificate binds the manifest, which resolves typed observation/finding
+references and binds the separate detailed canonical evidence bundle including
+execution records and captured log prefixes. Detailed records must reproduce the
+consumed observations against the exact plan. No logs are embedded in certificates.
+Evaluation audit time does not change semantic evaluation identity; issued_at can
+create a new certificate instance with unchanged source/evaluation identity.
+
+| Vocabulary | Meaning |
 | --- | --- |
-| SOURCE ACCEPTED / COMPLETE | Validated immutable supported source; COMPLETE excludes unresolved LFS/submodules |
-| MATERIALIZED | Verified/sealed source under documented filesystem assumptions |
+| SOURCE ACCEPTED / COMPLETE | Validated immutable supported source; no unresolved required LFS/submodule content |
+| MATERIALIZED | Verified/sealed under documented filesystem assumptions |
 | OBSERVATION / COMPLETED | Controller fact; normal process exit includes nonzero |
-| PROVEN | Required authority evidence establishes this explicitly limited property |
-| FAILED | Evidence establishes the property is false |
-| NOT_PROVEN | Required evidence is absent/insufficient; neither failure nor success |
-| NOT_APPLICABLE | Explicit authority applicability exclusion; missing evidence is insufficient |
-| INCONCLUSIVE property | Contradictory, ambiguous, unsupported or infrastructure-impaired evidence |
-| ELIGIBLE_FOR_CERTIFICATION | Every blocking requirement satisfied; certificate construction/signing still required |
-| NOT_ELIGIBLE / INCONCLUSIVE eligibility | Definite blocker / only unreliable blocking conclusions |
-| CERTIFIED | Future M4B result after construction and successful signing; never emitted here |
+| PROVEN | Authority evidence establishes the explicitly limited property |
+| FAILED | Authority evidence establishes that the property is false |
+| NOT_PROVEN | Required evidence absent/insufficient |
+| NOT_APPLICABLE | Explicit authority applicability exclusion |
+| INCONCLUSIVE | Contradictory, ambiguous, unsupported or infrastructure-impaired evidence |
+| ELIGIBLE_FOR_CERTIFICATION | Every blocking requirement satisfied; no certificate yet |
+| CERTIFIED | Canonical certificate successfully signed AND verified under the selected key |
 
-All mandatory severities and all P0/P1 requirements block unless PROVEN or explicitly
-permitted NOT_APPLICABLE. There is no best-effort pass/waiver. Tests/build properties
-mean only the authority-designated commands completed exit zero in the bound
-execution context, not test coverage, absence of defects or artifact security.
-Source completeness consumes existing snapshot status rather than parsing Git.
+Offline `archcert verify CERTIFICATE --public-key TRUSTED_PUBLIC_KEY` requires no
+Git, Docker, workspace, network, database or private key. Embedded public material
+is not trusted automatically. A valid signature authenticates recorded claims;
+it does not establish universal software security or attest runtime binaries.
+EXACT_SOURCE excludes branches/latest/future source/artifact/release/deployment.
+NO EXPIRATION SEMANTICS YET. Revocation is NOT IMPLEMENTED; replay for the exact
+same source is allowed. Trust-anchor distribution remains administrative.
 
-Verified source export, rootless preflight, stopped source/config verification,
-read-only source, cleared/fixed environments, denied network, finite budgets,
-bounded capture and separate cleanup remain unchanged. Runtime identity is an
-observation, never executable attestation; toolchains remain NotObserved.
+M1–M4A source, materialization, isolation, fixed environment/network/resource,
+structured observations and mandatory authority-policy guarantees remain active.
+Project configuration cannot select signer/key/algorithm/authority or weaken policy.
+No AI participates in issuance. HTTP submission remains 501 UNAVAILABLE. No database, web UI, durable jobs, release permit, artifact certification,
+waiver, policy inheritance, production KMS/HSM/PKCS#11, revocation or transparency
+service is added. Native Linux remains NOT YET QUALIFIED.
 
-POST /api/v1/certifications remains HTTP 501 UNAVAILABLE, without job ID/persistence.
-No API expansion, database, certificate format, key loading or signing is present.
-Unsigned retained demo JSON can be edited outside the live process and is not an
-authenticated evidence bundle. No production policy storage/authentication,
-source transport/packfiles/external fetch, durable jobs/recovery, retries, policy
-inheritance or independent certification is implemented. Native Linux remains
-[NOT YET QUALIFIED](../runner/LINUX_QUALIFICATION.md).
+See ADRs 0025–0027, MILESTONE_4B_REPORT.md, the certificate/signing threat model,
+TCB_AND_DEPENDENCIES.md and CRYPTO_DEPENDENCY_REVIEW.md.
 
-See ADRs [0022](../adr/0022-deterministic-policy-authority-and-verdicts.md),
-[0023](../adr/0023-canonical-policy-identity.md),
-[0024](../adr/0024-unsigned-eligibility-and-findings.md), the
-[policy threat model](../threat-model/POLICY_EVALUATION.md),
-[development guide and retained demonstrations](../policy/README.md) and
-[TCB inventory](TCB_AND_DEPENDENCIES.md).
+## Northgate ingress
+
+```text
+OpenSSH public-key auth -> explicit actor/device/repository grant
+ -> fresh private quarantine -> bounded gitoxide pack decoding + M1 source validation
+ -> isolated Git receive adapter -> immutable SourceSnapshot + ingress evidence
+ -> separate later control-plane certification request -> existing M2–M4B chain
+```
+
+archcert-gateway and its standalone executable have no direct/transitive execution,
+policy, Docker, evidence, certificate or signing dependencies. Git's bounded
+advertisement/report handling runs with cleared configuration/environment and no
+hooks. It is observed, not cryptographically attested. Each push is a new
+submission; branch names are provenance and cannot mutate earlier snapshots.
+One branch, create-only commands and self-contained packs are the initial contract.
+A shallow declaration is supported only for the exact selected commit.
+
+The finite local development store retains verified source separately from jobs.
+`source show` and later `certify --source-submission` reuse immutable bytes without
+Git acquisition. No acquisition credential reaches RunnerInput or certificate
+signing. REST remains 501. Source schema 1 is unchanged; old/new source identities
+and Bottle policy behavior are reproduced by real SSH push/OCI regressions.
+
+ExternalSourceAuthority verifies bounded LFS bytes and exact authority-mapped
+submodule snapshots into a new immutable schema-2 SourceSnapshot. An operator-only
+private LFS/accepted-child adapter enforces exact scoped grants. SourceBinding
+carries only immutable identity metadata through artifact reload, materialization
+and independent stopped-sandbox verification. Unresolved pointers/gitlinks remain
+INCOMPLETE_EXTERNAL_SOURCE and cannot run; remote acquisition is not automatic.
+See ADRs 0028–0033, NORTHGATE_DEPENDENCY_REVIEW.md, the Northgate threat model and
+MILESTONE_5_REPORT.md for implementation evidence and limitations.
+
+## Internal protocol contracts and Northgate completion
+
+Protocol Buffers are the primary internal machine-to-machine schema/wire format.
+The existing archcert-protocol crate generates common.v1/source.v1 DTOs using
+pinned prost/prost-build and bundled protoc. Domain/application remain independent
+of generated DTOs, prost, prost-types, and tonic; architecture guards enforce
+direct and transitive exclusions. No tonic or actual RPC service is introduced.
+
+IngressEvidence projects into a transport-independent application read model;
+the operator `archcert-gateway export-proto` command emits validated binary source
+observations after the existing immutable store load/rehash. It represents exact
+source identity, Git/actor/device provenance, completeness, and resolved schema-2
+binding summaries without credentials, origins, filesystem paths, or capabilities.
+It cannot reconstruct accepted source or grant certification/execution authority.
+SSH reception, current storage formats, and execution/signing paths are unchanged.
+
+Protobuf bytes are not cryptographic canonicalization. Existing source, policy,
+certificate/signing, and evidence canonical structures remain authoritative;
+SHA-256 of Protobuf may identify only an exact serialized artifact. Unknown fields
+cannot create trusted positive semantics. Future signer requests must be narrow,
+certificate-specific contracts and cannot expose arbitrary-data signing.
+
+The final protocol task and required gate results are recorded in
+[MILESTONE_5_PROTOBUF_REPORT.md](../MILESTONE_5_PROTOBUF_REPORT.md), completing
+M5 Northgate. M5.1 Ravenport is next; its [handoff plan](RAVENPORT_PLAN.md) reserves
+future contract families without implementing durable jobs, persistence, workers,
+recovery, or production RPC. See [ADR 0034](../adr/0034-protobuf-internal-protocol-contracts.md)
+and [protocol architecture](PROTOBUF_PROTOCOL_CONTRACTS.md). Earlier reports retain
+their historical results.

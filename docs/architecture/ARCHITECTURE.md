@@ -1,9 +1,18 @@
 # ArchCert Architecture Specification — Bootstrap v0.1
 
 This document describes the intended architecture, followed by implemented slices.
-SSH/HTTPS ingestion, durable jobs and signing in the target flow below remain future
-requirements. M4A implements deterministic unsigned policy eligibility. The [current snapshot](CURRENT_ARCHITECTURE_SNAPSHOT.md)
-and [M4A report](../MILESTONE_4A_REPORT.md) describe executable behavior.
+Northgate implements authenticated restricted SSH ingress; HTTPS and durable jobs
+remain future work. M4B development issuance/offline verification continues after
+deterministic eligibility. The [current snapshot](CURRENT_ARCHITECTURE_SNAPSHOT.md)
+and [Northgate report](../MILESTONE_5_REPORT.md) describe executable behavior.
+
+Northgate's final internal protocol slice uses versioned Protocol Buffers contracts
+with generated DTOs owned by archcert-protocol and checked application adapters.
+Protobuf is the primary internal machine-to-machine wire format, not cryptographic
+canonicalization. See [ADR 0034](../adr/0034-protobuf-internal-protocol-contracts.md),
+[protocol contracts](PROTOBUF_PROTOCOL_CONTRACTS.md), and the
+[focused completion report](../MILESTONE_5_PROTOBUF_REPORT.md). M5.1 Ravenport
+will introduce actual durable process boundaries under those rules.
 
 ## Purpose
 
@@ -53,6 +62,7 @@ Quarantine
       v
 Immutable Source Snapshot
       |
+      | separate later control-plane request
       v
 Certification Job
       |
@@ -144,3 +154,41 @@ The CLI accepts strict TOML through --config and direct operator development arg
 both resolve through the authority catalog. Current bootstrap submission returns
 501 UNAVAILABLE with no ID or queued-work claim. Toolchain versions are NotObserved;
 client/server/runtime reports are observed runtime identity, not attestation.
+
+
+## Milestone 4B: Eldermark authority transition
+
+Certificate orchestration is a separate inward consumer of policy/application/domain,
+evidence and a narrow crypto port. Neither policy nor execution adapters acquire
+signing authority. Owned drafts bind the re-evaluated original inputs, canonical
+manifest and detailed bundle; sign exact canonical certificate bytes; and produce
+a private-construction verification proof before CERTIFIED. Source/plan/project
+configuration and RunnerInput remain key-free. The CLI loads development private
+keys only after all execution and cleanup and full draft integrity validation.
+
+Offline verification requires an explicitly selected public key, strict bounded
+schema parsing, digest recomputation, key-ID matching and strict Ed25519 verification.
+All meaningful authority fields are signed, including exact-source scope and the
+development-only classification. See ADRs 0025–0027 and the signing threat model.
+Production custody, authority service authentication, expiration and revocation
+are deferred. HTTP submission remains disabled; no semantic AI participates.
+
+## Northgate authenticated source boundary
+
+The standalone archcert-gateway receives only source. OpenSSH public-key identity
+maps through explicit project/repository grants to a fresh private quarantine.
+Bounded gitoxide pack/delta resolution and the shared M1 object/path validator
+precede accepted SourceSnapshot creation. A tightly isolated system Git adapter
+supplies Smart Protocol advertisement/reporting under constructed configuration
+and disabled hooks. Independent source SHA-256 never depends on object packing.
+
+SourceSubmissionId is a reception identity, separate from immutable SourceIdentity
+and any later CertificationJobRequest. The bounded development source store is
+replaceable through SubmissionStore; it is not Ravenport durable job storage.
+The CLI can inspect accepted submissions and later independently request existing
+M2–M4B execution/issuance. Gateway dependency graphs exclude execution/policy/signing.
+External resolution uses authority-only identity mappings and a distinct immutable
+schema-2 SourceSnapshot. An operator-only private LFS/accepted-child adapter
+resolves content under exact scoped grants. The credential-free SourceBinding
+is verified at materialization/export and stopped-sandbox reconstruction;
+unresolved external source remains unable to run. See ADRs 0028–0033 and source-ingress/README.md.

@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Northgate real push -> immutable source -> rootless OCI -> development
+certificate -> offline verification. Engineering self-validation, not independent
+certification. No SSH or signing private material is retained in the repository.
+"""
+import json
+import os
+from pathlib import Path
+import runpy
+import shutil
+import subprocess
+
+ROOT = Path(__file__).resolve().parent.parent
+fixture_module = runpy.run_path(str(ROOT / "scripts/test-northgate"))
+NorthgateFixture, run = fixture_module["NorthgateFixture"], fixture_module["run"]
+PROJECT = fixture_module["PROJECT"]
+BINARY = ROOT / "target/debug/archcert"
+OUTPUT = Path(os.environ.get("ARCHCERT_DEMO_OUTPUT", ROOT / "docs/source-ingress/development"))
+fixture = NorthgateFixture(ROOT / "target/debug/archcert-gateway")
+try:
+    repo = fixture.create_repository()
+    accepted = fixture.push(repo)
+    shown = json.loads(run([BINARY, "source", "show", accepted["submission"], "--store", fixture.store]).stdout)
+    assert shown == accepted
+    loose = json.loads(run([BINARY, "source", "inspect", repo / ".git", accepted["source"]["commit"],
+                            "--project", PROJECT, "--repository", accepted["repository"]]).stdout)
+    assert loose["identity"] == accepted["source"]
+    workspace = fixture.root / "workspaces"
+    workspace.mkdir(mode=0o700)
+    private, public = fixture.authority / "development.der", fixture.authority / "public.hex"
+    run([BINARY, "development-keygen", "--private-key", private, "--public-key", public])
+
+    def certify(source, name, configuration, ok):
+        output = fixture.root / name
+        result = run([BINARY, "certify", "--source-submission", source["submission"], "--source-store", fixture.store,
+                      "--snapshot", source["source"]["snapshot_sha256"], "--project", PROJECT,
+                      "--repository", source["repository"], "--workspace-root", workspace,
+                      "--profile", "python", "--image", os.environ["ARCHCERT_TEST_IMAGE"],
+                      "--docker", os.environ["ARCHCERT_TEST_DOCKER"], "--endpoint", os.environ["ARCHCERT_TEST_ENDPOINT"],
+                      "--development-key", private, "--public-key", public, "--output", output, *configuration], ok=ok)
+        assert not list(workspace.iterdir())
+        return result, output
+
+    passed, controlled = certify(accepted, "controlled", ["--authority-config", ROOT / "docs/policy/CONTROLLED_AUTHORITY.toml"], True)
+    assert json.loads(passed.stdout)["status"] == "CERTIFIED"
+    certificate = json.loads((controlled / "certificate.json").read_text())
+    assert certificate["payload"]["source"] == accepted["source"], certificate["payload"]
+    verified = run([BINARY, "verify", controlled / "certificate.json", "--public-key", public])
+    (controlled / "offline-verification.json").write_bytes(verified.stdout)
+    assert json.loads(verified.stdout)["status"] == "CERTIFIED"
+    # Retain the original independent ingress evidence next to the certificate.
+    (controlled / "ingress.json").write_text(json.dumps(accepted, indent=2)+"\n")
+    (controlled / "loose-compatibility.json").write_bytes(json.dumps(loose, indent=2).encode()+b"\n")
+
+    bottle_commit = "8ec5fe29420d14998c0d86885083983eaea8b839"
+    bottle_repo = ROOT / "target/m3-bottle"
+    before = {s["submission"] for s in fixture.submissions()}
+    fixture.git(bottle_repo, "push", f"{fixture.user}@127.0.0.1:company/bottle.git", f"{bottle_commit}:refs/heads/bottle")
+    bottle = [s for s in fixture.submissions() if s["submission"] not in before][0]
+    historical = json.loads((ROOT / "docs/certificates/development/bottle/evidence.json").read_text())["source"]["identity"]
+    assert bottle["source"] == historical, (bottle["source"], historical)
+    private.unlink()
+    failed, rejected = certify(bottle, "bottle", ["--config", ROOT / "docs/runner/BOTTLE_REQUEST.toml"], False)
+    refusal = json.loads(failed.stdout)
+    assert failed.returncode != 0 and refusal["eligibility"] == "NOT_ELIGIBLE" and refusal["certificate"] == "CERTIFICATE NOT ISSUED"
+    assert not (rejected / "certificate.json").exists()
+    (rejected / "ingress.json").write_text(json.dumps(bottle, indent=2)+"\n")
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    for directory in [controlled, rejected]:
+        destination = OUTPUT / directory.name
+        if destination.exists():
+            raise RuntimeError("Refusing to overwrite retained evidence: "+str(destination))
+        shutil.copytree(directory, destination)
+    print("Northgate: actual authenticated SSH Git push -> identical immutable source -> rootless OCI -> development signing -> offline verification: passed")
+    print("Bottle: historical commit/tree/source identity preserved; version-only policy remains NOT_ELIGIBLE; no key loaded or certificate issued")
+except Exception:
+    print(json.dumps(fixture.submissions(), indent=2), file=__import__("sys").stderr)
+    raise
+finally:
+    fixture.close()

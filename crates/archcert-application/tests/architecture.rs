@@ -6,6 +6,25 @@ use std::{
 };
 
 fn allowed_inward_dependency(package: &str, dependency: &str) -> bool {
+    if ["archcert-domain", "archcert-application"].contains(&package)
+        && is_protobuf_dependency(dependency)
+    {
+        return false;
+    }
+    if package != "archcert-crypto"
+        && package != "archcert-certificate"
+        && package != "archcert-cli"
+        && [
+            "ed25519-dalek",
+            "ring",
+            "openssl",
+            "cryptoki",
+            "aws-sdk-kms",
+        ]
+        .contains(&dependency)
+    {
+        return false;
+    }
     match package {
         "archcert-domain" => {
             !dependency.starts_with("archcert-")
@@ -27,15 +46,77 @@ fn allowed_inward_dependency(package: &str, dependency: &str) -> bool {
                 ]
                 .contains(&dependency)
         }
-        "archcert-runner" => dependency != "archcert-materialization",
+        "archcert-runner" => ![
+            "archcert-materialization",
+            "archcert-crypto",
+            "archcert-certificate",
+            "archcert-evidence",
+            "ed25519-dalek",
+        ]
+        .contains(&dependency),
+        "archcert-gateway" => {
+            (!dependency.starts_with("archcert-")
+                || ["archcert-domain", "archcert-application", "archcert-source"]
+                    .contains(&dependency))
+                && !["bollard", "docker-api", "ed25519-dalek", "archcert-crypto"]
+                    .contains(&dependency)
+        }
+        "archcert-gateway-cli" => {
+            !dependency.starts_with("archcert-")
+                || [
+                    "archcert-gateway",
+                    "archcert-domain",
+                    "archcert-source",
+                    "archcert-protocol",
+                ]
+                .contains(&dependency)
+        }
+        "archcert-protocol" => {
+            !dependency.starts_with("archcert-")
+                || ["archcert-domain", "archcert-application"].contains(&dependency)
+        }
+        "archcert-source" | "archcert-materialization" => ![
+            "archcert-crypto",
+            "archcert-certificate",
+            "archcert-evidence",
+            "ed25519-dalek",
+        ]
+        .contains(&dependency),
+        "archcert-crypto" => !dependency.starts_with("archcert-"),
+        "archcert-evidence" => {
+            !dependency.starts_with("archcert-")
+                || ["archcert-domain", "archcert-application", "archcert-policy"]
+                    .contains(&dependency)
+        }
+        "archcert-certificate" => {
+            !dependency.starts_with("archcert-")
+                || [
+                    "archcert-domain",
+                    "archcert-application",
+                    "archcert-policy",
+                    "archcert-evidence",
+                    "archcert-crypto",
+                ]
+                .contains(&dependency)
+        }
         _ => true,
     }
+}
+
+fn is_protobuf_dependency(name: &str) -> bool {
+    name == "prost"
+        || name.starts_with("prost-")
+        || name == "tonic"
+        || name.starts_with("tonic-")
+        || name.starts_with("protoc-")
+        || name == "archcert-protocol"
+        || name.starts_with("archcert-proto")
 }
 #[test]
 fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_execution()
 -> Result<(), Box<dyn std::error::Error>> {
     let metadata = Command::new(env!("CARGO"))
-        .args(["metadata", "--format-version", "1", "--no-deps", "--locked"])
+        .args(["metadata", "--format-version", "1", "--locked"])
         .output()?;
     assert!(metadata.status.success(), "cargo metadata failed");
     let metadata: Value = serde_json::from_slice(&metadata.stdout)?;
@@ -51,7 +132,9 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
                 .ok_or("dependency name missing")?;
             // Runner test fixtures may compose materialization; inward layers
             // must stay independent even through dev dependencies.
-            let runner_fixture = name == "archcert-runner" && dependency["kind"] == "dev";
+            let runner_fixture = name == "archcert-runner"
+                && dep == "archcert-materialization"
+                && dependency["kind"] == "dev";
             assert!(
                 runner_fixture || allowed_inward_dependency(name, dep),
                 "forbidden architecture edge: {name} -> {dep}"
@@ -61,17 +144,73 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
             }
         }
     }
-    let mut pending = vec!["archcert-cli".to_owned(), "archcertd".to_owned()];
-    let mut seen = BTreeSet::new();
-    while let Some(name) = pending.pop() {
-        if !seen.insert(name.clone()) {
-            continue;
+    // External normal/build dependencies are included so an intermediary cannot
+    // leak generated DTOs or Protobuf runtimes into either inward layer.
+    for root in ["archcert-domain", "archcert-application"] {
+        let mut pending = vec![root.to_owned()];
+        let mut seen = BTreeSet::new();
+        while let Some(name) = pending.pop() {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            assert!(
+                !is_protobuf_dependency(&name),
+                "Protobuf enters inward graph {root}: {name}"
+            );
+            pending.extend(graph.get(&name).into_iter().flatten().cloned());
         }
-        assert!(
-            !["archcert-evidence", "archcert-crypto"].contains(&name.as_str()),
-            "inactive scaffold enters active TCB: {name}"
-        );
-        pending.extend(graph.get(&name).into_iter().flatten().cloned());
+    }
+    // The CLI deliberately composes issuance. Execution and transport graphs do
+    // not acquire signing authority, directly or through an intermediate crate.
+    for root in [
+        "archcertd",
+        "archcert-gateway",
+        "archcert-gateway-cli",
+        "archcert-runner",
+        "archcert-source",
+        "archcert-materialization",
+        "archcert-application",
+        "archcert-policy",
+    ] {
+        let mut pending = vec![root.to_owned()];
+        let mut seen = BTreeSet::new();
+        while let Some(name) = pending.pop() {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            assert!(
+                ![
+                    "archcert-evidence",
+                    "archcert-crypto",
+                    "archcert-certificate",
+                    "ed25519-dalek"
+                ]
+                .contains(&name.as_str()),
+                "signing authority enters forbidden graph {root}: {name}"
+            );
+            pending.extend(graph.get(&name).into_iter().flatten().cloned());
+        }
+    }
+    for root in ["archcert-gateway", "archcert-gateway-cli"] {
+        let mut pending = vec![root.to_owned()];
+        let mut seen = BTreeSet::new();
+        while let Some(name) = pending.pop() {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            assert!(
+                ![
+                    "archcert-runner",
+                    "archcert-materialization",
+                    "archcert-policy",
+                    "bollard",
+                    "docker-api"
+                ]
+                .contains(&name.as_str()),
+                "execution/policy authority enters gateway graph: {name}"
+            );
+            pending.extend(graph.get(&name).into_iter().flatten().cloned());
+        }
     }
     Ok(())
 }
@@ -83,6 +222,17 @@ fn guard_rejects_forbidden_dependencies_including_renamed_package_names() {
         ("archcert-domain", "axum"),
         ("archcert-domain", "tokio"),
         ("archcert-application", "archcert-protocol"),
+        ("archcert-domain", "archcert-proto"),
+        ("archcert-domain", "prost"),
+        ("archcert-domain", "prost-types"),
+        ("archcert-domain", "tonic"),
+        ("archcert-application", "prost"),
+        ("archcert-application", "prost-build"),
+        ("archcert-application", "prost-types"),
+        ("archcert-application", "tonic"),
+        ("archcert-application", "archcert-protocol-protobuf"),
+        ("archcert-protocol", "archcert-gateway"),
+        ("archcert-protocol", "archcert-certificate"),
         ("archcert-application", "archcert-runner"),
         ("archcert-runner", "archcert-materialization"),
         ("archcert-domain", "archcert-policy"),
@@ -92,6 +242,18 @@ fn guard_rejects_forbidden_dependencies_including_renamed_package_names() {
         ("archcert-policy", "archcert-protocol"),
         ("archcert-policy", "axum"),
         ("archcert-policy", "rustix"),
+        ("archcert-runner", "archcert-crypto"),
+        ("archcert-runner", "archcert-certificate"),
+        ("archcert-materialization", "archcert-crypto"),
+        ("archcert-source", "archcert-crypto"),
+        ("archcert-gateway", "archcert-certificate"),
+        ("archcert-gateway", "archcert-crypto"),
+        ("archcert-gateway", "archcert-runner"),
+        ("archcert-gateway", "archcert-materialization"),
+        ("archcert-gateway", "archcert-policy"),
+        ("archcert-gateway-cli", "archcert-certificate"),
+        ("archcert-evidence", "archcert-crypto"),
+        ("archcert-crypto", "archcert-runner"),
     ] {
         assert!(!allowed_inward_dependency(owner, dep));
     }
@@ -99,4 +261,108 @@ fn guard_rejects_forbidden_dependencies_including_renamed_package_names() {
         "archcert-application",
         "archcert-domain"
     ));
+}
+
+#[test]
+fn runner_and_source_interfaces_contain_no_signing_capability() {
+    for source in [
+        include_str!("../src/materialization.rs"),
+        include_str!("../src/execution.rs"),
+        include_str!("../src/source.rs"),
+        include_str!("../src/configuration.rs"),
+        include_str!("../../archcert-domain/src/source.rs"),
+        include_str!("../../archcert-domain/src/materialization.rs"),
+    ] {
+        for forbidden in [
+            "CertificateSigner",
+            "SigningKey",
+            "LocalDevelopmentSigner",
+            "DetachedSignature",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "signing capability in execution interface: {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
+fn source_and_runner_capabilities_cannot_carry_acquisition_authority() {
+    let source = include_str!("../src/materialization.rs");
+    let fields = source
+        .split("pub struct RunnerInput")
+        .nth(1)
+        .and_then(|s| s.split('}').next())
+        .unwrap_or("");
+    assert!(!fields.is_empty());
+    for forbidden in [
+        "RepositoryId",
+        "GitActorId",
+        "DeviceKeyId",
+        "Credential",
+        "Token",
+        "Url",
+        "SourceStore",
+        "ExternalSourceAuthority",
+        "GitGateway",
+    ] {
+        assert!(!fields.contains(forbidden));
+    }
+    let source = include_str!("../../archcert-domain/src/source.rs");
+    let fields = source
+        .split("pub struct SourceSnapshot")
+        .nth(1)
+        .and_then(|s| s.split('}').next())
+        .unwrap_or("");
+    assert!(!fields.is_empty());
+    for forbidden in [
+        "GitActorId",
+        "DeviceKeyId",
+        "Credential",
+        "Token",
+        "Url",
+        "SourceStore",
+        "GitGateway",
+        "ExternalSourceAuthority",
+    ] {
+        assert!(!fields.contains(forbidden));
+    }
+    let binding = include_str!("../../archcert-domain/src/source/binding.rs")
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for forbidden in [
+        "GitActorId",
+        "DeviceKeyId",
+        "Credential",
+        "Token",
+        "Url",
+        "SourceStore",
+        "GitGateway",
+        "ExternalSourceAuthority",
+    ] {
+        assert!(
+            !binding.contains(forbidden),
+            "acquisition type in source binding: {forbidden}"
+        );
+    }
+    let gateway = concat!(
+        include_str!("../../archcert-gateway/src/lib.rs"),
+        include_str!("../../archcert-gateway/src/git.rs"),
+        include_str!("../../archcert-gateway/src/protocol.rs"),
+        include_str!("../../archcert-gateway/src/store.rs"),
+        include_str!("../../archcert-gateway/src/resolution.rs")
+    );
+    for forbidden in [
+        "SandboxRunner",
+        "RunnerInput",
+        "CertificateSigner",
+        "DockerRootlessRunner",
+        "archcert_policy",
+        "archcert_certificate",
+    ] {
+        assert!(!gateway.contains(forbidden));
+    }
 }

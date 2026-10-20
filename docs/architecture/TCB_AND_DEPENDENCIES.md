@@ -1,7 +1,7 @@
 # Current trusted computing base and dependency review
 
-Scope: M1–M4A source acceptance, materialization, isolated engineering execution and
-deterministic unsigned policy eligibility.
+Scope: M1–M5 authenticated source acceptance, materialization, isolated engineering execution,
+deterministic policy eligibility and development certificate issuance/verification.
 This inventory separates what must be trusted for current observations from future
 certification authority. A crate being a workspace member does not make it active.
 The review used all manifests, Cargo.lock, Cargo metadata/tree, source imports and
@@ -9,7 +9,8 @@ cargo-deny. It is not a source audit of every third-party implementation.
 
 ## ACTIVE TCB
 
-- archcert-domain: validated identities, canonical source manifest, structural
+- archcert-domain: validated identities, canonical source manifest and bounded
+  recursive SourceBinding for resolved external source, structural
   commands, finite budgets and operational evidence. Git IDs/modes/LFS pointer
   completeness rules are domain source semantics; no Git storage/transport or
   Docker/HTTP/filesystem/PostgreSQL/Tokio implementation exists here. OS randomness
@@ -18,10 +19,14 @@ cargo-deny. It is not a source audit of every third-party implementation.
 - archcert-application: scoped source/materialization ports, source-only handoff,
   strict project parser, authority registry/mandatory composition, execution port,
   plan/evidence mapping. No protocol/HTTP, materializer or runtime adapter import.
-- archcert-source: bounded custom loose-object parser/decompressor, no-follow reads,
-  process-local retained bytes; no system Git invocation in the active path.
+- archcert-source: shared bounded loose/pack object validation, gitoxide deltas,
+  no-follow reads and verified immutable snapshot artifacts; no Git invocation here.
+- archcert-gateway: restricted authenticated receive, explicit repository grants,
+  isolated system Git protocol adapter, finite private submission storage and
+  operator-only private LFS/accepted-child acquisition grants. OpenSSH, configured Git and public-key provisioning join the ingress TCB.
 - archcert-materialization: no-follow descriptor syscalls, inode/device/mode/content
-  verifier, limited permission seal, verified export and separate cleanup ownership.
+  verifier, versioned source-binding rehash, limited permission seal, verified export
+  and separate cleanup ownership.
 - archcert-runner: bounded archive transfer/reconstruction, runtime control/inspect,
   isolated start, capture/termination and sandbox/image cleanup. Materialization is
   now test-only, not a production dependency; verified export contract is inward.
@@ -29,10 +34,21 @@ cargo-deny. It is not a source audit of every third-party implementation.
   identity, typed observation matching, five-state interpretation, stable findings and
   fail-closed pre-signing eligibility. Depends only on application/domain workspace
   contracts; no runtime/filesystem/source adapter, HTTP or signer dependency.
+- archcert-evidence: deterministic manifest, exact observation/finding resolution and
+  separate canonical detailed bundle with execution records and bounded log prefixes.
+- archcert-certificate: eligibility/integrity gates, immutable owned canonical
+  drafts, exact source/evaluation/manifest binding and proof-backed CERTIFIED.
+- archcert-crypto: narrow key-identified Ed25519 signer port, strict offline
+  verification and feature-gated DEVELOPMENT ONLY local key adapter. No workspace
+  dependencies or authority access from execution components.
 - archcert-cli: operator composition, trusted/runtime inputs, request selection,
   source expectation, result serialization/exit and source-cleanup ownership. It
   cannot be removed from the TCB while it controls those operations. CLI flags
   belong to the trusted operator, not project configuration.
+- archcert-protocol: source-inspection Protobuf DTOs, bounded binary decoding and
+  checked conversion for the operator gateway export. Generated codecs and the
+  pinned compiler/build chain add scoped protocol/build trust, never canonical
+  identity or policy/signing authority. Domain/application have no Protobuf edge.
 - Approved image binaries/libraries and supply chain; Docker executable/daemon,
   containerd/runc/rootlesskit, Linux kernel/user namespaces/seccomp/cgroups, trusted
   filesystem/root/ACLs, OS randomness and administrator/worker identity. On Colima,
@@ -45,17 +61,16 @@ component using them rather than treated as evidence authorities themselves.
 ## FUTURE TCB
 
 Authenticated authority policy provisioning and evidence retention, durable
-scheduler/recovery, production source gateway/storage, external source acquisition
-and signing/key storage remain future trust. Generic evidence-payload and crypto
-packages stay inactive. The old verdict-bearing evidence scaffold was replaced
-with payload references, and the old policy scaffold was replaced by the active
-M4A evaluator after boundary review. No signer implementation/call exists.
+scheduler/recovery, hardened gateway deployment/durable storage, network external-source acquisition
+and production signing/key custody remain future trust. M4B activates evidence,
+certificate orchestration and crypto only through authority CLI composition.
+The development local key adapter is not production key management.
 
 ## OUTSIDE CURRENT TCB
 
-- archcert-protocol and archcertd are outside current source/execution processing:
+- archcertd remains outside current source/execution processing:
   the daemon has only liveness and disabled submission, with no runner/store/signer
-  capability. They remain trusted for their own HTTP 501/liveness behavior. A future
+  capability. It remains trusted for its own HTTP 501/liveness behavior. A future
   submission worker integration would place relevant transport/auth logic in its
   own active control-plane TCB; this is not claimed today.
 - Test fixture generators, trusted Python runtime simulator, Git fixture/clone/
@@ -68,14 +83,14 @@ M4A evaluator after boundary review. No signer implementation/call exists.
 
 ## Dependency findings
 
-No third-party package was added or replaced. TOML moved from CLI to application
+M3.5/M4A dependency history: no third-party package was added or replaced. TOML moved from CLI to application
 for a single parser; it was already in the active CLI trust path. Application's
 unused async-trait dependency was removed with the synchronous bootstrap check.
 CLI's direct serde and runner's direct serde were unused and removed; serde remains
 required transitively for real serialization. All other direct dependencies have
 observed uses. Protocol no longer enters application consumers. Concrete
-materialization stays in runner dev-dependencies only. Existing inactive
-evidence/crypto packages remain outside the active execution graph. M4A replaces
+materialization stays in runner dev-dependencies only. Evidence/crypto remain outside runner/source/materialization and daemon dependency
+graphs; M4B activates them in the CLI issuance graph. M4A replaces
 the policy→evidence edge with policy→application/domain, adds CLI→policy and
 normal application serde_json for exact plan identities. Policy reuses existing
 TOML/serde_json/thiserror/SHA-256 dependencies; no third-party version/package was
@@ -85,14 +100,14 @@ Security-sensitive roles:
 
 | Role | Packages and purpose |
 | --- | --- |
-| Cryptography | sha2 and RustCrypto digest/block-buffer/crypto-common/generic-array/typenum/cpufeatures compute source/output/policy/plan/observation/finding SHA-256; sha1 is Git compatibility only, not certificate trust; hex is fixed-format identity encoding. No signing primitive/key is added. |
-| Git parsing | ArchCert-owned strict loose/commit/tree parser; no libgit2/gix or Git subprocess dependency in active source ingestion. Custom parser review/fuzzing remains required. |
-| Decompression | flate2 with explicit miniz_oxide, adler2/simd-adler32/crc32fast; compressed/inflated/work budgets and stream completion are checked by ArchCert. |
+| Cryptography | sha2 and RustCrypto digest/block-buffer/crypto-common/generic-array/typenum/cpufeatures compute source/output/policy/plan/observation/finding SHA-256; sha1 is Git compatibility only, not certificate trust; hex is fixed-format identity encoding. M4B adds Ed25519 via ed25519-dalek 3.0.0, zeroization and PKCS#8 key codecs; see the separate crypto review. |
+| Git parsing | ArchCert-owned strict shared commit/tree/path validator; gitoxide bounded pack/header/delta decoding and packet framing; isolated observed system Git advertisement/receive/fsck in gateway only. Custom validator/admission review and fuzzing remain required. |
+| Decompression | flate2/miniz_oxide stream admission plus gix-zlib/zlib-rs pack decoding; compressed/inflated/work/depth/expansion budgets and stream completion are checked by ArchCert. |
 | Filesystem/syscalls | rustix, libc/linux-raw-sys, errno/bitflags; no-follow/exclusive/descriptor operations and nonblocking pipes. tempfile uses rustix/getrandom/fastrand for private runtime temporary storage and tests. uuid/getrandom supply opaque IDs. Third-party unsafe is not claimed absent. |
 | Archive | tar 0.4.46, default xattr disabled, plus filetime; controlled transfer and bounded in-memory parse, never host extraction. GNU/PAX metadata parsing is bounded by the 96 MiB actual input; upstream extension read_all caps initial allocation at 128 KiB. |
 | Serialization | serde/core/derive, serde_json, toml and its parser/writer/datetime/spanned/winnow dependencies; strict private TOML wire types, 256 KiB project and 64 KiB policy predecode bounds, bounded runtime JSON; schema-1 sorted JSON policy/plan identity. Serialization cannot manufacture sealed source/authority/runtime capabilities. |
-| Runtime control | std::process plus rustix nonblocking pipes; only explicit trusted Docker CLI is spawned by production code, cleared environment. No Docker SDK dependency. tokio/mio/socket2/signal stack belongs to the bootstrap HTTP service, not domain or runner orchestration. |
-| Transport | axum/core, hyper/util, http/body/httparse, tower/http layers and URL/JSON decoding belong to the disabled-submission HTTP service. No transport dependency leaks inward. |
+| Runtime control | std::process plus rustix nonblocking pipes; explicit trusted Docker CLI in runner and isolated Git CLI in gateway, cleared environments. No Docker SDK dependency. tokio/mio/socket2/signal stack belongs to the bootstrap HTTP service, not domain or runner orchestration. |
+| Transport | Operator-managed OpenSSH authenticates/restricts Git receive; axum/core, hyper/util, http/body/httparse, tower/http layers and URL/JSON decoding belong to the disabled-submission HTTP service. No transport dependency leaks inward. |
 | Diagnostics/build | anyhow/thiserror, tracing stack/regex, clap/terminal handling and Rust proc-macro/toolchain code remain trusted for their respective build/operator/service roles. Hostile binary output is serialized as bytes, never rendered directly. |
 
 syn 2 and 3 remain because tracing-attributes uses 2 while current derive/macros
@@ -104,7 +119,7 @@ production parser; no new writer contract is exposed. Platform-specific lockfile
 packages are not all built on the observed host. The following complete resolved
 inventory records these distinctions by role, without claiming dependency correctness.
 
-## Resolved third-party inventory
+## M4A resolved third-party inventory (historical base)
 
 Versions from locked Cargo metadata; build/platform-only entries are retained for
 cross-platform review. Macro/build support is part of build trust, not live target
@@ -243,3 +258,54 @@ execution. The lockfile is the authoritative resolution.
 | winnow | 0.7.15 | Serialization/parsing/Unicode |
 | winnow | 1.0.4 | Serialization/parsing/Unicode |
 | zmij | 1.0.23 | Serialization/parsing/Unicode |
+
+
+## M4B additions and active signing TCB
+
+The [crypto dependency review](CRYPTO_DEPENDENCY_REVIEW.md) records every new
+locked third-party name/version pair, purpose, maintenance/unsafe considerations,
+transitive tree and independent cryptographic reproduction. This supplements the
+M4A inventory above; Cargo.lock remains authoritative. The architecture guard now
+checks direct and transitive exclusion of signing authority from execution and
+transport graphs while allowing CLI composition. The signing threat model covers
+local key theft/leakage, canonical ambiguity, substitutions, parser confusion and
+remaining controller/runtime/OS trust. No production custody assurance is claimed.
+
+## Northgate additions
+
+The ingress TCB includes operator-managed OpenSSH/public-key provisioning,
+configured system Git (path/version observed, not attested), pinned gitoxide pack/
+packetline/hash/zlib and their transitive implementations, and the private bounded
+development source store. Candidate packets/objects are hostile; the source
+validator, canonical manifest and credential-free handoff remain ArchCert-owned.
+The adapter never loads signing material, runs target hooks or acquires Docker
+access. The dependency guard excludes execution/policy/signing from both gateway
+crate and standalone binary. See NORTHGATE_DEPENDENCY_REVIEW.md for feature,
+license, unsafe-footprint and upstream choices. Production process containment and
+durable Ravenport control-plane storage remain separate qualification work.
+
+## Northgate internal Protobuf contracts
+
+Protocol Buffers are the primary internal machine-to-machine schema/wire format,
+not cryptographic canonical serialization. The existing protocol crate owns
+generated common/source v1 types and validated conversions; application owns only
+transport-independent ingress observations. The separate operator gateway CLI
+composes the evidence projection with a read-only Protobuf export. No runtime
+receive/store/execution/signing format changes, tonic, services, persistence,
+or scheduling are introduced.
+
+[PROTOBUF_DEPENDENCY_REVIEW.md](PROTOBUF_DEPENDENCY_REVIEW.md) supplements the
+earlier inventory with exact prost/prost-build/prost-types/prost-derive 0.14.4,
+protoc-bin-vendored/platform crates 3.3.0, bundled libprotoc 36.2, build helpers,
+maintenance, unsafe footprint, and TCB impact. Cargo.lock remains authoritative.
+The reviewed build-only foldhash =0.1.5 Zlib exception is narrow; advisory/source
+and other license checks remain enabled. Prost contains third-party runtime unsafe;
+native protoc is trusted C++ build tooling, never run on candidate schemas.
+
+Only authority-owned explicitly listed .proto files and pinned bundled includes
+participate in generation into OUT_DIR. Candidate repositories cannot provide
+schemas, plugins, includes, or compiler selection. Schema/package evolution,
+unknown-value rejection, artifact-versus-semantic identity, and future narrow
+signer constraints are recorded in [PROTOBUF_PROTOCOL_CONTRACTS.md](PROTOBUF_PROTOCOL_CONTRACTS.md).
+The focused Northgate completion report records final gates without rewriting
+earlier milestone evidence.

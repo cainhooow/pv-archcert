@@ -81,6 +81,15 @@ impl GitGateway for LocalGitGateway {
     }
 }
 
+pub(crate) trait ObjectReader {
+    fn read_object(
+        &self,
+        oid: &GitObjectId,
+        cap: u64,
+        work_remaining: u64,
+    ) -> Result<(Vec<u8>, u64), SourceError>;
+}
+
 struct LooseQuarantine {
     objects: OwnedFd,
 }
@@ -110,7 +119,7 @@ impl Kind {
 }
 
 struct Validation<'a> {
-    store: &'a LooseQuarantine,
+    store: &'a dyn ObjectReader,
     limits: SourceLimits,
     visits: u64,
     total: u64,
@@ -141,77 +150,23 @@ impl Validation<'_> {
             return Err(SourceError::LimitExceeded(ResourceLimit::Objects));
         }
         let text = oid.as_str();
-        let directory = match openat(
-            &self.store.objects,
-            &text[..2],
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-        ) {
-            Ok(fd) => fd,
-            Err(rustix::io::Errno::NOENT) => return Err(kind.missing()),
-            Err(_) => return Err(SourceError::RepositoryAccessFailure),
-        };
-        let fd = match openat(
-            &directory,
-            &text[2..],
-            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
-            Mode::empty(),
-        ) {
-            Ok(fd) => fd,
-            Err(rustix::io::Errno::NOENT) => return Err(kind.missing()),
-            Err(_) => return Err(SourceError::RepositoryAccessFailure),
-        };
-        let mut file = File::from(fd);
-        let metadata = file
-            .metadata()
-            .map_err(|_| SourceError::RepositoryAccessFailure)?;
-        if !metadata.is_file() {
-            return Err(SourceError::RepositoryAccessFailure);
-        }
-        let cap = self.limits.max_object_bytes;
-        if metadata.len() > cap {
-            return Err(SourceError::LimitExceeded(ResourceLimit::ObjectBytes));
-        }
-        let mut compressed = Vec::new();
-        (&mut file)
-            .take(cap.saturating_add(1))
-            .read_to_end(&mut compressed)
-            .map_err(|_| SourceError::RepositoryAccessFailure)?;
-        if compressed.len() as u64 > cap {
-            return Err(SourceError::LimitExceeded(ResourceLimit::ObjectBytes));
-        }
-        self.charge_work(compressed.len() as u64)?;
-        let mut decoder = Decompress::new(true);
-        let mut inflated = Vec::new();
-        let mut chunk = [0u8; 8192];
-        loop {
-            let previous_in = decoder.total_in();
-            let previous_out = decoder.total_out();
-            let status = decoder
-                .decompress(
-                    &compressed[previous_in as usize..],
-                    &mut chunk,
-                    // The output is deliberately chunked. Finish incorrectly requires
-                    // a large stream to fit in one output buffer on some backends.
-                    FlushDecompress::None,
-                )
-                .map_err(|_| SourceError::MalformedGitObject)?;
-            if decoder.total_out() > cap {
-                return Err(SourceError::LimitExceeded(ResourceLimit::ObjectBytes));
-            }
-            let written = (decoder.total_out() - previous_out) as usize;
-            self.charge_work(written as u64)?;
-            inflated.extend_from_slice(&chunk[..written]);
-            if status == Status::StreamEnd {
-                if decoder.total_in() != compressed.len() as u64 {
-                    return Err(SourceError::MalformedGitObject);
+        let (mut inflated, work) = self
+            .store
+            .read_object(
+                oid,
+                self.limits.max_object_bytes,
+                self.limits
+                    .max_object_work_bytes
+                    .saturating_sub(self.work_bytes),
+            )
+            .map_err(|e| {
+                if e == SourceError::CommitNotFound {
+                    kind.missing()
+                } else {
+                    e
                 }
-                break;
-            }
-            if previous_in == decoder.total_in() && previous_out == decoder.total_out() {
-                return Err(SourceError::MalformedGitObject);
-            }
-        }
+            })?;
+        self.charge_work(work)?;
         let actual = if text.len() == 40 {
             hex::encode(sha1::Sha1::digest(&inflated))
         } else {
@@ -454,36 +409,131 @@ fn commit_tree(bytes: &[u8], width: usize) -> Result<GitObjectId, SourceError> {
     Ok(tree)
 }
 
+impl ObjectReader for LooseQuarantine {
+    fn read_object(
+        &self,
+        oid: &GitObjectId,
+        cap: u64,
+        work_remaining: u64,
+    ) -> Result<(Vec<u8>, u64), SourceError> {
+        let text = oid.as_str();
+        let directory = match openat(
+            &self.objects,
+            &text[..2],
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(fd) => fd,
+            Err(rustix::io::Errno::NOENT) => return Err(SourceError::CommitNotFound),
+            Err(_) => return Err(SourceError::RepositoryAccessFailure),
+        };
+        let fd = match openat(
+            &directory,
+            &text[2..],
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(fd) => fd,
+            Err(rustix::io::Errno::NOENT) => return Err(SourceError::CommitNotFound),
+            Err(_) => return Err(SourceError::RepositoryAccessFailure),
+        };
+        let mut file = File::from(fd);
+        let metadata = file
+            .metadata()
+            .map_err(|_| SourceError::RepositoryAccessFailure)?;
+        if !metadata.is_file() {
+            return Err(SourceError::RepositoryAccessFailure);
+        }
+        if metadata.len() > cap {
+            return Err(SourceError::LimitExceeded(ResourceLimit::ObjectBytes));
+        }
+        let mut compressed = Vec::new();
+        (&mut file)
+            .take(cap.saturating_add(1))
+            .read_to_end(&mut compressed)
+            .map_err(|_| SourceError::RepositoryAccessFailure)?;
+        if compressed.len() as u64 > cap {
+            return Err(SourceError::LimitExceeded(ResourceLimit::ObjectBytes));
+        }
+        if compressed.len() as u64 > work_remaining {
+            return Err(SourceError::LimitExceeded(ResourceLimit::ObjectWorkBytes));
+        }
+        let mut decoder = Decompress::new(true);
+        let mut inflated = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            let previous_in = decoder.total_in();
+            let previous_out = decoder.total_out();
+            let status = decoder
+                .decompress(
+                    &compressed[previous_in as usize..],
+                    &mut chunk,
+                    // The output is deliberately chunked. Finish incorrectly requires
+                    // a large stream to fit in one output buffer on some backends.
+                    FlushDecompress::None,
+                )
+                .map_err(|_| SourceError::MalformedGitObject)?;
+            if decoder.total_out() > cap {
+                return Err(SourceError::LimitExceeded(ResourceLimit::ObjectBytes));
+            }
+            if decoder.total_out() > work_remaining - compressed.len() as u64 {
+                return Err(SourceError::LimitExceeded(ResourceLimit::ObjectWorkBytes));
+            }
+            let written = (decoder.total_out() - previous_out) as usize;
+            inflated.extend_from_slice(&chunk[..written]);
+            if status == Status::StreamEnd {
+                if decoder.total_in() != compressed.len() as u64 {
+                    return Err(SourceError::MalformedGitObject);
+                }
+                break;
+            }
+            if previous_in == decoder.total_in() && previous_out == decoder.total_out() {
+                return Err(SourceError::MalformedGitObject);
+            }
+        }
+        let work = compressed.len() as u64 + inflated.len() as u64;
+        Ok((inflated, work))
+    }
+}
+
 impl SourceQuarantine for LooseQuarantine {
     fn validate(
         &mut self,
         commit: &GitObjectId,
         limits: SourceLimits,
     ) -> Result<ValidatedSource, SourceError> {
-        let mut validation = Validation {
-            store: self,
-            limits,
-            visits: 0,
-            total: 0,
-            work_bytes: 0,
-            files: Vec::new(),
-            paths: BTreeSet::new(),
-        };
-        let bytes = validation.read(commit, Kind::Commit)?;
-        let tree = commit_tree(&bytes, commit.as_str().len())?;
-        validation.tree(&tree, "", 0)?;
-        SourceManifest::new(
-            validation
-                .files
-                .iter()
-                .map(SourceFile::manifest_entry)
-                .collect(),
-        )?;
-        Ok(ValidatedSource {
-            commit: commit.clone(),
-            tree,
-            files: validation.files,
-            object_count: validation.visits,
-        })
+        validate_objects(self, commit, limits)
     }
+}
+
+pub(crate) fn validate_objects(
+    store: &dyn ObjectReader,
+    commit: &GitObjectId,
+    limits: SourceLimits,
+) -> Result<ValidatedSource, SourceError> {
+    let mut validation = Validation {
+        store,
+        limits,
+        visits: 0,
+        total: 0,
+        work_bytes: 0,
+        files: Vec::new(),
+        paths: BTreeSet::new(),
+    };
+    let bytes = validation.read(commit, Kind::Commit)?;
+    let tree = commit_tree(&bytes, commit.as_str().len())?;
+    validation.tree(&tree, "", 0)?;
+    SourceManifest::new(
+        validation
+            .files
+            .iter()
+            .map(SourceFile::manifest_entry)
+            .collect(),
+    )?;
+    Ok(ValidatedSource {
+        commit: commit.clone(),
+        tree,
+        files: validation.files,
+        object_count: validation.visits,
+    })
 }

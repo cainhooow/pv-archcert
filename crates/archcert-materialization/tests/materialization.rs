@@ -740,3 +740,74 @@ fn execution_export_uses_descriptor_after_authority_parent_rename() -> TestResul
     prepared.cleanup.destroy()?;
     Ok(())
 }
+
+#[test]
+fn resolved_source_rehashes_binding_at_every_materialization_boundary() -> TestResult {
+    use archcert_application::{
+        external_source::{ExternalSourceAuthority, resolve_external_source},
+        materialization::VerifiedSourceExport,
+    };
+    use archcert_domain::{Sha256Digest, source::SourceError};
+    struct Authority(Vec<u8>);
+    impl ExternalSourceAuthority for Authority {
+        fn lfs_object(
+            &self,
+            _: &SourceSnapshot,
+            _: &SourcePath,
+            _: &Sha256Digest,
+        ) -> Result<Box<dyn std::io::Read + '_>, SourceError> {
+            Ok(Box::new(std::io::Cursor::new(&self.0)))
+        }
+        fn submodule(
+            &self,
+            _: &SourceSnapshot,
+            _: &SourcePath,
+        ) -> Result<(SnapshotReference, std::sync::Arc<SourceSnapshot>), SourceError> {
+            Err(SourceError::IncompleteExternalSource)
+        }
+    }
+    let payload = b"complete external source";
+    let pointer = format!(
+        "version https://git-lfs.github.com/spec/v1\noid sha256:{}\nsize {}\n",
+        archcert_domain::source::digest_bytes(payload).as_str(),
+        payload.len()
+    );
+    let original = std::sync::Arc::new(source(&[("data", SourceMode::File, pointer.as_bytes())])?);
+    let resolved = resolve_external_source(
+        original,
+        &Authority(payload.to_vec()),
+        SourceLimits::default(),
+    )?
+    .into_snapshot();
+    assert_eq!(resolved.schema_version(), 2);
+    assert_ne!(
+        resolved.manifest().digest(),
+        resolved.identity().snapshot_sha256
+    );
+    let mut encoded = Vec::new();
+    archcert_source::write_snapshot(&resolved, &mut encoded)?;
+    let restored = archcert_source::read_snapshot(encoded.as_slice(), SourceLimits::default())?;
+    assert_eq!(restored.binding(), resolved.binding());
+    assert_eq!(restored.identity(), resolved.identity());
+    let fixture = Fixture::new()?;
+    let prepared = fixture
+        .materializer
+        .prepare(&restored, &request(&restored))
+        .map_err(|e| format!("{e:?}"))?;
+    let files = prepared.runner_input.source().verified_files()?;
+    assert_eq!(files[0].bytes(), payload);
+    assert_eq!(
+        prepared.runner_input.source().source_binding(),
+        restored.binding().clone()
+    );
+    assert_eq!(
+        prepared.evidence.observed_digest,
+        restored.identity().snapshot_sha256
+    );
+    prepared.cleanup.destroy()?;
+    // A real filesystem substitution cannot preserve the accepted identity recipe.
+    let pending = fixture.begin(&restored).map_err(|e| format!("{e:?}"))?;
+    fs::write(pending.location().as_path().join("data"), b"substituted")?;
+    rejected(pending.verify_and_seal())?;
+    Ok(())
+}

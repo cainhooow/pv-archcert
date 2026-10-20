@@ -163,6 +163,8 @@ pub struct Finding {
 /// Unsigned deterministic evaluation, expressly not a certificate.
 #[derive(Debug, Clone, Serialize)]
 pub struct PolicyEvaluation {
+    /// Explicit evaluation schema; unsupported versions cannot reach issuance.
+    pub schema: u32,
     /// Exact source revision.
     pub source: SourceIdentity,
     /// Exact immutable validation plan identity.
@@ -490,7 +492,11 @@ pub fn evaluate(
         });
     }
     let blockers: Vec<_> = properties.iter().filter(|p| p.blocking).collect();
-    let eligibility = if blockers.is_empty() {
+    // Source completeness is an ingress safety floor, independent of an
+    // authority profile omitting or excluding a source-completeness property.
+    let eligibility = if input.source.status() != SourceStatus::Complete {
+        CertificationEligibility::NotEligible
+    } else if blockers.is_empty() {
         CertificationEligibility::EligibleForCertification
     } else if blockers
         .iter()
@@ -501,6 +507,7 @@ pub fn evaluate(
         CertificationEligibility::Inconclusive
     };
     Ok(PolicyEvaluation {
+        schema: 1,
         source: input.source.identity().clone(),
         plan_sha256: plan_digest,
         policy: selected.clone(),

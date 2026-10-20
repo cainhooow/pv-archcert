@@ -307,3 +307,226 @@ fn external_evidence_tampering_is_detected_by_reconstruction()
     );
     Ok(())
 }
+
+#[test]
+fn resolved_binding_preserves_original_and_rejects_content_recipe_substitution()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = b"resolved bytes";
+    let path = SourcePath::from_bytes(b"data")?;
+    let pointer = format!(
+        "version https://git-lfs.github.com/spec/v1\noid sha256:{}\nsize {}\n",
+        digest_bytes(payload).as_str(),
+        payload.len()
+    );
+    let original = snapshot(
+        vec![
+            SourceFile::new(path.clone(), SourceMode::Executable, pointer.into_bytes()),
+            SourceFile::new(
+                SourcePath::from_bytes(b"keep")?,
+                SourceMode::File,
+                b"unchanged".to_vec(),
+            ),
+        ],
+        1,
+    )?;
+    let replacement = ResolvedDependency::Lfs {
+        path: path.clone(),
+        sha256: digest_bytes(payload),
+        size: payload.len() as u64,
+    };
+    let files = vec![
+        SourceFile::new(path, SourceMode::Executable, payload.to_vec()),
+        original.files()[1].clone(),
+    ];
+    let resolved =
+        SourceSnapshot::seal_resolved(&original, files.clone(), vec![replacement.clone()], 2)?;
+    resolved.require_complete()?;
+    assert_eq!(resolved.binding().original(), Some(original.identity()));
+    assert_eq!(resolved.identity().commit, original.identity().commit);
+    assert_eq!(resolved.identity().tree, original.identity().tree);
+    assert_eq!(resolved.schema_version(), 2);
+    assert!(original.require_complete().is_err());
+    let replay =
+        SourceSnapshot::seal_resolved(&original, files.clone(), vec![replacement.clone()], 9999)?;
+    assert_eq!(resolved.identity(), replay.identity());
+    assert_eq!(
+        digest_bytes(&resolved.binding().canonical_bytes(resolved.manifest())?),
+        resolved.identity().snapshot_sha256
+    );
+    assert_ne!(
+        resolved.manifest().digest(),
+        resolved.identity().snapshot_sha256
+    );
+    for mutation in 0..5 {
+        let mut files = files.clone();
+        let mut deps = vec![replacement.clone()];
+        match mutation {
+            0 => {
+                files[0] = SourceFile::new(
+                    files[0].path().clone(),
+                    SourceMode::Executable,
+                    b"substitution".to_vec(),
+                )
+            }
+            1 => {
+                files[1] = SourceFile::new(
+                    files[1].path().clone(),
+                    SourceMode::File,
+                    b"modified".to_vec(),
+                )
+            }
+            2 => {
+                files.pop();
+            }
+            3 => {
+                files[0] =
+                    SourceFile::new(files[0].path().clone(), SourceMode::File, payload.to_vec())
+            }
+            _ => deps.clear(),
+        }
+        assert!(
+            SourceSnapshot::seal_resolved(&original, files, deps, 2).is_err(),
+            "mutation {mutation}"
+        );
+    }
+    let mut claimed = serde_json::to_value(resolved.binding())?;
+    claimed["dependencies"][0]["sha256"] = serde_json::json!(digest_bytes(b"other"));
+    let substituted: SourceBinding = serde_json::from_value(claimed)?;
+    assert!(substituted.digest(resolved.manifest()).is_err());
+    Ok(())
+}
+
+#[test]
+fn recursive_resolved_children_verify_exact_identities_and_bound_depth()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut child = snapshot(
+        vec![SourceFile::new(
+            SourcePath::from_bytes(b"file")?,
+            SourceMode::File,
+            b"child".to_vec(),
+        )],
+        1,
+    )?;
+    for depth in 1..=33 {
+        let path = SourcePath::from_bytes(b"module")?;
+        let parent = snapshot(
+            vec![SourceFile::new(
+                path.clone(),
+                SourceMode::Submodule,
+                child.identity().commit.as_str().as_bytes().to_vec(),
+            )],
+            1,
+        )?;
+        let mut dependency = ResolvedDependency::Submodule {
+            path,
+            project: child.project(),
+            repository: child.repository().clone(),
+            identity: child.identity().clone(),
+            binding: Box::new(child.binding().clone()),
+        };
+        let files = child
+            .files()
+            .iter()
+            .map(|f| {
+                Ok(SourceFile::new(
+                    SourcePath::from_bytes(format!("module/{}", f.path().as_str()).as_bytes())?,
+                    f.mode(),
+                    f.bytes().to_vec(),
+                ))
+            })
+            .collect::<Result<Vec<_>, SourceError>>()?;
+        if depth == 1 {
+            if let ResolvedDependency::Submodule { identity, .. } = &mut dependency {
+                identity.snapshot_sha256 = digest_bytes(b"other child");
+            }
+            assert!(
+                SourceSnapshot::seal_resolved(&parent, files.clone(), vec![dependency.clone()], 2)
+                    .is_err()
+            );
+            if let ResolvedDependency::Submodule { identity, .. } = &mut dependency {
+                *identity = child.identity().clone();
+            }
+        }
+        let result = SourceSnapshot::seal_resolved(&parent, files, vec![dependency], 2);
+        if depth == 33 {
+            assert!(matches!(
+                result,
+                Err(SourceError::LimitExceeded(ResourceLimit::TreeDepth))
+            ));
+        } else {
+            child = result?;
+            child.require_complete()?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn expanded_children_cannot_hide_incomplete_lfs_or_reparse_verified_lfs_bytes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let inner=b"version https://git-lfs.github.com/spec/v1\noid sha256:1111111111111111111111111111111111111111111111111111111111111111\nsize 1\n";
+    let child = snapshot(
+        vec![SourceFile::new(
+            SourcePath::from_bytes(b"data")?,
+            SourceMode::File,
+            inner.to_vec(),
+        )],
+        1,
+    )?;
+    fn expand(child: &SourceSnapshot) -> Result<SourceSnapshot, Box<dyn std::error::Error>> {
+        let path = SourcePath::from_bytes(b"module")?;
+        let parent = snapshot(
+            vec![SourceFile::new(
+                path.clone(),
+                SourceMode::Submodule,
+                child.identity().commit.as_str().as_bytes().to_vec(),
+            )],
+            1,
+        )?;
+        Ok(SourceSnapshot::seal_resolved(
+            &parent,
+            vec![SourceFile::new(
+                SourcePath::from_bytes(b"module/data")?,
+                SourceMode::File,
+                child.files()[0].bytes().to_vec(),
+            )],
+            vec![ResolvedDependency::Submodule {
+                path,
+                project: child.project(),
+                repository: child.repository().clone(),
+                identity: child.identity().clone(),
+                binding: Box::new(child.binding().clone()),
+            }],
+            2,
+        )?)
+    }
+    assert!(expand(&child).is_err());
+    // An acquired object may itself happen to contain pointer-shaped content.
+    // Its verified byte digest is final source, and must not initiate another fetch.
+    let outer = format!(
+        "version https://git-lfs.github.com/spec/v1\noid sha256:{}\nsize {}\n",
+        digest_bytes(inner).as_str(),
+        inner.len()
+    );
+    let original = snapshot(
+        vec![SourceFile::new(
+            SourcePath::from_bytes(b"data")?,
+            SourceMode::File,
+            outer.into_bytes(),
+        )],
+        1,
+    )?;
+    let complete = SourceSnapshot::seal_resolved(
+        &original,
+        child.files().to_vec(),
+        vec![ResolvedDependency::Lfs {
+            path: SourcePath::from_bytes(b"data")?,
+            sha256: digest_bytes(inner),
+            size: inner.len() as u64,
+        }],
+        2,
+    )?;
+    complete.require_complete()?;
+    expand(&complete)?.require_complete()?;
+    Ok(())
+}

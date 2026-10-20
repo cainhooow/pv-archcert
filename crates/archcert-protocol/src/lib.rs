@@ -1,4 +1,8 @@
-//! HTTP DTO mappings. Application commands/results own no transport semantics.
+//! Internal Protobuf contracts and bootstrap HTTP DTO mappings. Application
+//! commands/results own no transport semantics. Protobuf is not a cryptographic
+//! canonical serialization format.
+
+pub mod protobuf;
 
 use archcert_application::{SubmitCertificationCommand, SubmitCertificationResult};
 use archcert_domain::GitObjectId;

@@ -8,3 +8,7 @@
 *.pfx
 *.cert.sig
 /runtime-data/
+
+# Reviewed public verification material only; private PEM remains ignored.
+!docs/certificates/development/controlled/public-key.pem
+!crates/archcert-certificate/tests/fixtures/openssl-vector.pub.pem

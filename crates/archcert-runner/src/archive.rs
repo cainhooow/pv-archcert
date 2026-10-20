@@ -2,7 +2,7 @@
 use archcert_domain::{
     SourceIdentity,
     execution::ExecutionError as Error,
-    source::{SourceFile, SourceManifest, SourceMode, SourcePath},
+    source::{SourceBinding, SourceFile, SourceManifest, SourceMode, SourcePath},
 };
 use std::{
     collections::BTreeSet,
@@ -107,7 +107,15 @@ pub(crate) fn encode(files: &[SourceFile]) -> Result<Vec<u8>, Error> {
 
 /// Independently reconstruct the stopped sandbox source view. No host extraction,
 /// lossy decoding, hardlink/device support or trusting a target-provided manifest.
+#[cfg(test)]
 pub(crate) fn verify(bytes: &[u8], identity: &SourceIdentity) -> Result<(), Error> {
+    verify_bound(bytes, identity, &SourceBinding::default())
+}
+pub(crate) fn verify_bound(
+    bytes: &[u8],
+    identity: &SourceIdentity,
+    binding: &SourceBinding,
+) -> Result<(), Error> {
     if bytes.len() as u64 > MAX_ARCHIVE {
         return Err(Error::SourceIntegrity);
     }
@@ -188,7 +196,11 @@ pub(crate) fn verify(bytes: &[u8], identity: &SourceIdentity) -> Result<(), Erro
     }
     let manifest = SourceManifest::new(files.iter().map(SourceFile::manifest_entry).collect())
         .map_err(|_| Error::SourceIntegrity)?;
-    if manifest.digest() != identity.snapshot_sha256 {
+    if binding
+        .digest(&manifest)
+        .map_err(|_| Error::SourceIntegrity)?
+        != identity.snapshot_sha256
+    {
         return Err(Error::SourceIntegrity);
     }
     Ok(())
@@ -305,6 +317,69 @@ mod tests {
         identity.snapshot_sha256 = digest_bytes(b"other");
         assert_eq!(verify(&bytes, &identity), Err(Error::SourceIntegrity));
         assert_eq!(verify(b"not a tar", &identity), Err(Error::SourceIntegrity));
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod resolved_tests {
+    use super::*;
+    use archcert_domain::{
+        GitObjectId, ProjectId,
+        source::{RepositoryId, ResolvedDependency, SourceSnapshot, digest_bytes},
+    };
+    #[test]
+    fn stopped_sandbox_view_verifies_resolved_recipe_and_rejects_substitution()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let data = b"verified LFS content";
+        let path = SourcePath::from_bytes(b"asset")?;
+        let pointer = format!(
+            "version https://git-lfs.github.com/spec/v1\noid sha256:{}\nsize {}\n",
+            digest_bytes(data).as_str(),
+            data.len()
+        );
+        let original = SourceSnapshot::seal(
+            ProjectId::new(),
+            RepositoryId::parse("test/repository")?,
+            GitObjectId::parse("1".repeat(40))?,
+            GitObjectId::parse("2".repeat(40))?,
+            vec![SourceFile::new(
+                path.clone(),
+                SourceMode::File,
+                pointer.into_bytes(),
+            )],
+            3,
+            1,
+        )?;
+        let snapshot = SourceSnapshot::seal_resolved(
+            &original,
+            vec![SourceFile::new(
+                path.clone(),
+                SourceMode::File,
+                data.to_vec(),
+            )],
+            vec![ResolvedDependency::Lfs {
+                path: path.clone(),
+                sha256: digest_bytes(data),
+                size: data.len() as u64,
+            }],
+            2,
+        )?;
+        let bytes = encode(snapshot.files())?;
+        verify_bound(&bytes, snapshot.identity(), snapshot.binding())?;
+        assert_eq!(
+            verify(&bytes, snapshot.identity()),
+            Err(Error::SourceIntegrity)
+        );
+        let substituted = encode(&[SourceFile::new(
+            path,
+            SourceMode::File,
+            b"substitution".to_vec(),
+        )])?;
+        assert_eq!(
+            verify_bound(&substituted, snapshot.identity(), snapshot.binding()),
+            Err(Error::SourceIntegrity)
+        );
         Ok(())
     }
 }

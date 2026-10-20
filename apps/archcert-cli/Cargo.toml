@@ -13,10 +13,13 @@ anyhow.workspace = true
 clap.workspace = true
 archcert-domain = { path = "../../crates/archcert-domain", version = "=0.1.0" }
 archcert-application = { path = "../../crates/archcert-application", version = "=0.1.0" }
+archcert-gateway = { path = "../../crates/archcert-gateway", version = "=0.1.0" }
 archcert-source = { path = "../../crates/archcert-source", version = "=0.1.0" }
 archcert-materialization = { path = "../../crates/archcert-materialization", version = "=0.1.0" }
 archcert-runner = { path = "../../crates/archcert-runner", version = "=0.1.0" }
 archcert-policy = { path = "../../crates/archcert-policy", version = "=0.1.0" }
+archcert-certificate = { path = "../../crates/archcert-certificate", version = "=0.1.0" }
+archcert-crypto = { path = "../../crates/archcert-crypto", version = "=0.1.0", features = ["local-development"] }
 serde_json.workspace = true
 
 [dev-dependencies]

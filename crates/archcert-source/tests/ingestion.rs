@@ -682,3 +682,280 @@ fn repository_mapping_and_locator_symlinks_fail_closed() -> TestResult {
     )?;
     Ok(())
 }
+
+#[test]
+fn packed_and_loose_ingestion_have_identical_canonical_source() -> TestResult {
+    use archcert_source::{GitObjectFormat, PackLimits, PackedGitGateway};
+    for (name, format) in [
+        ("sha1", GitObjectFormat::Sha1),
+        ("sha256", GitObjectFormat::Sha256),
+    ] {
+        let repository = Repository::new(name)?;
+        let blob = repository.object("blob", b"packed and loose source\n")?;
+        let tree =
+            repository.raw_tree(&[("100644", b"file", &blob), ("120000", b"link", &blob)])?;
+        let commit = repository.commit(&tree, "same exact source")?;
+        let loose = repository.ingest(&commit, SourceLimits::default())?;
+        let pack = repository.git(
+            &["pack-objects", "--stdout", "--revs"],
+            format!("{}\n", commit.as_str()).as_bytes(),
+        )?;
+        let gateway = PackedGitGateway::new(
+            repository.identity.clone(),
+            &pack,
+            format,
+            PackLimits::default(),
+        )?;
+        let packed = ingest_source(
+            &gateway,
+            &mut MemorySourceStore::default(),
+            loose.evidence.submission.clone(),
+            SourceLimits::default(),
+        )?;
+        assert_eq!(packed.snapshot.identity(), loose.snapshot.identity());
+        assert_eq!(
+            packed.snapshot.manifest().canonical_bytes(),
+            loose.snapshot.manifest().canonical_bytes()
+        );
+        assert!(gateway_for_wrong_scope(&pack, format, &commit)?);
+    }
+    Ok(())
+}
+fn gateway_for_wrong_scope(
+    pack: &[u8],
+    format: archcert_source::GitObjectFormat,
+    commit: &GitObjectId,
+) -> Result<bool, Box<dyn Error>> {
+    let gateway = archcert_source::PackedGitGateway::new(
+        RepositoryId::parse("authority/one")?,
+        pack,
+        format,
+        archcert_source::PackLimits::default(),
+    )?;
+    Ok(ingest_source(
+        &gateway,
+        &mut MemorySourceStore::default(),
+        SourceSubmission {
+            project: ProjectId::new(),
+            repository: RepositoryId::parse("authority/two")?,
+            requested_commit: commit.clone(),
+        },
+        SourceLimits::default(),
+    )
+    .is_err())
+}
+
+fn synthetic_pack(
+    entries: &[(gix_pack::data::entry::Header, Vec<u8>)],
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut out =
+        gix_pack::data::header::encode(gix_pack::data::Version::V2, entries.len() as u32).to_vec();
+    for (header, bytes) in entries {
+        header.write_to(bytes.len() as u64, &mut out)?;
+        let mut z = ZlibEncoder::new(Vec::new(), Compression::default());
+        z.write_all(bytes)?;
+        out.extend_from_slice(&z.finish()?);
+    }
+    out.extend_from_slice(&sha1::Sha1::digest(out.clone()));
+    Ok(out)
+}
+
+#[test]
+fn malformed_oversized_pack_and_missing_delta_base_fail_closed() -> TestResult {
+    use archcert_source::{GitObjectFormat, PackLimits, PackedGitGateway, receive_pack};
+    use gix_pack::data::entry::Header;
+    let identity = RepositoryId::parse("test/packs")?;
+    let valid = synthetic_pack(&[(Header::Blob, b"abc".to_vec())])?;
+    let load = |bytes: &[u8], limits| {
+        PackedGitGateway::new(identity.clone(), bytes, GitObjectFormat::Sha1, limits)
+    };
+    for bytes in [
+        b"malformed".to_vec(),
+        valid[..valid.len() - 1].to_vec(),
+        [valid.clone(), vec![0]].concat(),
+    ] {
+        assert!(load(&bytes, PackLimits::default()).is_err());
+    }
+    let mut corrupted = valid.clone();
+    *corrupted.last_mut().ok_or("empty pack")? ^= 1;
+    assert!(matches!(
+        load(&corrupted, PackLimits::default()),
+        Err(SourceError::ObjectIdentityMismatch)
+    ));
+    assert!(
+        load(
+            &valid,
+            PackLimits {
+                max_pack_bytes: (valid.len() - 1) as u64,
+                ..PackLimits::default()
+            }
+        )
+        .is_err()
+    );
+    assert!(
+        load(
+            &valid,
+            PackLimits {
+                max_object_bytes: 2,
+                ..PackLimits::default()
+            }
+        )
+        .is_err()
+    );
+    let too_many = synthetic_pack(&[(Header::Blob, b"a".to_vec()), (Header::Blob, b"b".to_vec())])?;
+    assert!(
+        load(
+            &too_many,
+            PackLimits {
+                max_objects: 1,
+                ..PackLimits::default()
+            }
+        )
+        .is_err()
+    );
+    let base_id = gix_hash::ObjectId::from_hex(b"1111111111111111111111111111111111111111")?;
+    let missing = synthetic_pack(&[(
+        Header::RefDelta { base_id },
+        b"\x03\x04\x90\x03\x01d".to_vec(),
+    )])?;
+    assert!(load(&missing, PackLimits::default()).is_err());
+    // Declared zero output with a nonempty stream is rejected at the first chunk.
+    let mut bomb = gix_pack::data::header::encode(gix_pack::data::Version::V2, 1).to_vec();
+    Header::Blob.write_to(0, &mut bomb)?;
+    let mut z = ZlibEncoder::new(Vec::new(), Compression::default());
+    z.write_all(&vec![0; 1024 * 1024])?;
+    bomb.extend_from_slice(&z.finish()?);
+    bomb.extend_from_slice(&sha1::Sha1::digest(bomb.clone()));
+    assert!(
+        receive_pack(
+            std::io::Cursor::new(bomb),
+            GitObjectFormat::Sha1,
+            PackLimits::default()
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn ref_and_offset_deltas_decode_and_depth_expansion_budgets_apply() -> TestResult {
+    use archcert_source::{GitObjectFormat, PackLimits, PackedGitGateway};
+    use gix_pack::data::entry::Header;
+    let id = RepositoryId::parse("test/deltas")?;
+    let base_id =
+        gix_hash::ObjectId::from_hex(hex::encode(sha1::Sha1::digest(b"blob 3\0abc")).as_bytes())?;
+    let pack = synthetic_pack(&[
+        (Header::Blob, b"abc".to_vec()),
+        (
+            Header::RefDelta { base_id },
+            b"\x03\x04\x90\x03\x01d".to_vec(),
+        ),
+    ])?;
+    PackedGitGateway::new(
+        id.clone(),
+        &pack,
+        GitObjectFormat::Sha1,
+        PackLimits::default(),
+    )?;
+    assert!(
+        PackedGitGateway::new(
+            id.clone(),
+            &pack,
+            GitObjectFormat::Sha1,
+            PackLimits {
+                max_delta_depth: 0,
+                ..PackLimits::default()
+            }
+        )
+        .is_err()
+    );
+    let repeated_base =
+        gix_hash::ObjectId::from_hex(hex::encode(sha1::Sha1::digest(b"blob 3\0abc")).as_bytes())?;
+    let duplicate = synthetic_pack(&[
+        (Header::Blob, b"abc".to_vec()),
+        (
+            Header::RefDelta {
+                base_id: repeated_base,
+            },
+            b"\x03\x03\x90\x03".to_vec(),
+        ),
+        (
+            Header::RefDelta {
+                base_id: repeated_base,
+            },
+            b"\x03\x04\x90\x03\x01d".to_vec(),
+        ),
+    ])?;
+    PackedGitGateway::new(
+        id.clone(),
+        &duplicate,
+        GitObjectFormat::Sha1,
+        PackLimits::default(),
+    )?;
+    // Make a real ofs chain using library header encoding; no custom production delta parser.
+    let mut out = gix_pack::data::header::encode(gix_pack::data::Version::V2, 35).to_vec();
+    let mut previous = 0;
+    for n in 0..35 {
+        let at = out.len();
+        let (header, payload) = if n == 0 {
+            (Header::Blob, b"a".to_vec())
+        } else {
+            (
+                Header::OfsDelta {
+                    base_distance: (at - previous) as u64,
+                },
+                vec![n as u8, n as u8 + 1, 0x90, n as u8, 1, b'z'],
+            )
+        };
+        header.write_to(payload.len() as u64, &mut out)?;
+        let mut z = ZlibEncoder::new(Vec::new(), Compression::default());
+        z.write_all(&payload)?;
+        out.extend_from_slice(&z.finish()?);
+        previous = at;
+    }
+    out.extend_from_slice(&sha1::Sha1::digest(out.clone()));
+    assert!(matches!(
+        PackedGitGateway::new(
+            id.clone(),
+            &out,
+            GitObjectFormat::Sha1,
+            PackLimits::default()
+        ),
+        Err(SourceError::LimitExceeded(ResourceLimit::DeltaDepth))
+    ));
+    PackedGitGateway::new(
+        id.clone(),
+        &out,
+        GitObjectFormat::Sha1,
+        PackLimits {
+            max_delta_depth: 40,
+            ..PackLimits::default()
+        },
+    )?;
+    let expansion = synthetic_pack(&[(Header::Blob, vec![b'a'; 100_000])])?;
+    assert!(matches!(
+        PackedGitGateway::new(
+            id.clone(),
+            &expansion,
+            GitObjectFormat::Sha1,
+            PackLimits {
+                max_expansion_ratio: 1,
+                ..PackLimits::default()
+            }
+        ),
+        Err(SourceError::LimitExceeded(ResourceLimit::DeltaExpansion))
+    ));
+    assert!(
+        PackedGitGateway::new(
+            id,
+            &pack,
+            GitObjectFormat::Sha1,
+            PackLimits {
+                max_decoded_bytes: 10,
+                ..PackLimits::default()
+            }
+        )
+        .is_err()
+    );
+    Ok(())
+}

@@ -1,0 +1,26 @@
+contract_version: 1
+submission { value: "00000000-0000-4000-8000-000000000006" }
+project { value: "00000000-0000-4000-8000-000000000004" }
+repository { value: "archcert/northgate-fixture" }
+actor {
+  actor { value: "00000000-0000-4000-8000-000000000005" }
+  device { sha256: "\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042\042" }
+}
+git {
+  submitted_refs: "refs/heads/fixture"
+  requested_commit { algorithm: GIT_OBJECT_ALGORITHM_SHA1 digest: "\147\010\133\102\376\002\377\010\062\144\026\051\243\026\064\063\202\024\276\000" }
+  object_algorithm: GIT_OBJECT_ALGORITHM_SHA1
+  transport: SOURCE_TRANSPORT_SSH_PUBLIC_KEY
+}
+source {
+  identity {
+    commit { algorithm: GIT_OBJECT_ALGORITHM_SHA1 digest: "\147\010\133\102\376\002\377\010\062\144\026\051\243\026\064\063\202\024\276\000" }
+    tree { algorithm: GIT_OBJECT_ALGORITHM_SHA1 digest: "\306\066\136\303\021\026\250\346\156\203\371\033\005\214\107\057\340\006\115\367" }
+    snapshot { sha256: "\122\101\246\316\107\065\202\362\152\241\306\377\253\042\371\010\056\316\334\046\317\021\320\232\156\144\032\327\234\305\330\257" }
+  }
+  schema_version: 1
+  completeness: SOURCE_COMPLETENESS_COMPLETE
+}
+status: SUBMISSION_STATUS_ACCEPTED
+received_at { seconds: 1760000000 }
+accepted_at { seconds: 1760000001 }

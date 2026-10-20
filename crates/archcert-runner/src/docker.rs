@@ -363,6 +363,21 @@ impl DockerRootlessRunner {
             .source()
             .verified_files()
             .map_err(|_| ExecutionError::SourceIntegrity)?;
+        let binding = request.input().source().source_binding();
+        let manifest = archcert_domain::source::SourceManifest::new(
+            files
+                .iter()
+                .map(archcert_domain::source::SourceFile::manifest_entry)
+                .collect(),
+        )
+        .map_err(|_| ExecutionError::SourceIntegrity)?;
+        if binding
+            .digest(&manifest)
+            .map_err(|_| ExecutionError::SourceIntegrity)?
+            != request.input().expected_source_identity().snapshot_sha256
+        {
+            return Err(ExecutionError::SourceIntegrity);
+        }
         let source_tar = archive::encode(&files)?;
         let observed_runtime = self.runtime.preflight()?;
         let image = self
@@ -431,9 +446,10 @@ impl DockerRootlessRunner {
             &[],
             archive::MAX_ARCHIVE,
         )?;
-        archive::verify(
+        archive::verify_bound(
             &view.stdout.excerpt,
             request.input().expected_source_identity(),
+            &binding,
         )?;
         // Recheck host source as well; authority-source mutation cannot silently
         // relabel a different execution image.
@@ -442,6 +458,9 @@ impl DockerRootlessRunner {
             .source()
             .verified_files()
             .map_err(|_| ExecutionError::SourceIntegrity)?;
+        if request.input().source().source_binding() != binding {
+            return Err(ExecutionError::SourceIntegrity);
+        }
         let mut state = ExecutionState::Preparing
             .advance(ExecutionState::Ready)?
             .advance(ExecutionState::Running)?;

@@ -10,6 +10,9 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 use unicode_normalization::is_nfc;
 
+mod binding;
+pub use binding::{ResolvedDependency, SourceBinding};
+
 #[cfg(test)]
 mod tests;
 
@@ -72,6 +75,10 @@ pub enum SourceError {
 /// Authority-controlled budget that caused a rejection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ResourceLimit {
+    /// Delta ancestry exceeded the authority limit before decoding.
+    DeltaDepth,
+    /// Resolved object expansion exceeded the authority ratio.
+    DeltaExpansion,
     /// Number of source entries (including gitlinks).
     Files,
     /// Sum of source blob sizes, counting repeated paths separately.
@@ -429,6 +436,9 @@ fn external_source(file: &SourceFile) -> Result<Option<ExternalSource>, SourceEr
     }
     // Recognizable but noncanonical pointers fail closed instead of appearing complete.
     let text = std::str::from_utf8(&file.bytes).map_err(|_| SourceError::InvalidLfsPointer)?;
+    if text.contains('\r') || !text.ends_with('\n') {
+        return Err(SourceError::InvalidLfsPointer);
+    }
     let lines: Vec<_> = text.lines().collect();
     if lines.len() != 3 || lines[0] != "version https://git-lfs.github.com/spec/v1" {
         return Err(SourceError::InvalidLfsPointer);
@@ -439,7 +449,14 @@ fn external_source(file: &SourceFile) -> Result<Option<ExternalSource>, SourceEr
     let size = lines[2]
         .strip_prefix("size ")
         .ok_or(SourceError::InvalidLfsPointer)?;
-    if size.is_empty() || !size.bytes().all(|b| b.is_ascii_digit()) {
+    if oid.len() != 64
+        || !oid
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        || size.is_empty()
+        || (size.len() > 1 && size.starts_with('0'))
+        || !size.bytes().all(|b| b.is_ascii_digit())
+    {
         return Err(SourceError::InvalidLfsPointer);
     }
     Ok(Some(ExternalSource::Lfs {
@@ -450,13 +467,30 @@ fn external_source(file: &SourceFile) -> Result<Option<ExternalSource>, SourceEr
 }
 
 /// Completeness of an accepted immutable snapshot, separate from certification status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SourceStatus {
     /// All selected source bytes are present within the supported source model.
     Complete,
     /// Pointer or gitlink bytes are retained, but required external content is absent.
     IncompleteExternalSource,
+}
+
+/// Metadata for the trusted snapshot/artifact constructor. Source identity is
+/// computed from owned bytes and its versioned binding, never accepted from JSON.
+pub struct SnapshotMetadata {
+    /// Authority project.
+    pub project: ProjectId,
+    /// Authority repository.
+    pub repository: RepositoryId,
+    /// Exact original Git commit.
+    pub commit: GitObjectId,
+    /// Exact original Git root tree.
+    pub tree: GitObjectId,
+    /// Validated top-level Git object visits.
+    pub object_count: u64,
+    /// Authority audit time, excluded from identity.
+    pub created_at: u64,
 }
 
 /// Immutable source snapshot; cannot be deserialized from claimed evidence.
@@ -466,6 +500,7 @@ pub struct SourceSnapshot {
     repository: RepositoryId,
     identity: SourceIdentity,
     manifest: SourceManifest,
+    binding: SourceBinding,
     files: Vec<SourceFile>,
     external: Vec<ExternalSource>,
     created_at: u64,
@@ -480,47 +515,115 @@ impl SourceSnapshot {
         repository: RepositoryId,
         commit: GitObjectId,
         tree: GitObjectId,
-        mut files: Vec<SourceFile>,
+        files: Vec<SourceFile>,
         object_count: u64,
         created_at: u64,
     ) -> Result<Self, SourceError> {
-        if commit.as_str().len() != tree.as_str().len() {
+        Self::seal_bound(
+            SnapshotMetadata {
+                project,
+                repository,
+                commit,
+                tree,
+                object_count,
+                created_at,
+            },
+            files,
+            SourceBinding::default(),
+        )
+    }
+    /// Trusted adapter/artifact constructor. Restoring a binding is not source
+    /// authentication: the caller must use an authority-owned accepted store.
+    pub fn seal_bound(
+        metadata: SnapshotMetadata,
+        mut files: Vec<SourceFile>,
+        binding: SourceBinding,
+    ) -> Result<Self, SourceError> {
+        let SnapshotMetadata {
+            project,
+            repository,
+            commit,
+            tree,
+            object_count,
+            created_at,
+        } = metadata;
+        if commit.as_str().len() != tree.as_str().len()
+            || binding
+                .original()
+                .is_some_and(|o| o.commit != commit || o.tree != tree)
+        {
             return Err(SourceError::MalformedGitObject);
         }
         files.sort_by(|a, b| a.path.cmp(&b.path));
         let manifest = SourceManifest::new(files.iter().map(SourceFile::manifest_entry).collect())?;
-        let external = files
-            .iter()
-            .filter_map(|f| external_source(f).transpose())
-            .collect::<Result<Vec<_>, _>>()?;
+        let external = Self::external_for(&files, &binding)?;
         let identity = SourceIdentity {
             commit,
             tree,
-            snapshot_sha256: manifest.digest(),
+            snapshot_sha256: binding.digest(&manifest)?,
         };
         Ok(Self {
             project,
             repository,
             identity,
             manifest,
+            binding,
             files,
             external,
             created_at,
             object_count,
         })
     }
+    /// Seals a newly complete representation after independently checking original
+    /// dependency claims, unchanged files and all resolved content identities.
+    pub fn seal_resolved(
+        original: &Self,
+        files: Vec<SourceFile>,
+        dependencies: Vec<ResolvedDependency>,
+        created_at: u64,
+    ) -> Result<Self, SourceError> {
+        let binding = SourceBinding::resolved(original, dependencies, &files)?;
+        let mut metadata = original.metadata();
+        metadata.created_at = created_at;
+        Self::seal_bound(metadata, files, binding)
+    }
+    fn external_for(
+        files: &[SourceFile],
+        binding: &SourceBinding,
+    ) -> Result<Vec<ExternalSource>, SourceError> {
+        let external = files
+            .iter()
+            .filter(|f| !binding.covers(f.path()))
+            .filter_map(|f| external_source(f).transpose())
+            .collect::<Result<Vec<_>, _>>()?;
+        if binding.schema_version() == 2 && !external.is_empty() {
+            return Err(SourceError::IncompleteExternalSource);
+        }
+        Ok(external)
+    }
+    /// Credential-free immutable manifest identity recipe.
+    pub fn binding(&self) -> &SourceBinding {
+        &self.binding
+    }
+    /// Owned audit/Git metadata for trusted artifact restoration.
+    pub fn metadata(&self) -> SnapshotMetadata {
+        SnapshotMetadata {
+            project: self.project,
+            repository: self.repository.clone(),
+            commit: self.identity.commit.clone(),
+            tree: self.identity.tree.clone(),
+            object_count: self.object_count,
+            created_at: self.created_at,
+        }
+    }
     /// Rehashes retained bytes, validating both content metadata and the expected identity.
     /// Call at the source-store/materializer boundary; stored reports are insufficient.
     pub fn verify(&self, expected: &Sha256Digest) -> Result<(), SourceError> {
         let manifest =
             SourceManifest::new(self.files.iter().map(SourceFile::manifest_entry).collect())?;
-        let external = self
-            .files
-            .iter()
-            .filter_map(|f| external_source(f).transpose())
-            .collect::<Result<Vec<_>, _>>()?;
+        let external = Self::external_for(&self.files, &self.binding)?;
         if manifest != self.manifest
-            || manifest.digest() != *expected
+            || self.binding.digest(&manifest)? != *expected
             || self.identity.snapshot_sha256 != *expected
             || external != self.external
         {
@@ -566,7 +669,7 @@ impl SourceSnapshot {
     }
     /// Snapshot schema version.
     pub fn schema_version(&self) -> u32 {
-        1
+        self.binding.schema_version()
     }
     /// Number of Git object visits validated during ingestion.
     pub fn object_count(&self) -> u64 {
