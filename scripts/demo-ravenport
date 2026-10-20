@@ -345,6 +345,22 @@ try:
         (OUTPUT/'daemon-restart-job.json').write_text(json.dumps(interrupted,indent=2))
         cfg['grants'][0]['authority_toml']=controlled_recipe;write_config();restart_api()
         print('Artifact and PostgreSQL outages, readiness failure and dedicated rootless daemon restart passed',flush=True)
+        service_job=submit(source,'systemd-service-restart')['job_id']
+        unit='archcert-stoneward-'+str(uuid.uuid4())
+        service=['systemd-run','--user','--quiet','--wait','--pipe','--collect','--unit',unit,
+            '--property','NoNewPrivileges=yes','--property','UMask=0077','--property','LimitNOFILE=4096',
+            '--property','TasksMax=256','--property','RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6',
+            '--setenv=ARCHCERT_DATABASE_URL']
+        service_controller=[BIN/'archcert-controller','--config',config,'run-once','--worker-binary',BIN/'archcert-worker',
+            '--workspace-root',workspaces,'--docker',docker[0],'--endpoint',docker[2],
+            '--development-key',private,'--public-key',public,'--lease-seconds','5']
+        assert command(service+service_controller+['--stop-after','evidence'],ok=False).returncode==75
+        retained=status(service_job);assert retained['state']=='EVALUATING'
+        service_result=json.loads(command(service+service_controller).stdout)
+        assert service_result['id']==service_job and service_result['state']=='COMPLETED' and len(service_result['attempts'])==1
+        (OUTPUT/'service-restart-job.json').write_text(json.dumps(service_result,indent=2))
+        print('Hardened transient user service restart resumed accepted evidence without target rerun',flush=True)
+
 
     # Bottle retains its historical identity and policy semantics. No private key exists now.
     private.unlink();bottle_job=submit(bottle,'bottle')['job_id'];rejected=json.loads(controller().stdout)
