@@ -182,3 +182,10 @@ contracts are implemented. Checked adapters retain existing operational evidence
 serialization and canonical source identities. Pinned authority plans reconstruct
 only from retained commands/image and must match their stored digest. Source
 artifact acceptance and actual lease authority remain separate from wire decoding.
+
+archcert-worker is now an actual separate execution executable. Its dependency
+graph excludes metadata storage and signing. An authority-owned private stdin
+assignment supplies verified source artifact bytes; stdout returns only the
+versioned result envelope. Runtime configuration remains operator-only. The
+worker rechecks source scope/identity and reports source/sandbox cleanup separately.
+All eleven existing live rootless OCI regression groups passed for this boundary.

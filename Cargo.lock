@@ -283,6 +283,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "archcert-worker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "archcert-application",
+ "archcert-domain",
+ "archcert-materialization",
+ "archcert-protocol",
+ "archcert-runner",
+ "archcert-source",
+ "clap",
+]
+
+[[package]]
 name = "archcertd"
 version = "0.1.0"
 dependencies = [

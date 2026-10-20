@@ -82,6 +82,15 @@ fn allowed_inward_dependency(package: &str, dependency: &str) -> bool {
             "ed25519-dalek",
         ]
         .contains(&dependency),
+        "archcert-worker" => ![
+            "archcert-storage",
+            "archcert-crypto",
+            "archcert-certificate",
+            "sqlx",
+            "postgres",
+            "tokio-postgres",
+        ]
+        .contains(&dependency),
         "archcert-crypto" => !dependency.starts_with("archcert-"),
         "archcert-evidence" => {
             !dependency.starts_with("archcert-")
@@ -176,6 +185,7 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
     // not acquire signing authority, directly or through an intermediate crate.
     for root in [
         "archcertd",
+        "archcert-worker",
         "archcert-gateway",
         "archcert-gateway-cli",
         "archcert-runner",

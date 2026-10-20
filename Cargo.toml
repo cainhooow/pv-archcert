@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "apps/archcertd",
+    "apps/archcert-worker",
     "apps/archcert-cli",
     "apps/archcert-gateway",
     "crates/archcert-domain",
