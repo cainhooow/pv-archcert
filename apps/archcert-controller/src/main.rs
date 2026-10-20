@@ -72,7 +72,7 @@ struct RunArgs {
     #[arg(long,default_value_t=30,value_parser=clap::value_parser!(u32).range(5..=300))]
     lease_seconds: u32,
     /// Authority-only controlled crash injection. Never read from target configuration.
-    #[arg(long,value_parser=["lease","staging","evidence","evaluation","prepared","signed","certificate-upload"])]
+    #[arg(long,value_parser=["lease","staging","evidence-upload","evidence","evaluation","prepared","signed","certificate-upload"])]
     stop_after: Option<String>,
 }
 fn checkpoint(args: &RunArgs, stage: &str) {
