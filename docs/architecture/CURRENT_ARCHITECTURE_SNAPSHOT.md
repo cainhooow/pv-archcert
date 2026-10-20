@@ -1,4 +1,4 @@
-# Current architecture snapshot — Milestone 5 / Northgate
+# Current architecture snapshot — M5.1 Ravenport
 
 ArchCert accepts authenticated SSH Git pushes with bounded SHA-1/SHA-256 packs
 or explicit local loose objects, seals an independently hashed
@@ -171,7 +171,8 @@ repository/read-model contracts. archcert-storage implements PostgreSQL admissio
 scoped idempotency, row-locked claims, fenced leases, immutable artifact metadata,
 issuance bindings and append-only audit through explicit SQLx migrations. Real
 PostgreSQL tests cover concurrency and recovery. Authenticated loopback HTTP now
-admits actual durable jobs and returns status; controller orchestration is in progress. ADRs 0035–0037 govern the implementation.
+admits actual durable jobs and returns status. archcert-controller resumes durable
+evaluation/issuance and dispatches a separate leased worker process. ADRs 0035–0037 govern the implementation.
 
 ImmutableArtifactStore now has an explicitly unencrypted local development
 adapter: project-scoped SHA-256 keys, atomic create-only publication, fsync and
@@ -190,3 +191,13 @@ assignment supplies verified source artifact bytes; stdout returns only the
 versioned result envelope. Runtime configuration remains operator-only. The
 worker rechecks source scope/identity and reports source/sandbox cleanup separately.
 All eleven existing live rootless OCI regression groups passed for this boundary.
+
+The trusted controller records EVALUATING with a durable phase time and preserves
+structured policy/infrastructure/signing/verification failures. It reconstructs
+observations only from a structurally bound persisted worker result. Eligibility
+and exact issuance time/key/payload digest precede signing. Verified immutable
+certificate metadata and audit commit with COMPLETED. Controller restarts after
+execution/evaluation/signing do not repeat target commands. Lease expiry recovery
+preserves prior attempts and requires confirmed runtime cleanup after target start.
+See RAVENPORT_OPERATIONS.md for the explicit supervisor/run-once deployment and
+its local development role/encryption/cleanup limitations.

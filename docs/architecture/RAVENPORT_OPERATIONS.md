@@ -85,3 +85,64 @@ transport, not enterprise IAM/TLS. No remote listener is permitted by this daemo
 The daemon has no signing or target execution dependency; a separate trusted
 controller is responsible for orchestration. Configuration loading and HTTP
 startup do not grant new database permissions or run migrations.
+
+The trusted controller is a separate executable with authority-only commands:
+
+```sh
+archcert-controller --config /authority/control-plane.json provision
+archcert-controller --config /authority/control-plane.json run-once \
+  --worker-binary /absolute/archcert-worker \
+  --workspace-root /authority/workspaces \
+  --docker /absolute/docker --endpoint unix:///authority/rootless.sock \
+  --development-key /authority/signing/development.der \
+  --public-key /authority/signing/public.hex
+archcert-controller --config /authority/control-plane.json show JOB_UUID
+archcert-controller --config /authority/control-plane.json recover JOB_UUID \
+  --cleanup-confirmed
+```
+
+Run-once first resumes a retained EVALUATING/SIGNING job, otherwise claims queued
+work. Operators may invoke it repeatedly under a service supervisor. PostgreSQL
+is the queue; no broker/outbox is required. Default leases are 30 seconds, bounded
+5–300 seconds; heartbeats renew at one third of the duration and never extend
+an attempt beyond one hour. Uncertain renewal kills the execution process and
+rejects publication; runtime cleanup still needs confirmation. The daemon never
+loads signing keys. The controller clears the entire child environment and passes
+only source/plan bytes plus explicit runtime configuration. The worker has no DB,
+object-store or signing dependency. The existing fixed target environment remains
+credential-free.
+
+Lease expiry never proves target termination. LEASED attempts can recover before
+target start; RUNNING attempts require an operator to confirm source workspace,
+container and job-image cleanup before requeue. `recover` is an authority command,
+not an anonymously callable endpoint. This development topology does not provide
+remote process fencing or an automatic runtime orphan reconciler. A stale result
+is transactionally fenced even if its target kept running. Maximum attempts are
+pinned at admission (1–3); target/policy rejection never queues another attempt.
+
+After evidence acceptance, continuation reads/revalidates the exact immutable
+result artifact and original source/plan/policy. The evaluation phase time is
+persisted with the EVALUATING transition. Infrastructure uncertainty is terminal
+INCONCLUSIVE; policy rejection is NOT_ELIGIBLE. Neither can silently become active.
+After eligibility, freeze issuance time/key/payload digest before signing; recovery
+must reconstruct the identical canonical draft. A crash after signing repeats only
+that certificate-specific operation. Deterministic Ed25519 yields the same envelope.
+Persist/rehash the verified envelope before atomically committing COMPLETED,
+certificate metadata and CertificateIssued audit. Source/policy/job/attempt bindings
+are retained through immutable relational references, not a certification boolean.
+
+`scripts/demo-ravenport` requires a dedicated empty development database, the
+existing rootless OCI image, Git/SSH fixture prerequisites, and the historical
+Bottle test checkout. Build all five executables first. Set ARCHCERT_DATABASE_URL,
+ARCHCERT_TEST_DOCKER, ARCHCERT_TEST_ENDPOINT and ARCHCERT_TEST_IMAGE; optional
+ARCHCERT_RAVENPORT_OUTPUT chooses a new output directory. It refuses overwrites.
+The script performs real authenticated source push, concurrent HTTP admission,
+service restarts, controller crash checkpoints, worker SIGKILL during execution,
+explicit cleanup/recovery, offline verification and unchanged Bottle rejection.
+Private SSH/signing material and bearer tokens are temporary outside the repo;
+retained public evidence defaults to ignored target/m5.1/demonstration/.
+
+The authority-only --stop-after test flag exits the controller at explicit lease,
+artifact staging, evidence, evaluation, prepared issuance, signed, or certificate
+upload boundaries. It is not read from project configuration or HTTP input.
+The demonstration restores each stage using a new process and preserves attempts.

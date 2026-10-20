@@ -115,6 +115,10 @@ pub struct CertificationJob {
     pub inputs: JobInputs,
     /// Creation time, UTC seconds from database.
     pub created_at: i64,
+    /// Durable evaluation phase entry time from PostgreSQL.
+    pub evaluation_at: Option<i64>,
+    /// Structured terminal failure/uncertainty category.
+    pub failure: Option<FailureCategory>,
     /// Durable state.
     pub state: JobState,
     /// Full attempt history in ordinal order.
@@ -132,6 +136,16 @@ pub struct Assignment {
     pub job: CertificationJob,
     /// Current ownership proof.
     pub lease: Lease,
+}
+/// Authority evaluation disposition, independent of transport/policy adapter types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvaluationDecision {
+    /// All required evidence establishes eligibility; signing still required.
+    Eligible,
+    /// Definite target/policy rejection; never automatically retried.
+    NotEligible,
+    /// Infrastructure or evidence uncertainty; no positive authority claim.
+    Inconclusive,
 }
 /// Transactional application port. Implementations must lock and fence all mutations.
 #[async_trait]
@@ -163,7 +177,7 @@ pub trait JobRepository: Send + Sync {
         &self,
         id: JobId,
         artifact: &ArtifactReference,
-        eligible: bool,
+        decision: EvaluationDecision,
     ) -> Result<(), JobStoreError>;
     /// Bind a single payload/key/time after durable eligibility, before sign().
     async fn prepare_issuance(

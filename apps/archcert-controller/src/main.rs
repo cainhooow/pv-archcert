@@ -1,0 +1,457 @@
+//! Trusted durable orchestration. Execution runs in a separate credential-free process.
+use anyhow::{Context, Result, ensure};
+use archcert_application::{
+    artifacts::ImmutableArtifactStore,
+    jobs::*,
+    validation::{ObservationFact, ObservationId, ObservationKind, ValidationObservation},
+    worker::{MAX_RESULT_BYTES, WorkerAssignment, WorkerResult, pinned_plan},
+};
+use archcert_certificate::{CertificateDraft, IssuanceContext, IssuanceMetadata};
+use archcert_control_plane::{ControlPlane, ControlPlaneConfiguration, read_private};
+use archcert_crypto::PublicKey;
+use archcert_domain::{execution::ExecutionOutcome, jobs::*, source::digest_bytes};
+use archcert_protocol::protobuf::worker::{decode_result, encode_assignment};
+use clap::{Parser, Subcommand};
+use std::{path::PathBuf, process::Stdio, time::Duration};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[derive(Parser)]
+struct Args {
+    #[arg(long)]
+    config: PathBuf,
+    #[command(subcommand)]
+    command: Command,
+}
+#[derive(Subcommand)]
+enum Command {
+    /// Explicitly provisions configured development scope grants, without schema DDL.
+    Provision,
+    /// Advances one durable job, or resumes retained evaluation/signing after restart.
+    RunOnce(Box<RunArgs>),
+    /// Shows internal authority state, including all attempts.
+    Show { job: String },
+    /// Recovers expired execution after explicit authority confirmation of cleanup.
+    Recover {
+        job: String,
+        #[arg(long)]
+        cleanup_confirmed: bool,
+    },
+}
+#[derive(clap::Args)]
+struct RunArgs {
+    #[arg(long)]
+    worker_binary: PathBuf,
+    #[arg(long)]
+    workspace_root: PathBuf,
+    #[arg(long)]
+    docker: PathBuf,
+    #[arg(long)]
+    endpoint: String,
+    #[arg(long)]
+    development_key: PathBuf,
+    #[arg(long)]
+    public_key: PathBuf,
+    #[arg(long, default_value = "development-worker")]
+    worker_id: String,
+    /// Authority lease duration; heartbeats run at one third of this bounded lifetime.
+    #[arg(long,default_value_t=30,value_parser=clap::value_parser!(u32).range(5..=300))]
+    lease_seconds: u32,
+    /// Authority-only controlled crash injection. Never read from target configuration.
+    #[arg(long,value_parser=["lease","staging","evidence","evaluation","prepared","signed","certificate-upload"])]
+    stop_after: Option<String>,
+}
+fn checkpoint(args: &RunArgs, stage: &str) {
+    if args.stop_after.as_deref() == Some(stage) {
+        eprintln!("Controlled Ravenport interruption after {stage}");
+        std::process::exit(75);
+    }
+}
+#[tokio::main]
+async fn main() -> Result<()> {
+    let args = Args::parse();
+    let state = ControlPlane::connect(
+        &std::env::var("ARCHCERT_DATABASE_URL")?,
+        ControlPlaneConfiguration::load(&args.config)?,
+    )
+    .await?;
+    match args.command {
+        Command::Provision => {
+            state.provision().await?;
+            println!("Authority grants provisioned");
+        }
+        Command::Show { job } => println!(
+            "{}",
+            serde_json::to_string_pretty(&state.repository.get(JobId::parse(&job)?).await?)?
+        ),
+        Command::Recover {
+            job,
+            cleanup_confirmed,
+        } => {
+            let id = JobId::parse(&job)?;
+            state.repository.recover(id, cleanup_confirmed).await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&state.repository.get(id).await?)?
+            );
+        }
+        Command::RunOnce(args) => {
+            if let Some(id) = state.repository.continuations().await?.first().copied() {
+                resume(&state, id, &args).await?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&state.repository.get(id).await?)?
+                );
+            } else if let Some(assignment) = state
+                .repository
+                .claim(&args.worker_id, args.lease_seconds)
+                .await?
+            {
+                let id = assignment.job.id;
+                checkpoint(&args, "lease");
+                let source = state.source(&assignment.job.inputs)?;
+                let mut source_artifact = Vec::new();
+                archcert_source::write_snapshot(&source, &mut source_artifact)?;
+                let work = WorkerAssignment {
+                    job: id,
+                    attempt: assignment.lease.attempt,
+                    inputs: assignment.job.inputs.clone(),
+                    source_artifact,
+                };
+                state.repository.start(&assignment.lease).await?;
+                let bytes = execute(&state, &assignment.lease, &work, &args).await?;
+                let result = decode_result(&bytes)?;
+                result.validate(id, assignment.lease.attempt, &assignment.job.inputs)?;
+                if args.stop_after.as_deref() == Some("staging") {
+                    let reference = ArtifactReference {
+                        sha256: digest_bytes(&bytes),
+                        size: bytes.len() as u64,
+                        schema: 1,
+                        producer: "archcert-controller-v1/0.1.0".into(),
+                    };
+                    state
+                        .repository
+                        .stage_artifact(id, Some(assignment.lease.attempt), "EXECUTION", &reference)
+                        .await?;
+                    checkpoint(&args, "staging");
+                }
+                let reference = persist(
+                    &state,
+                    &assignment.job,
+                    Some(assignment.lease.attempt),
+                    "EXECUTION",
+                    &bytes,
+                )
+                .await?;
+                state
+                    .repository
+                    .accept_evidence(&assignment.lease, &reference)
+                    .await?;
+                checkpoint(&args, "evidence");
+                resume(&state, id, &args).await?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&state.repository.get(id).await?)?
+                );
+            } else {
+                println!("{{\"status\":\"IDLE\"}}");
+            }
+        }
+    }
+    Ok(())
+}
+async fn execute(
+    state: &ControlPlane,
+    lease: &Lease,
+    work: &WorkerAssignment,
+    args: &RunArgs,
+) -> Result<Vec<u8>> {
+    ensure!(
+        args.worker_binary.is_absolute()
+            && args.worker_binary.canonicalize()? == args.worker_binary,
+        "worker executable must be an explicit canonical authority path"
+    );
+    let mut child = tokio::process::Command::new(&args.worker_binary)
+        .env_clear()
+        .arg("--workspace-root")
+        .arg(&args.workspace_root)
+        .arg("--docker")
+        .arg(&args.docker)
+        .arg("--endpoint")
+        .arg(&args.endpoint)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()?;
+    // No controller environment, database URL, object capability or signer path is inherited.
+    let input = encode_assignment(work)?;
+    let mut stdin = child.stdin.take().context("worker stdin")?;
+    let writer = tokio::spawn(async move {
+        stdin.write_all(&input).await?;
+        stdin.shutdown().await
+    });
+    let stdout = child.stdout.take().context("worker stdout")?;
+    let reader = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        stdout
+            .take(MAX_RESULT_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .await?;
+        Ok::<_, std::io::Error>(bytes)
+    });
+    let mut ticker = tokio::time::interval(Duration::from_secs(u64::from(args.lease_seconds / 3)));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let deadline = tokio::time::sleep(Duration::from_secs(3500));
+    tokio::pin!(deadline);
+    let status = loop {
+        tokio::select! {
+            status=child.wait()=>break status?,
+            _=ticker.tick()=>{state.repository.renew(lease,args.lease_seconds).await?;},
+            _=&mut deadline=>{child.kill().await?;anyhow::bail!("worker deadline exceeded; cleanup confirmation required");}
+        }
+    };
+    writer.await??;
+    let bytes = reader.await??;
+    ensure!(
+        status.success() && bytes.len() <= MAX_RESULT_BYTES,
+        "worker failed; lease recovery requires cleanup confirmation"
+    );
+    Ok(bytes)
+}
+async fn persist(
+    state: &ControlPlane,
+    job: &CertificationJob,
+    attempt: Option<AttemptId>,
+    kind: &str,
+    bytes: &[u8],
+) -> Result<ArtifactReference> {
+    let reference = ArtifactReference {
+        sha256: digest_bytes(bytes),
+        size: bytes.len() as u64,
+        schema: 1,
+        producer: "archcert-controller-v1/0.1.0".into(),
+    };
+    state
+        .repository
+        .stage_artifact(job.id, attempt, kind, &reference)
+        .await?;
+    state
+        .artifacts
+        .put(job.inputs.project, &reference, bytes)
+        .await?;
+    let retained = state.artifacts.get(job.inputs.project, &reference).await?;
+    ensure!(retained == bytes, "artifact publication mismatch");
+    state
+        .repository
+        .artifact_available(job.id, attempt, kind, &reference)
+        .await?;
+    Ok(reference)
+}
+fn policy(inputs: &JobInputs) -> Result<archcert_policy::PolicyBundle> {
+    let bundle = archcert_policy::development_bundle()?;
+    let p = bundle.identity();
+    ensure!(
+        p.id == inputs.policy.id
+            && p.version == inputs.policy.version
+            && p.sha256 == inputs.policy.sha256,
+        "pinned policy is unavailable; never substitute latest policy"
+    );
+    Ok(bundle)
+}
+fn observations(
+    result: &WorkerResult,
+    plan: &archcert_application::validation::ValidationPlan,
+) -> Result<Vec<ValidationObservation>> {
+    let mut observations = Vec::new();
+    for (step, record) in plan.steps().iter().zip(&result.steps) {
+        if let Some(e) = &record.evidence {
+            observations.extend(ValidationObservation::from_execution(plan, step, e)?);
+        } else {
+            observations.push(ValidationObservation {
+                schema: 1,
+                plan_sha256: plan.digest()?,
+                profile: step.profile().name().into(),
+                id: ObservationId {
+                    execution: record.execution,
+                    step: step.id().into(),
+                    kind: ObservationKind::ExecutionFinished,
+                },
+                source: result.source.clone(),
+                producer: "archcert-controller-v1/0.1.0".into(),
+                fact: ObservationFact::ExecutionFinished {
+                    outcome: ExecutionOutcome::SandboxFailure,
+                    exit_code: None,
+                    category: step.evidence_category(),
+                },
+            });
+        }
+    }
+    Ok(observations)
+}
+async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
+    let mut job = state.repository.get(id).await?;
+    ensure!(
+        matches!(job.state, JobState::Evaluating | JobState::Signing),
+        "job has no continuation"
+    );
+    let attempt = job.attempts.last().context("attempt missing")?;
+    let evidence = attempt
+        .evidence
+        .as_ref()
+        .context("durable evidence missing")?;
+    let result = decode_result(&state.artifacts.get(job.inputs.project, evidence).await?)?;
+    result.validate(id, attempt.id, &job.inputs)?;
+    let source = state.source(&job.inputs)?;
+    let plan = pinned_plan(&job.inputs)?;
+    let bundle = policy(&job.inputs)?;
+    let executions: Vec<_> = result
+        .steps
+        .iter()
+        .map(|s| archcert_policy::ExpectedExecution {
+            step: s.step.clone(),
+            execution: s.execution,
+        })
+        .collect();
+    let observations = observations(&result, &plan)?;
+    let records: Vec<_> = result
+        .steps
+        .iter()
+        .filter_map(|s| s.evidence.clone())
+        .collect();
+    let evaluation = archcert_policy::evaluate(
+        &bundle,
+        bundle.identity(),
+        archcert_policy::EvaluationInput {
+            source: &source,
+            plan: &plan,
+            executions: &executions,
+            observations: &observations,
+            evaluated_at: u64::try_from(
+                job.evaluation_at
+                    .context("evaluation phase timestamp missing")?,
+            )?,
+        },
+    )?;
+    let clean = result
+        .steps
+        .iter()
+        .all(|s| s.source_cleaned && s.sandbox_cleaned && s.evidence.is_some());
+    let decision = if !clean
+        || evaluation.eligibility == archcert_policy::CertificationEligibility::Inconclusive
+    {
+        EvaluationDecision::Inconclusive
+    } else if evaluation.eligibility
+        == archcert_policy::CertificationEligibility::EligibleForCertification
+    {
+        EvaluationDecision::Eligible
+    } else {
+        EvaluationDecision::NotEligible
+    };
+    let bytes = archcert_evidence::canonical_bytes(&evaluation)?;
+    if job.evaluation.is_none() {
+        let reference = persist(state, &job, None, "EVALUATION", &bytes).await?;
+        state
+            .repository
+            .record_evaluation(id, &reference, decision)
+            .await?;
+        checkpoint(args, "evaluation");
+        job = state.repository.get(id).await?;
+    } else {
+        let stored = state
+            .artifacts
+            .get(
+                job.inputs.project,
+                job.evaluation.as_ref().context("evaluation missing")?,
+            )
+            .await?;
+        ensure!(stored == bytes, "durable evaluation mismatch");
+    }
+    if decision != EvaluationDecision::Eligible {
+        return Ok(());
+    }
+    let key =
+        PublicKey::from_hex(std::str::from_utf8(&read_private(&args.public_key, 1024)?)?.trim())?;
+    // A durable prepared issuance fixes time/key/payload across all crash boundaries.
+    let issued_at = job.issuance.as_ref().map_or(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs(),
+        |i| i.issued_at,
+    );
+    let draft = CertificateDraft::prepare(
+        IssuanceContext {
+            source: &source,
+            plan: &plan,
+            executions: &executions,
+            observations: &observations,
+            execution_records: &records,
+            bundle: &bundle,
+            selected: bundle.identity(),
+        },
+        Some(evaluation),
+        IssuanceMetadata {
+            issued_at,
+            certifier: "archcert-ravenport-development".into(),
+        },
+        key.clone(),
+    )?;
+    let issuance = PreparedIssuance {
+        certificate_sha256: draft.certificate().digest().clone(),
+        signing_key_id: key.key_id().as_str().into(),
+        issued_at,
+    };
+    persist(
+        state,
+        &job,
+        None,
+        "BUNDLE",
+        draft.evidence_bundle().canonical_bytes(),
+    )
+    .await?;
+    persist(
+        state,
+        &job,
+        None,
+        "MANIFEST",
+        draft.manifest().canonical_bytes(),
+    )
+    .await?;
+    state.repository.prepare_issuance(id, &issuance).await?;
+    checkpoint(args, "prepared");
+    let signer = match archcert_crypto::local::LocalDevelopmentSigner::load(&args.development_key) {
+        Ok(signer) => signer,
+        Err(e) => {
+            state
+                .repository
+                .note_failure(id, FailureCategory::SigningFailure)
+                .await?;
+            return Err(e.into());
+        }
+    };
+    let issued = match draft.issue(&signer) {
+        Ok(issued) => issued,
+        Err(e) => {
+            state
+                .repository
+                .note_failure(id, FailureCategory::VerificationFailure)
+                .await?;
+            return Err(e.into());
+        }
+    };
+    checkpoint(args, "signed");
+    let envelope = issued.envelope().to_json()?;
+    issued.envelope().verify(&key)?;
+    let reference = persist(state, &job, None, "CERTIFICATE", &envelope).await?;
+    checkpoint(args, "certificate-upload");
+    let value: serde_json::Value = serde_json::from_slice(&envelope)?;
+    let certificate = PersistedCertificate {
+        issuance,
+        artifact: reference,
+        signature: value["signature"]
+            .as_str()
+            .context("signature missing")?
+            .into(),
+        verified: true,
+    };
+    state.repository.complete(id, &certificate).await?;
+    Ok(())
+}

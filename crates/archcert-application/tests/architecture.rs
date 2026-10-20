@@ -14,6 +14,7 @@ fn allowed_inward_dependency(package: &str, dependency: &str) -> bool {
     if package != "archcert-crypto"
         && package != "archcert-certificate"
         && package != "archcert-cli"
+        && package != "archcert-controller"
         && [
             "ed25519-dalek",
             "ring",
@@ -211,6 +212,12 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
                 .contains(&name.as_str()),
                 "signing authority enters forbidden graph {root}: {name}"
             );
+            if root == "archcert-worker" {
+                assert!(
+                    !is_persistence_dependency(&name),
+                    "database/object-store authority enters worker: {name}"
+                );
+            }
             pending.extend(graph.get(&name).into_iter().flatten().cloned());
         }
     }

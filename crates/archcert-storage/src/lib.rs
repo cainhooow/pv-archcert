@@ -96,6 +96,12 @@ async fn load(c: &mut PgConnection, id: JobId) -> Result<CertificationJob> {
         id,
         inputs,
         created_at: row.try_get("created_at").map_err(db)?,
+        evaluation_at: row.try_get("evaluation_at").map_err(db)?,
+        failure: row
+            .try_get::<Option<String>, _>("failure")
+            .map_err(db)?
+            .map(|v| decode(Value::String(v)))
+            .transpose()?,
         state: state(&row, "state")?,
         attempts,
         evaluation: optional(&row, "evaluation")?,
@@ -278,6 +284,28 @@ impl PostgresJobRepository {
         available(&mut tx, id, &a, kind, reference).await?;
         tx.commit().await.map_err(db)
     }
+    /// Appends a classified continuation failure while preserving recoverable issuance state.
+    pub async fn note_failure(&self, id: JobId, category: FailureCategory) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let job = load(&mut tx, id).await?;
+        if !matches!(job.state, JobState::Evaluating | JobState::Signing) {
+            return Err(JobStoreError::Precondition);
+        }
+        let event = match category {
+            FailureCategory::SigningFailure => "SigningFailed",
+            FailureCategory::VerificationFailure => "CertificateVerificationFailed",
+            FailureCategory::PersistenceFailure => "PersistenceFailed",
+            _ => return Err(JobStoreError::Invalid),
+        };
+        sqlx::query("UPDATE certification_jobs SET failure=$2 WHERE id=$1")
+            .bind(id.to_string())
+            .bind(json(&category)?.as_str().ok_or(JobStoreError::Invalid)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        audit(&mut tx, id, None, event).await?;
+        tx.commit().await.map_err(db)
+    }
     /// Lists controller continuation work; claims remain transactionally checked.
     pub async fn continuations(&self) -> Result<Vec<JobId>> {
         let ids:Vec<String>=sqlx::query_scalar("SELECT id FROM certification_jobs WHERE state IN ('EVALUATING','SIGNING') ORDER BY created_at,id LIMIT 100").fetch_all(&self.pool).await.map_err(db)?;
@@ -414,7 +442,7 @@ impl JobRepository for PostgresJobRepository {
         };
         job.state.transition(next)?;
         sqlx::query("UPDATE certification_attempts SET state='LOST',failure='WORKER_LOSS',ended_at=$2 WHERE id=$1 AND state IN ('LEASED','RUNNING')").bind(a.id.to_string()).bind(now(&mut tx).await?).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("UPDATE certification_jobs SET state=$2 WHERE id=$1")
+        sqlx::query("UPDATE certification_jobs SET state=$2,failure=CASE WHEN $2='INCONCLUSIVE' THEN 'WORKER_LOSS' ELSE NULL END WHERE id=$1")
             .bind(id.to_string())
             .bind(json(&next)?.as_str().ok_or(JobStoreError::Invalid)?)
             .execute(&mut *tx)
@@ -443,7 +471,7 @@ impl JobRepository for PostgresJobRepository {
         .await?;
         job.state.transition(JobState::Evaluating)?;
         sqlx::query("UPDATE certification_attempts SET state='EVIDENCE_READY',evidence=$2,ended_at=$3 WHERE id=$1").bind(lease.attempt.to_string()).bind(json(reference)?).bind(now(&mut tx).await?).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("UPDATE certification_jobs SET state='EVALUATING' WHERE id=$1")
+        sqlx::query("UPDATE certification_jobs SET state='EVALUATING',evaluation_at=floor(extract(epoch FROM clock_timestamp())) WHERE id=$1")
             .bind(lease.job.to_string())
             .execute(&mut *tx)
             .await
@@ -461,11 +489,23 @@ impl JobRepository for PostgresJobRepository {
         &self,
         id: JobId,
         reference: &ArtifactReference,
-        eligible: bool,
+        decision: EvaluationDecision,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(db)?;
         let job = load(&mut tx, id).await?;
         if job.evaluation.as_ref() == Some(reference) {
+            let eligible: Option<bool> =
+                sqlx::query_scalar("SELECT eligible FROM certification_jobs WHERE id=$1")
+                    .bind(id.to_string())
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(db)?;
+            if eligible != Some(decision == EvaluationDecision::Eligible)
+                || (decision == EvaluationDecision::Inconclusive)
+                    != (job.state == JobState::Inconclusive)
+            {
+                return Err(JobStoreError::Conflict);
+            }
             tx.commit().await.map_err(db)?;
             return Ok(());
         }
@@ -473,7 +513,17 @@ impl JobRepository for PostgresJobRepository {
             return Err(JobStoreError::Precondition);
         }
         available(&mut tx, id, "", "EVALUATION", reference).await?;
-        sqlx::query("UPDATE certification_jobs SET evaluation=$2,eligible=$3,state=CASE WHEN $3 THEN state ELSE 'NOT_ELIGIBLE' END WHERE id=$1").bind(id.to_string()).bind(json(reference)?).bind(eligible).execute(&mut *tx).await.map_err(db)?;
+        let next = match decision {
+            EvaluationDecision::Eligible => "EVALUATING",
+            EvaluationDecision::NotEligible => "NOT_ELIGIBLE",
+            EvaluationDecision::Inconclusive => "INCONCLUSIVE",
+        };
+        let failure = match decision {
+            EvaluationDecision::Eligible => None,
+            EvaluationDecision::NotEligible => Some("POLICY_FAILURE"),
+            EvaluationDecision::Inconclusive => Some("INFRASTRUCTURE_FAILURE"),
+        };
+        sqlx::query("UPDATE certification_jobs SET evaluation=$2,eligible=$3,state=$4,failure=$5 WHERE id=$1").bind(id.to_string()).bind(json(reference)?).bind(decision==EvaluationDecision::Eligible).bind(next).bind(failure).execute(&mut *tx).await.map_err(db)?;
         audit(&mut tx, id, None, "EvaluationCompleted").await?;
         tx.commit().await.map_err(db)
     }
@@ -519,7 +569,7 @@ impl JobRepository for PostgresJobRepository {
         }
         available(&mut tx, id, "", "CERTIFICATE", &certificate.artifact).await?;
         job.state.transition(JobState::Completed)?;
-        sqlx::query("UPDATE certification_jobs SET certificate=$2,state='COMPLETED' WHERE id=$1")
+        sqlx::query("UPDATE certification_jobs SET certificate=$2,state='COMPLETED',failure=NULL WHERE id=$1")
             .bind(id.to_string())
             .bind(json(certificate)?)
             .execute(&mut *tx)

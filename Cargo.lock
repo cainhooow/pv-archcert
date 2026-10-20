@@ -142,6 +142,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "archcert-controller"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "archcert-application",
+ "archcert-certificate",
+ "archcert-control-plane",
+ "archcert-crypto",
+ "archcert-domain",
+ "archcert-evidence",
+ "archcert-policy",
+ "archcert-protocol",
+ "archcert-source",
+ "archcert-storage",
+ "clap",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "archcert-crypto"
 version = "0.1.0"
 dependencies = [

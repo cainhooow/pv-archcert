@@ -309,3 +309,20 @@ unknown-value rejection, artifact-versus-semantic identity, and future narrow
 signer constraints are recorded in [PROTOBUF_PROTOCOL_CONTRACTS.md](PROTOBUF_PROTOCOL_CONTRACTS.md).
 The focused Northgate completion report records final gates without rewriting
 earlier milestone evidence.
+
+## Ravenport durable control-plane additions
+
+archcert-storage owns SQLx/PostgreSQL protocol, pooling, explicit migrations and
+local immutable object filesystem access. Domain/application remain independent
+of persistence and wire dependencies. archcert-control-plane composes admission
+and reads without execution/signing. archcertd authenticates loopback bearer
+requests and maps HTTP DTOs to durable operations. archcert-controller is trusted
+issuance composition and may load the explicit development key after execution,
+durable eligibility and digest-bound preparation. archcert-worker receives only
+private process assignments; its graph excludes storage/signing. Neither worker
+nor target receives the controller environment. This local process topology trusts
+the controller OS identity and executable provisioning; it does not attest worker
+binaries or isolate a malicious same-UID authority process. See
+[Ravenport dependency review](RAVENPORT_DEPENDENCY_REVIEW.md) and
+[operations](RAVENPORT_OPERATIONS.md). No new cryptographic canonicalization,
+network signer/RPC, broker, production KMS or custom encryption is introduced.

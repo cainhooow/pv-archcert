@@ -251,7 +251,8 @@ async fn staging_and_signing_recovery_require_exact_durable_bindings() -> R {
     let repo = PostgresJobRepository::from_pool(pool.clone());
     assert_eq!(repo.get(id).await?.state, JobState::Evaluating);
     let evaluation = make_available(&repo, id, None, "EVALUATION").await?;
-    repo.record_evaluation(id, &evaluation, true).await?;
+    repo.record_evaluation(id, &evaluation, EvaluationDecision::Eligible)
+        .await?;
     let issuance = PreparedIssuance {
         certificate_sha256: digest_bytes(b"payload"),
         signing_key_id: "a".repeat(64),
@@ -268,7 +269,27 @@ async fn staging_and_signing_recovery_require_exact_durable_bindings() -> R {
         signature: "a".repeat(128),
         verified: true,
     };
-    let repo = PostgresJobRepository::from_pool(pool);
+    repo.note_failure(id, FailureCategory::SigningFailure)
+        .await?;
+    assert_eq!(
+        repo.get(id).await?.failure,
+        Some(FailureCategory::SigningFailure)
+    );
+    // Close every connection and build a new pool to prove durable reconnect behavior.
+    let schema: String = sqlx::query_scalar("SELECT current_schema()")
+        .fetch_one(&pool)
+        .await?;
+    let options = pool
+        .connect_options()
+        .as_ref()
+        .clone()
+        .options([("search_path", schema)]);
+    pool.close().await;
+    let new_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect_with(options)
+        .await?;
+    let repo = PostgresJobRepository::from_pool(new_pool);
     repo.complete(id, &cert).await?;
     repo.complete(id, &cert).await?;
     let job = repo.get(id).await?;
@@ -288,9 +309,35 @@ async fn negative_policy_never_retries_until_pass() -> R {
     let r = make_available(&repo, id, Some(a.lease.attempt), "EXECUTION").await?;
     repo.accept_evidence(&a.lease, &r).await?;
     let e = make_available(&repo, id, None, "EVALUATION").await?;
-    repo.record_evaluation(id, &e, false).await?;
+    repo.record_evaluation(id, &e, EvaluationDecision::NotEligible)
+        .await?;
     assert_eq!(repo.get(id).await?.state, JobState::NotEligible);
     assert!(repo.claim("retry", 30).await?.is_none());
     assert!(repo.recover(id, true).await.is_err());
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn inconclusive_evidence_is_terminal_and_cannot_be_reinterpreted() -> R {
+    let (repo, _) = database().await?;
+    let id = repo.create(request(&repo).await?).await?.id;
+    let a = repo.claim("uncertain", 30).await?.ok_or("no claim")?;
+    repo.start(&a.lease).await?;
+    let r = make_available(&repo, id, Some(a.lease.attempt), "EXECUTION").await?;
+    repo.accept_evidence(&a.lease, &r).await?;
+    let e = make_available(&repo, id, None, "EVALUATION").await?;
+    repo.record_evaluation(id, &e, EvaluationDecision::Inconclusive)
+        .await?;
+    let job = repo.get(id).await?;
+    assert_eq!(job.state, JobState::Inconclusive);
+    assert_eq!(job.failure, Some(FailureCategory::InfrastructureFailure));
+    assert!(job.evaluation_at.is_some());
+    assert!(
+        repo.record_evaluation(id, &e, EvaluationDecision::Eligible)
+            .await
+            .is_err()
+    );
+    assert!(repo.claim("retry", 30).await?.is_none());
     Ok(())
 }
