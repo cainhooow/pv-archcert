@@ -206,8 +206,38 @@ impl IroncrestWorkflow<'_> {
             return Err(JobStoreError::Precondition);
         }
         let decision = semantic_gate(request, Some(review));
-        let artifact=CanonicalArtifact::freeze(&serde_json::json!({"schema":1,"kind":"ARCHCERT_SEMANTIC_GATE","binding":request.binding(),
-            "request_sha256":request.artifact().digest(),"review_sha256":review.artifact().digest(),"decision":decision}),65536).map_err(|_|JobStoreError::Invalid)?;
+        let mut required_challenges = Vec::new();
+        if decision == SemanticGateDecision::Continue {
+            let mut repetitions = 3;
+            for proposal in &review
+                .response()
+                .ok_or(JobStoreError::Precondition)?
+                .proposed_challenges
+            {
+                if proposal.challenge_template_id != crate::challenges::IDEMPOTENCY_TEMPLATE
+                    || !(2..=8).contains(&proposal.parameters.repetitions)
+                {
+                    return Err(JobStoreError::Precondition);
+                }
+                repetitions = repetitions.max(proposal.parameters.repetitions);
+            }
+            let identity = serde_json::json!({
+                "registry_sha256":session.pin.challenge_registry_sha256,
+                "template_id":crate::challenges::IDEMPOTENCY_TEMPLATE,"version":"1.0.0",
+                "parameters":{"repetitions":repetitions}
+            });
+            required_challenges.push(serde_json::json!({
+                "identity":identity,
+                "sha256":digest_bytes(&canonical_bytes(&identity).map_err(|_|JobStoreError::Invalid)?)
+            }));
+        }
+        let artifact = CanonicalArtifact::freeze(&serde_json::json!({
+            "schema":2,"kind":"ARCHCERT_SEMANTIC_GATE","binding":request.binding(),
+            "algorithm":IRONCREST_GATE_ALGORITHM,
+            "authority_profile_sha256":session.pin.authority_profile_sha256,
+            "request_sha256":request.artifact().digest(),"review_sha256":review.artifact().digest(),
+            "decision":decision,"required_challenges":required_challenges
+        }),65536).map_err(|_|JobStoreError::Invalid)?;
         self.persist(
             request.binding().project,
             request.binding().job,

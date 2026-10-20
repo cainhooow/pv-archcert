@@ -39,3 +39,13 @@ containment at software boundaries; they do not prove a model cannot be influenc
 No semantic change may weaken Stoneward execution fencing, cleanup or isolation.
 Changes above that boundary do not requalify any broader platform. A change to its
 qualified mechanism requires relevant live validation and native requalification.
+
+The reviewed admission API now returns a non-deserializable application capability
+only after profile/request/accepted-review checks and immutable gate/plan publication.
+The PostgreSQL transaction rechecks the full session pin, all reviewed references,
+accepted source/baseline and the locked actor grant before atomically inserting the
+reserved job and its create-only evidence linkage. Six interrupted object-publication
+boundaries and concurrent/restarted admission are covered by real database tests.
+The gate artifact binds its algorithm, exact accepted review and required bounded
+challenge identities. Controller/issuance integration remains outstanding; these
+controls alone do not prove a complete veto-before-signing lifecycle.

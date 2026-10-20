@@ -98,6 +98,84 @@ impl PostgresJobRepository {
 }
 #[async_trait]
 impl IroncrestRepository for PostgresJobRepository {
+    async fn admit_reviewed(
+        &self,
+        admission: &ReviewedIroncrestAdmission,
+    ) -> Result<CertificationJob> {
+        let id = admission.id();
+        let i = admission.inputs();
+        i.validate()?;
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let session = load_session(&mut tx, i.project, id).await?;
+        if session.pin != *admission.pin() || !session.review_claimed {
+            return Err(JobStoreError::Precondition);
+        }
+        // Serialize revocation against admission under the same grant-row lock
+        // used by historical Ravenport. Recheck accepted target and baseline.
+        let allowed=sqlx::query("SELECT actor FROM repository_grants WHERE project=$1 AND repository=$2 AND actor=$3 FOR SHARE")
+            .bind(i.project.to_string()).bind(i.repository.as_str()).bind(i.actor.as_str())
+            .fetch_optional(&mut *tx).await.map_err(db)?;
+        if allowed.is_none() {
+            return Err(JobStoreError::Unauthorized);
+        }
+        source_exists(
+            &mut tx,
+            &session.pin,
+            &session.pin.submission,
+            &session.pin.source,
+        )
+        .await?;
+        if let Some(base) = &session.pin.baseline {
+            source_exists(&mut tx, &session.pin, &base.submission, &base.source).await?;
+        }
+        for (role, reference) in admission.evidence() {
+            if available_role(&session, *role)? != reference {
+                return Err(JobStoreError::Precondition);
+            }
+        }
+        let stored: Option<Value> =
+            sqlx::query_scalar("SELECT binding FROM ironcrest_admissions WHERE session=$1")
+                .bind(id.to_string())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db)?;
+        if let Some(stored) = stored {
+            if stored != json(admission)? {
+                return Err(JobStoreError::Conflict);
+            }
+            let job = load(&mut tx, id).await?;
+            if job.inputs != *i {
+                return Err(JobStoreError::Conflict);
+            }
+            tx.commit().await.map_err(db)?;
+            return Ok(job);
+        }
+        let occupied: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM certification_jobs WHERE id=$1)")
+                .bind(id.to_string())
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db)?;
+        if occupied {
+            return Err(JobStoreError::Conflict);
+        }
+        // The reserved identity is also the internal scoped idempotency key.
+        // Job creation and complete immutable linkage commit in one transaction.
+        sqlx::query("INSERT INTO certification_jobs(id,project,repository,actor,idempotency_key,inputs,state) VALUES ($1,$2,$3,$4,$1,$5,'QUEUED')")
+            .bind(id.to_string()).bind(i.project.to_string()).bind(i.repository.as_str())
+            .bind(i.actor.as_str()).bind(json(i)?).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO ironcrest_admissions(session,job,binding) VALUES ($1,$1,$2)")
+            .bind(id.to_string())
+            .bind(json(admission)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        audit(&mut tx, id, None, "IroncrestReviewedAdmission").await?;
+        audit(&mut tx, id, None, "JobCreated").await?;
+        let job = load(&mut tx, id).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(job)
+    }
     async fn open_session(&self, id: JobId, pin: &IroncrestSessionPin) -> Result<IroncrestSession> {
         pin.validate()?;
         let mut tx = self.pool.begin().await.map_err(db)?;

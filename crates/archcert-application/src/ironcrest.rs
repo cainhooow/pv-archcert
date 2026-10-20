@@ -12,6 +12,9 @@ use archcert_domain::{
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+mod admission;
+pub use admission::*;
+
 mod profile;
 mod workflow;
 pub use profile::*;
@@ -159,6 +162,14 @@ pub struct ReviewInvocation {
 /// Durable project-scoped journal port, independent of PostgreSQL and object adapters.
 #[async_trait]
 pub trait IroncrestRepository: Send + Sync {
+    /// Transactionally admit the reserved job with the exact validated immutable
+    /// source, authority profile, evidence chain and final execution plan. Exact
+    /// retries return the same job; mismatches and partial review reject.
+    async fn admit_reviewed(
+        &self,
+        admission: &ReviewedIroncrestAdmission,
+    ) -> Result<crate::jobs::CertificationJob, JobStoreError>;
+
     /// Authorize and create a reserved non-executing session, or return its exact replay.
     async fn open_session(
         &self,

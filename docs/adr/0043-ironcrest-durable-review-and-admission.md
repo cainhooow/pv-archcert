@@ -1,7 +1,8 @@
 # ADR 0043: Review before immutable execution admission
 
-Status: Partially implemented: session journal, publication and accepted-review
-restore. Execution admission and issuance integration remain outstanding.
+Status: Partially implemented: session journal, immutable publication, accepted-review
+restore and transactional reviewed admission. Controller and issuance integration
+remain outstanding.
 Date: October 20, 2026.
 Extends ADRs 0035–0037 and 0041–0042.
 
@@ -67,6 +68,30 @@ deserialization path that grants this capability. The profile currently supports
 the controlled settlement API only; it makes no general challenge support claim.
 Historical policy bundles and certificates retain their existing identities and
 semantics. This profile capability alone does not implement admission or issuance.
+
+## Implemented admission transaction
+
+`IroncrestWorkflow::freeze_admission` validates the separately versioned profile,
+exact session/request/accepted review and base inputs, preserves every mandatory
+step, resolves registered bounded challenges and publishes one final challenge
+plan before admission. The retained authority recipe must reconstruct exactly the
+new execution-plan digest. The schema-2 challenge-plan artifact binds the session
+pin, base/final plan digests, registry, request, review and gate. The schema-2 gate
+artifact binds its algorithm, profile, accepted review and exact required challenge
+identities (registry, template version and final bounded parameters). CONTINUE
+still grants no deterministic property; required challenge execution is a separate
+obligation before issuance. A failed, incomplete or blocking review cannot obtain
+the admission capability.
+
+Migration 0005 adds create-only `ironcrest_admissions`. Under the session row lock,
+admission compares the complete pin and all seven AVAILABLE reviewed role
+references, rechecks the grant under a shared row lock and accepted target/baseline,
+then inserts the reserved job ID, final inputs, complete evidence linkage and audit
+in one transaction. Exact concurrent/restarted calls return the same job; conflicts
+reject. Worker leases and historical job inputs are not repurposed. The capability
+has no deserialization constructor. These application/storage APIs still require
+controller and authenticated admission composition; they do not establish the
+complete certification lifecycle alone.
 
 ## Continuation and signing
 

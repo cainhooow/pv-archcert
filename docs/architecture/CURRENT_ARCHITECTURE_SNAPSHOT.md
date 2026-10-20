@@ -45,8 +45,19 @@ The application now provides a separately versioned `ironcrest-controlled-v1`
 authority profile capability. It pins mandatory local replay, denied external
 disclosure, policy/extractor/knowledge/challenge identities, limits, required
 idempotency replay and gate semantics. Session/request validation rejects weaker
-or foreign authority pins. This capability is not yet wired into certification;
+or foreign authority pins. This capability now validates reviewed admission;
 historical policy and certificate behavior remain unchanged.
+
+Migration 0005 now links a validated pre-admission session to its reserved
+certification job in one transaction. The application freezes registry-approved
+additive challenges and a reconstructible final authority execution plan first;
+all exact source, actor, policy, profile, baseline and evidence identities are
+rechecked before admission. Concurrent retries cannot create another job or
+replace an admitted plan. Versioned gate evidence includes its algorithm, accepted
+review and required challenge identities. Real PostgreSQL/private object tests
+cover six interrupted publication boundaries, exact admission/restart and replay
+rejection. Authenticated controller orchestration and issuance remain outstanding;
+these APIs do not establish full Ironcrest completion.
 
 Migration 0004 and the application IroncrestRepository port now add a separate
 project-scoped pre-admission journal. It checks repository grants and accepted
