@@ -32,3 +32,10 @@ quota coordination across hosts, durable audit and transactional databases remai
 outside this development store's guarantees. A disconnect after publication may
 leave an accepted submission that the client did not learn about; it never changes
 a published source into a rejection. Same-source replays have distinct submissions.
+
+Ravenport adds AcceptedSubmissionReader, a read-only private-root capability that
+cannot publish, receive or resolve. It shares the exact existing reload/rehash/
+scope checks but does not hold the exclusive receive lease. Published directories
+are immutable and appear atomically, so concurrent durable job admission can read
+accepted submissions while only writers serialize quarantine/publication. Missing
+or partially published submissions never become accepted observations.

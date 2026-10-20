@@ -164,11 +164,9 @@ impl ControlPlane {
     }
     /// Loads independently checked accepted source under a known authority reference.
     pub fn source(&self, inputs: &JobInputs) -> Result<SourceSnapshot, JobStoreError> {
-        let store = archcert_gateway::DevelopmentSubmissionStore::open(
-            &self.configuration.source_store,
-            32,
-        )
-        .map_err(|_| JobStoreError::Unavailable)?;
+        let store =
+            archcert_gateway::AcceptedSubmissionReader::open(&self.configuration.source_store)
+                .map_err(|_| JobStoreError::Unavailable)?;
         let accepted = store
             .load(&inputs.submission)
             .map_err(|_| JobStoreError::Invalid)?;
@@ -202,11 +200,9 @@ impl ControlPlane {
             return Err(JobStoreError::Unauthorized);
         }
         let accepted = {
-            let store = archcert_gateway::DevelopmentSubmissionStore::open(
-                &self.configuration.source_store,
-                32,
-            )
-            .map_err(|_| JobStoreError::Unavailable)?;
+            let store =
+                archcert_gateway::AcceptedSubmissionReader::open(&self.configuration.source_store)
+                    .map_err(|_| JobStoreError::Unavailable)?;
             store
                 .load(&submission)
                 .map_err(|_| JobStoreError::Invalid)?

@@ -281,40 +281,64 @@ impl DevelopmentSubmissionStore {
     /// Retrieves one exact accepted submission, rehashing bytes and comparing the
     /// full scope/commit/tree/digest. Rejected attempts cannot create source state.
     pub fn load(&self, id: &SourceSubmissionId) -> Result<StoredSubmission, IngressError> {
-        let fd: OwnedFd = openat(
-            &self.root,
-            id.to_string(),
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-        )
-        .map_err(unavailable)?;
-        let root = File::from(fd);
-        let mut file = regular(&root, "evidence.json", OFlags::RDONLY)?;
-        if file.metadata().map_err(unavailable)?.len() > 65536 {
-            return Err(IngressError::Unavailable);
-        }
-        let mut bytes = Vec::new();
-        (&mut file)
-            .take(65537)
-            .read_to_end(&mut bytes)
-            .map_err(unavailable)?;
-        let evidence: IngressEvidence = serde_json::from_slice(&bytes).map_err(unavailable)?;
-        if &evidence.submission != id
-            || !["ACCEPTED", "INCOMPLETE_EXTERNAL_SOURCE"].contains(&evidence.status.as_str())
-            || evidence.accepted_at.is_none()
-        {
-            return Err(IngressError::Rejected);
-        }
-        let file = regular(&root, "snapshot.bin", OFlags::RDONLY)?;
-        if file.metadata().map_err(unavailable)?.len() > 72 * 1024 * 1024 {
-            return Err(IngressError::Unavailable);
-        }
-        let snapshot = read_snapshot(file, SourceLimits::default()).map_err(unavailable)?;
-        if !consistent(&snapshot, &evidence) {
-            return Err(IngressError::Rejected);
-        }
-        Ok(StoredSubmission { snapshot, evidence })
+        load_submission(&self.root, id)
     }
+}
+
+/// Read-only accepted-source capability. Readers cannot receive, resolve or publish.
+/// Immutable published submissions may be safely read concurrently with admission.
+pub struct AcceptedSubmissionReader {
+    root: File,
+}
+impl AcceptedSubmissionReader {
+    /// Opens only the private accepted-source root, without acquiring the receive lease.
+    pub fn open(path: &Path) -> Result<Self, IngressError> {
+        Ok(Self {
+            root: private_root(path)?,
+        })
+    }
+    /// Reloads/rehashes exact accepted bytes and checks full ingress/source binding.
+    pub fn load(&self, id: &SourceSubmissionId) -> Result<StoredSubmission, IngressError> {
+        load_submission(&self.root, id)
+    }
+}
+fn load_submission(
+    authority_root: &File,
+    id: &SourceSubmissionId,
+) -> Result<StoredSubmission, IngressError> {
+    let fd: OwnedFd = openat(
+        authority_root,
+        id.to_string(),
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(unavailable)?;
+    let root = File::from(fd);
+    let mut file = regular(&root, "evidence.json", OFlags::RDONLY)?;
+    if file.metadata().map_err(unavailable)?.len() > 65536 {
+        return Err(IngressError::Unavailable);
+    }
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(65537)
+        .read_to_end(&mut bytes)
+        .map_err(unavailable)?;
+    let evidence: IngressEvidence = serde_json::from_slice(&bytes).map_err(unavailable)?;
+    if &evidence.submission != id
+        || !["ACCEPTED", "INCOMPLETE_EXTERNAL_SOURCE"].contains(&evidence.status.as_str())
+        || evidence.accepted_at.is_none()
+    {
+        return Err(IngressError::Rejected);
+    }
+    let file = regular(&root, "snapshot.bin", OFlags::RDONLY)?;
+    if file.metadata().map_err(unavailable)?.len() > 72 * 1024 * 1024 {
+        return Err(IngressError::Unavailable);
+    }
+    let snapshot = read_snapshot(file, SourceLimits::default()).map_err(unavailable)?;
+    if !consistent(&snapshot, &evidence) {
+        return Err(IngressError::Rejected);
+    }
+    Ok(StoredSubmission { snapshot, evidence })
 }
 
 impl crate::SubmissionStore for DevelopmentSubmissionStore {
@@ -343,6 +367,9 @@ mod tests {
         fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700))?;
         let path = root.path().canonicalize()?;
         let store = DevelopmentSubmissionStore::open(&path, 1)?;
+        let reader = AcceptedSubmissionReader::open(&path)?;
+        assert!(reader.load(&SourceSubmissionId::new()).is_err());
+        assert!(AcceptedSubmissionReader::open(&path).is_ok());
         assert!(DevelopmentSubmissionStore::open(&path, 1).is_err());
         let quarantine = store.quarantine()?;
         assert!(store.quarantine().is_err());

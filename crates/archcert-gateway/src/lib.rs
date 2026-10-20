@@ -10,7 +10,7 @@ pub use resolution::{
     LfsGrant, ResolutionConfiguration, ResolutionEvidence, ResolutionReference, SubmoduleGrant,
     read_resolution_configuration, resolve_submission,
 };
-pub use store::{DevelopmentSubmissionStore, StoredSubmission};
+pub use store::{AcceptedSubmissionReader, DevelopmentSubmissionStore, StoredSubmission};
 
 use archcert_application::source::{GitGateway, SourceSubmission, ingest_source};
 use archcert_domain::{
