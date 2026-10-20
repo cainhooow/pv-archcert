@@ -161,3 +161,10 @@ future contract families without implementing durable jobs, persistence, workers
 recovery, or production RPC. See [ADR 0034](../adr/0034-protobuf-internal-protocol-contracts.md)
 and [protocol architecture](PROTOBUF_PROTOCOL_CONTRACTS.md). Earlier reports retain
 their historical results.
+
+## Ravenport implementation in progress
+
+The domain now defines pinned job inputs, explicit job/attempt states, bounded
+attempt budgets and immutable job/attempt/fencing identities. Application owns
+repository/read-model contracts; no database, worker scheduler or enabled HTTP
+submission is implied by these types. ADRs 0035–0037 govern the implementation.

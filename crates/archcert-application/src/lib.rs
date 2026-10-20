@@ -6,6 +6,7 @@ use thiserror::Error;
 pub mod configuration;
 pub mod execution;
 pub mod ingress;
+pub mod jobs;
 pub mod materialization;
 pub mod source;
 pub mod validation;
