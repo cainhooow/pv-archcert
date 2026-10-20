@@ -1,0 +1,19 @@
+# DEVELOPMENT ONLY. Separate from the rootless target execution runtime/network.
+services:
+  postgres:
+    image: postgres@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    environment:
+      POSTGRES_DB: archcert
+      # Deliberate loopback-only development simplification; never deploy remotely.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - ravenport-postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d archcert"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+volumes:
+  ravenport-postgres:

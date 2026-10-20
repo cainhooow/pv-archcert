@@ -7,7 +7,7 @@ use std::{
 
 fn allowed_inward_dependency(package: &str, dependency: &str) -> bool {
     if ["archcert-domain", "archcert-application"].contains(&package)
-        && is_protobuf_dependency(dependency)
+        && (is_protobuf_dependency(dependency) || is_persistence_dependency(dependency))
     {
         return false;
     }
@@ -103,6 +103,18 @@ fn allowed_inward_dependency(package: &str, dependency: &str) -> bool {
     }
 }
 
+fn is_persistence_dependency(name: &str) -> bool {
+    name == "sqlx"
+        || name.starts_with("sqlx-")
+        || name == "postgres"
+        || name == "tokio-postgres"
+        || name == "diesel"
+        || name.starts_with("aws-sdk-s3")
+        || name == "rust-s3"
+        || name == "object_store"
+        || name == "axum"
+        || name == "archcert-storage"
+}
 fn is_protobuf_dependency(name: &str) -> bool {
     name == "prost"
         || name.starts_with("prost-")
@@ -154,7 +166,7 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
                 continue;
             }
             assert!(
-                !is_protobuf_dependency(&name),
+                !(is_protobuf_dependency(&name) || is_persistence_dependency(&name)),
                 "Protobuf enters inward graph {root}: {name}"
             );
             pending.extend(graph.get(&name).into_iter().flatten().cloned());
@@ -220,6 +232,11 @@ fn guard_rejects_forbidden_dependencies_including_renamed_package_names() {
         ("archcert-domain", "archcert-application"),
         ("archcert-domain", "archcert-source"),
         ("archcert-domain", "axum"),
+        ("archcert-domain", "sqlx-postgres"),
+        ("archcert-domain", "postgres"),
+        ("archcert-domain", "aws-sdk-s3"),
+        ("archcert-application", "sqlx"),
+        ("archcert-application", "archcert-storage"),
         ("archcert-domain", "tokio"),
         ("archcert-application", "archcert-protocol"),
         ("archcert-domain", "archcert-proto"),

@@ -166,5 +166,8 @@ their historical results.
 
 The domain now defines pinned job inputs, explicit job/attempt states, bounded
 attempt budgets and immutable job/attempt/fencing identities. Application owns
-repository/read-model contracts; no database, worker scheduler or enabled HTTP
-submission is implied by these types. ADRs 0035–0037 govern the implementation.
+repository/read-model contracts. archcert-storage implements PostgreSQL admission,
+scoped idempotency, row-locked claims, fenced leases, immutable artifact metadata,
+issuance bindings and append-only audit through explicit SQLx migrations. Real
+PostgreSQL tests cover concurrency and recovery. HTTP submission remains disabled;
+no worker scheduler is enabled yet. ADRs 0035–0037 govern the implementation.
