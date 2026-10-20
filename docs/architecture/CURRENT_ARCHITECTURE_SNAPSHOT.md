@@ -1,4 +1,11 @@
-# Current architecture snapshot — M5.2 Stoneward
+# Current architecture snapshot — Stoneward with Ironcrest work in progress
+
+Ironcrest architecture is defined in ADRs 0041–0042 and
+threat-model/SEMANTIC_REVIEW.md. The design adds immutable knowledge, bounded
+semantic veto and authority challenge selection above the existing trust core.
+At this design checkpoint these components are not integrated or qualified;
+no Ironcrest completion or semantic issuance guarantee is claimed. Historical
+policy/certificate semantics and the exact Stoneward qualification remain intact.
 
 ArchCert accepts authenticated SSH Git pushes with bounded SHA-1/SHA-256 packs
 or explicit local loose objects, seals an independently hashed
