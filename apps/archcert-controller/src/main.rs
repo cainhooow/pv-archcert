@@ -287,6 +287,15 @@ fn observations(
     }
     Ok(observations)
 }
+fn issuance_failure_category(error: &archcert_certificate::CertificateError) -> FailureCategory {
+    match error {
+        archcert_certificate::CertificateError::Signing(_)
+        | archcert_certificate::CertificateError::SigningKeyMismatch => {
+            FailureCategory::SigningFailure
+        }
+        _ => FailureCategory::VerificationFailure,
+    }
+}
 async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
     let mut job = state.repository.get(id).await?;
     ensure!(
@@ -432,7 +441,7 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
         Err(e) => {
             state
                 .repository
-                .note_failure(id, FailureCategory::VerificationFailure)
+                .note_failure(id, issuance_failure_category(&e))
                 .await?;
             return Err(e.into());
         }
@@ -454,4 +463,26 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
     };
     state.repository.complete(id, &certificate).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn signer_errors_and_signature_rejection_have_distinct_audit_categories() {
+        assert_eq!(
+            issuance_failure_category(&archcert_certificate::CertificateError::Signing(
+                archcert_crypto::SigningFailure::SigningFailed
+            )),
+            FailureCategory::SigningFailure
+        );
+        assert_eq!(
+            issuance_failure_category(&archcert_certificate::CertificateError::SigningKeyMismatch),
+            FailureCategory::SigningFailure
+        );
+        assert_eq!(
+            issuance_failure_category(&archcert_certificate::CertificateError::VerificationFailed),
+            FailureCategory::VerificationFailure
+        );
+    }
 }
