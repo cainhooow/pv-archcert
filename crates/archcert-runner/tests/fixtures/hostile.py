@@ -1,6 +1,7 @@
 """ArchCert-owned hostile code. Execute ONLY through the isolated runner."""
 import errno
 import json
+import ipaddress
 import os
 from pathlib import Path
 import signal
@@ -155,8 +156,33 @@ elif mode == "network":
             assert error.reason.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH), repr(error)
         else:
             raise AssertionError("HTTP escape: " + url)
+    # Exercise the actual runtime-provided resolver addresses, including a
+    # possible loopback stub. A failing .invalid lookup alone is insufficient.
+    resolvers = [line.split()[1] for line in Path("/etc/resolv.conf").read_text().splitlines()
+                 if line.split() and line.split()[0] == "nameserver"]
+    assert len(resolvers) <= 8, resolvers
+    query = b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00" + b"\x0earchcert-denied\x07invalid\x00\x00\x01\x00\x01"
+    for resolver in resolvers:
+        address = ipaddress.ip_address(resolver)
+        family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+        for kind in (socket.SOCK_STREAM, socket.SOCK_DGRAM):
+            with socket.socket(family, kind) as connection:
+                connection.settimeout(0.25)
+                try:
+                    connection.connect((resolver, 53))
+                    connection.sendall(query if kind == socket.SOCK_DGRAM else len(query).to_bytes(2, "big") + query)
+                    reply = connection.recv(512)
+                except OSError as error:
+                    allowed = (errno.ENETUNREACH, errno.EHOSTUNREACH)
+                    if address.is_loopback:
+                        allowed += (errno.ECONNREFUSED, errno.ECONNRESET, errno.EAGAIN, errno.ETIMEDOUT)
+                        assert isinstance(error, TimeoutError) or error.errno in allowed, repr(error)
+                    else:
+                        assert error.errno in allowed, repr(error)
+                else:
+                    raise AssertionError("resolver reachable: " + resolver + ":" + repr(reply))
     assert set(os.listdir("/sys/class/net")) == {"lo"}
-    print("network-blocked")
+    print("network-blocked", json.dumps({"resolvers": resolvers, "resolver_tcp_udp": "denied"}))
 elif mode == "ipv6":
     try:
         probe = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
