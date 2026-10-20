@@ -105,7 +105,7 @@ fn execute(
         result.events.last(),
         Some(&ExecutionEvent::SandboxDestroyed)
     );
-    // Independent daemon query proves no job-labelled child or stopped container
+    // Independent daemon query proves no job-labeled child or stopped container
     // survives cleanup. Do not infer child death from stdout.
     let config = tempfile::tempdir()?;
     let listing = Command::new(&cli)

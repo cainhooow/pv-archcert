@@ -319,7 +319,7 @@ Shared-kernel/container/runtime/client/image supply-chain compromise, dependency
 parser fuzzing gaps, same-UID/root/local-filesystem assumptions, side channels and
 operator authority mistakes. Runtime identity reports are not binary attestation.
 Unsigned process-local evidence can be replaced outside this execution boundary.
-Worker crash/abort, daemon outage or late operations can leave labelled orphans;
+Worker crash/abort, daemon outage or late operations can leave labeled orphans;
 mandatory best-effort/explicit cleanup is not persistent reconciliation or secure
 erasure. Native production Linux configuration has not been exercised. Timing-sensitive
 live startup assertions require a sufficiently responsive dedicated development

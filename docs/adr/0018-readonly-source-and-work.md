@@ -12,7 +12,7 @@ no source store or cleanup parent in this capability.
 An authority-generated tar contains only source/, expected directories, files
 and uninterpreted links. Source goes to an unstarted preparation container from
 a locally provisioned digest-pinned authority image. The controller commits its
-source layer to a random labelled job image. It then creates the target with a
+source layer to a random labeled job image. It then creates the target with a
 read-only root filesystem. Before starting it, the controller copies /source out
 as a bounded archive, parses without host extraction, reconstructs canonical
 schema 1 and directory/mode sets, and checks the accepted source hash. Host source
@@ -36,7 +36,7 @@ container infrastructure, not mounts of host /etc, /tmp, HOME or source storage.
 
 Both containers and the job image carry random authority job/workspace labels.
 Cleanup force-removes containers and removes the job image; source cleanup remains
-with the caller. Lost replies and crashes can leave labelled orphans; no broad
+with the caller. Lost replies and crashes can leave labeled orphans; no broad
 runtime prune or deletion of other jobs is allowed. Persistent reconciliation,
 secure media erasure and image-cache storage quotas are deferred. Job image IDs
 are immutable local config/content identities; unlike the approved base image,

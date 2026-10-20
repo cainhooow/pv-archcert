@@ -75,7 +75,7 @@ probe output and test workspaces reside under ignored `target/`.
   sets, budgets and canonical source identity after the previous handoff.
 - No diagnostic workspace path is used for OCI mounting or transfer. No source
   descriptor is inherited by target code. No host bind mounts exist.
-- Source is copied into a stopped preparation container, committed to a labelled
+- Source is copied into a stopped preparation container, committed to a labeled
   job image, reconstructed from the actual stopped target /source view and checked
   against accepted SHA-256 before any target process starts.
 - Target runs as fixed UID:GID 10001:10001 with read-only root/source and separate
@@ -306,7 +306,7 @@ production Linux runner identities must have no authority secrets. Tests on this
 VM do not replace independent review/fuzzing or production deployment validation.
 
 Worker crash/abort, power loss, runtime outage or outstanding daemon operations
-can leave labelled containers/images. Names/labels support future reconciliation,
+can leave labeled containers/images. Names/labels support future reconciliation,
 but persistent orphan recovery and independent timeout supervision are absent.
 Global job admission, image-cache/preparation storage quotas, I/O throttling,
 durable authenticated audit/evidence storage and secure media erasure are absent.

@@ -165,11 +165,13 @@ The original bootstrap adapter still reports UNAVAILABLE. See [ADRs 0019–0021]
 [current architecture](docs/architecture/CURRENT_ARCHITECTURE_SNAPSHOT.md),
 [TCB/dependency review](docs/architecture/TCB_AND_DEPENDENCIES.md),
 [Milestone 3.5 report](docs/MILESTONE_3_5_REPORT.md) and
-[native Linux qualification plan](docs/runner/LINUX_QUALIFICATION.md).
+[native Linux qualification results](docs/qualification/NATIVE_LINUX_RUNNER.md).
 
 Live isolation gates are opt-in via `./scripts/test-live-oci`; they are not run
-in standard CI. Native Linux deployment remains NOT YET QUALIFIED. Production
-deployment qualification remains deferred. Northgate
+in standard CI. Stoneward qualifies the exact Ubuntu 26.04.1 / kernel 7.0.0-31 /
+KVM / rootless Docker 29.1.3 execution profile documented above. Other environments
+remain unqualified; production IAM, storage encryption and key management remain
+deferred. Northgate
 adds SSH Git transport; development certificates/signatures are implemented in M4B below.
 
 

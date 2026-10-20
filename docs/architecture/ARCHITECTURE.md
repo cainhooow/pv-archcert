@@ -126,7 +126,7 @@ SandboxRunner port consumes only RunnerInput and selected authority policy;
 domain/application. The synchronous port belongs on a dedicated execution worker.
 
 Source export follows held descriptors and rehashes actual bytes, never reopening
-diagnostic paths. Stopped preparation transfers accepted source into a labelled
+diagnostic paths. Stopped preparation transfers accepted source into a labeled
 job image; stopped target reconstruction verifies the actual /source view. Target
 then runs as UID:GID 10001:10001 on a read-only root, with bounded private work/
 output/tmp/HOME, no host mounts, no external network, no capabilities and no-new-

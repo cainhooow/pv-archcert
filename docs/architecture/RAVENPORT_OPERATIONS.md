@@ -137,7 +137,7 @@ revocation tombstones and must not be reset/deleted to unblock recovery. Attempt
 workspaces are UUID subdirectories beneath the authority workspace root. Cleanup
 is descriptor-relative, bounded and does not follow source symlinks. Admission
 requires at least 1 GiB available space and 1024 free inodes on the gate/workspace
-filesystem; inventory is bounded at 256 owned-labelled objects. Capacity failure
+filesystem; inventory is bounded at 256 objects with the owner label. Capacity failure
 blocks work while allowing inspection/cleanup. This is not a storage scheduler or
 a reservation against other host users; separate filesystem layouts need separate
 capacity monitoring. The native qualification layout uses one local ext4 mount.

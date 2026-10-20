@@ -88,7 +88,7 @@ impl DockerRuntime {
             .ok_or(ExecutionError::RuntimeFailure)?;
         Ok(object(kind, id, first))
     }
-    /// Lists only owner-labelled objects on a validated rootless daemon, with bounded count.
+    /// Lists only objects with the owner label on a validated rootless daemon, with bounded count.
     /// Unknown/legacy/malformed ownership is retained for operator inspection.
     pub fn inventory(&self) -> Result<Vec<RuntimeObject>, ExecutionError> {
         self.preflight()?;

@@ -170,7 +170,7 @@ No undocumented Python orchestration is needed. M3 historical raw evidence remai
 BOTTLE_DRY_RUN.json; the M3.5 command/result is retained in
 [BOTTLE_DRY_RUN_M3_5.json](BOTTLE_DRY_RUN_M3_5.json) and the M3.5 report.
 
-Inspect only authority job-labelled objects after execution:
+Inspect only authority job-labeled objects after execution:
 
 ```bash
 /usr/bin/docker --host unix:///run/user/1000/docker.sock container ls --all \
@@ -180,5 +180,7 @@ Inspect only authority job-labelled objects after execution:
 ```
 
 Require no remaining job objects and an empty workspace root. Cleanup failure is
-explicit; worker crashes/runtime outages still need future durable reconciliation.
+explicit. Standalone CLI crashes lack durable attempt authority and are retained
+as unknown by durable reconciliation. Use the Stoneward durable controller path
+for fenced restart/recovery; see the native qualification results.
 Do not prune unrelated runtime objects. No secure media-erasure claim is made.

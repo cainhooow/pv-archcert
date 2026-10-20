@@ -292,7 +292,7 @@ explicit workspace/client/endpoint and either the operator authority commands or
 Bottle's separate project request. It records reports directly; no observation
 JSON is manually invented to make the real passing/failing cases succeed. The
 unavailable-runtime case deliberately substitutes only the trusted client path.
-Independent labelled container/image queries after the tests found no leftovers;
+Independent labeled container/image queries after the tests found no leftovers;
 temporary source roots were empty. The dedicated VM was stopped again.
 
 ## RESULTS

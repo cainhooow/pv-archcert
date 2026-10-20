@@ -34,7 +34,7 @@ message broker is required. Workers and controllers poll PostgreSQL-backed ports
 
 Fencing ensures only one attempt's result is authoritative. An expired isolated
 process might physically continue running; a database lease alone cannot stop a
-partitioned target. Recovery must confirm/clean attempt-labelled runtime resources
+partitioned target. Recovery must confirm/clean attempt-labeled runtime resources
 before dispatching another target where exclusive physical execution is required.
 No stale worker result can advance evaluation or signing. Attempt IDs bind all
 stored result metadata. Worker authentication/capability delivery remains an

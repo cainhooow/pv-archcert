@@ -96,7 +96,7 @@ Project configuration cannot select signer/key/algorithm/authority or weaken pol
 No AI participates in issuance. Ravenport now implements authenticated durable
 HTTP job admission/status and PostgreSQL metadata. No web UI, release permit, artifact certification,
 waiver, policy inheritance, production KMS/HSM/PKCS#11, revocation or transparency
-service is added. Native Linux remains NOT YET QUALIFIED.
+service is added. Only the exact Stoneward native profile is qualified; see qualification/NATIVE_LINUX_RUNNER.md.
 
 See ADRs 0025–0027, MILESTONE_4B_REPORT.md, the certificate/signing threat model,
 TCB_AND_DEPENDENCIES.md and CRYPTO_DEPENDENCY_REVIEW.md.
@@ -202,10 +202,10 @@ preserves prior attempts and requires confirmed runtime cleanup after target sta
 See RAVENPORT_OPERATIONS.md for the explicit supervisor/run-once deployment and
 its local development role/encryption/cleanup limitations.
 
-## Stoneward qualification in progress
+## Stoneward native execution qualification
 
 The pre-change capability matrix remains in the intentionally untracked M5.2
-baseline working record. Native Linux remains NOT YET QUALIFIED; authoritative
+baseline working record. The exact Ubuntu 26.04.1/KVM/rootless profile is qualified; authoritative
 status and support limits are in qualification/NATIVE_LINUX_RUNNER.md. Worker
 `doctor` reports runtime prerequisites without accepting an execution assignment
 or gaining control-plane credentials. Runtime evidence now retains the explicitly
@@ -221,7 +221,7 @@ bound daemon identity and exact ownership labels. Busy workers, unknown ownershi
 late-create uncertainty and cleanup failures block retry. Accepted evidence closes
 execution authority; continuation reconciles cleanup before policy/signing without
 rerunning targets. The precise single-host protocol is in ADR 0039. Native OCI and
-PostgreSQL observations exist, but operational qualification is still in progress.
+PostgreSQL, recovery/outage, offline verification and final residue-cleanup demonstrations passed on the exact documented profile.
 
 Stoneward preserves certification semantics while adding single-host durable
 execution fencing, ownership-scoped runtime reconciliation, separate cleanup

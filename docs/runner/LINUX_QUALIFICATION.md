@@ -1,7 +1,9 @@
 # Native Linux rootless runner qualification
 
-Status: **NOT YET QUALIFIED**. M3 and M3.5 development observations use a macOS
-controller and Colima Linux VM. A Linux guest is not native deployment qualification.
+Status: the exact Stoneward profile is **QUALIFIED** in
+[the authoritative results](../qualification/NATIVE_LINUX_RUNNER.md). M3/M3.5
+macOS-controller/Colima observations remain development evidence. A directly
+deployed Linux controller/worker in the documented KVM guest was tested separately.
 Run this checklist on the actual dedicated Linux controller/runner configuration;
 retain commands, versions, raw bounded evidence and deviations with the report.
 
@@ -37,10 +39,11 @@ retain commands, versions, raw bounded evidence and deviations with the report.
 - [ ] Run every default gate and `./scripts/check-architecture`, then run all 18
       opt-in `./scripts/test-live-oci` tests using explicit endpoint/pinned image.
       No ignored test counts as exercised. Capture runtime identity with a CLI run.
-- [ ] Independently query job-labelled containers/images after success, nonzero
+- [ ] Independently query job-labeled containers/images after success, nonzero
       exits and injected failures; require none remain. Check source workspace
       deletion and unchanged accepted bytes. Exercise disconnected-daemon failure
-      reporting. Document crash/orphan recovery as unimplemented, never successful.
+      reporting. Run exact-attempt fenced orphan/image cleanup, stale worker replay,
+      cleanup failure/retry, reconciliation crash and dependency restart regressions.
 - [ ] Execute the documented Bottle request on the same native Linux deployment,
       recording exact commit/tree/source digest and both cleanup outcomes.
 - [ ] Review all results/deviations. Only then update status for that exact host/

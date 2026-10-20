@@ -1,13 +1,13 @@
 # ADR 0038: Native Linux qualification profile and runtime observations
 
-Status: Accepted qualification scope; native qualification pending.
+Status: Accepted; exact native profile qualified in NATIVE_LINUX_RUNNER.md.
 Date: October 20, 2026.
 
 ## Context
 
 Ravenport demonstrated durable execution under macOS controlling rootless Docker
-in Colima. Runtime configuration checks and a Linux guest do not demonstrate
-native service, filesystem, namespace, resource or recovery behavior.
+in Colima. Runtime configuration checks and a Colima guest driven from macOS do not
+demonstrate native controller/service, filesystem, namespace or recovery behavior.
 
 ## Decision
 

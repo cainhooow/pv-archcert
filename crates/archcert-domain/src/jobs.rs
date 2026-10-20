@@ -248,7 +248,7 @@ pub enum FailureCategory {
     SigningFailure,
     /// Cryptographic verification failed.
     VerificationFailure,
-    /// Authorized operator cancelled work.
+    /// Authorized operator canceled work.
     OperatorCancellation,
 }
 
