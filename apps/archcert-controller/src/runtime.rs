@@ -193,7 +193,19 @@ pub async fn all(state: &ControlPlane, args: &ReconcileArgs) -> Result<bool> {
                         && view.state == JobState::Running
                         && view.attempts.last().is_some_and(|a| a.id == attempt.id)
                     {
-                        state.repository.recover(id, attempt.id).await?;
+                        if let Some(reference) =
+                            state.repository.available_execution(id, attempt.id).await?
+                        {
+                            let bytes =
+                                state.artifacts.get(view.inputs.project, &reference).await?;
+                            decode_result(&bytes)?.validate(id, attempt.id, &view.inputs)?;
+                            state
+                                .repository
+                                .recover_evidence(id, attempt.id, &reference)
+                                .await?;
+                        } else {
+                            state.repository.recover(id, attempt.id).await?;
+                        }
                     }
                 }
                 Err(e)

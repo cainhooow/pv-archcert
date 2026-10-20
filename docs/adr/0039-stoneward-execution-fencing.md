@@ -85,3 +85,11 @@ must never override no-duplicate execution. Cleanup retries do not change target
 verdicts. Native tests must demonstrate stale-step rejection, live-lock blocking,
 actual worker SIGKILL, exact ownership checks, cleanup failure/retry and immutable
 attempt history before qualification can be claimed.
+
+Committed execution artifacts discovered between upload and evidence acceptance
+are rehashed and validated against the exact job/attempt/pinned inputs. After
+fenced cleanup, the controller adopts that AVAILABLE evidence transactionally
+without reviving the lease or running targets again. Missing/corrupt committed
+objects block continuation. Staging metadata alone is not accepted evidence.
+The explicit recovery command requires the expected attempt ID; a caller's
+cleanup assertion grants no authority.

@@ -462,6 +462,12 @@ impl JobRepository for PostgresJobRepository {
         {
             return Err(JobStoreError::Precondition);
         }
+        let committed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM artifacts WHERE job=$1 AND attempt=$2 AND kind='EXECUTION' AND state='AVAILABLE')")
+            .bind(id.to_string()).bind(expected.to_string()).fetch_one(&mut *tx).await.map_err(db)?;
+        if committed {
+            // Committed evidence must be validated/adopted, never discarded for a rerun.
+            return Err(JobStoreError::Precondition);
+        }
         let next = if job.attempts.len() < usize::from(job.inputs.maximum_attempts) {
             JobState::Queued
         } else {

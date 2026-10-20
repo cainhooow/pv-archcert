@@ -469,3 +469,72 @@ async fn runtime_cleanup_requires_exact_binding_revocation_and_durable_success()
     assert!(events.iter().any(|e| e == "CleanupSucceeded"));
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn committed_execution_is_adopted_only_after_fenced_cleanup() -> R {
+    let (repo, pool) = database().await?;
+    let id = repo.create(request(&repo).await?).await?.id;
+    let a = repo.claim("publisher", 5).await?.ok_or("missing claim")?;
+    repo.start(&a.lease).await?;
+    let binding = RuntimeBinding {
+        endpoint: "unix:///dedicated.sock".into(),
+        daemon_id: "native".into(),
+        gate_root: "/authority/gates".into(),
+    };
+    repo.bind_runtime(&a.lease, &binding).await?;
+    let r = make_available(&repo, id, Some(a.lease.attempt), "EXECUTION").await?;
+    assert_eq!(
+        repo.available_execution(id, a.lease.attempt).await?,
+        Some(r.clone())
+    );
+    assert!(
+        repo.available_execution(id, AttemptId::new())
+            .await?
+            .is_none()
+    );
+    assert!(
+        repo.recover_evidence(id, a.lease.attempt, &r)
+            .await
+            .is_err()
+    );
+    sqlx::query("UPDATE certification_attempts SET lease_until=leased_at+1 WHERE id=$1")
+        .bind(a.lease.attempt.to_string())
+        .execute(&pool)
+        .await?;
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    repo.fence_runtime(id, a.lease.attempt, &binding).await?;
+    assert!(
+        repo.recover_evidence(id, a.lease.attempt, &r)
+            .await
+            .is_err()
+    );
+    repo.finish_cleanup(
+        id,
+        a.lease.attempt,
+        &binding,
+        RuntimeCleanupState::Succeeded,
+    )
+    .await?;
+    assert!(repo.recover(id, a.lease.attempt).await.is_err());
+    assert!(
+        repo.recover_evidence(id, AttemptId::new(), &r)
+            .await
+            .is_err()
+    );
+    let mut wrong = r.clone();
+    wrong.size += 1;
+    assert!(
+        repo.recover_evidence(id, a.lease.attempt, &wrong)
+            .await
+            .is_err()
+    );
+    repo.recover_evidence(id, a.lease.attempt, &r).await?;
+    let job = repo.get(id).await?;
+    assert_eq!(job.state, JobState::Evaluating);
+    assert_eq!(job.attempts.len(), 1);
+    assert_eq!(job.attempts[0].state, AttemptState::EvidenceReady);
+    assert!(repo.claim("replacement", 5).await?.is_none());
+    assert!(repo.renew(&a.lease, 5).await.is_err());
+    Ok(())
+}

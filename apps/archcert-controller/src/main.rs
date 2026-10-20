@@ -43,11 +43,11 @@ enum Command {
     Reconcile(runtime::ReconcileArgs),
     /// Shows internal authority state, including all attempts.
     Show { job: String },
-    /// Recovers expired execution after explicit authority confirmation of cleanup.
+    /// Recovers the exact expired attempt only after durable fenced cleanup.
     Recover {
         job: String,
         #[arg(long)]
-        cleanup_confirmed: bool,
+        attempt: String,
     },
 }
 #[derive(clap::Args)]
@@ -137,15 +137,12 @@ async fn main() -> Result<()> {
             "{}",
             serde_json::to_string_pretty(&state.repository.get(JobId::parse(&job)?).await?)?
         ),
-        Command::Recover {
-            job,
-            cleanup_confirmed,
-        } => {
+        Command::Recover { job, attempt } => {
             let id = JobId::parse(&job)?;
-            let view = state.repository.get(id).await?;
-            let attempt = view.attempts.last().context("missing attempt")?.id;
-            let _ = cleanup_confirmed; // Legacy assertion grants no recovery authority.
-            state.repository.recover(id, attempt).await?;
+            state
+                .repository
+                .recover(id, AttemptId::parse(&attempt)?)
+                .await?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&state.repository.get(id).await?)?
@@ -173,6 +170,14 @@ async fn main() -> Result<()> {
                     !runtime::all(&state, &startup).await?,
                     "startup reconciliation is blocked; no new execution admitted"
                 );
+                if let Some(id) = state.repository.continuations().await?.first().copied() {
+                    resume(&state, id, &args).await?;
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&state.repository.get(id).await?)?
+                    );
+                    return Ok(());
+                }
                 let runtime = runtime::runtime(&args)?;
                 let binding = runtime::binding(&runtime, &root)?;
                 if let Some(assignment) = state
@@ -233,6 +238,7 @@ async fn main() -> Result<()> {
                         &bytes,
                     )
                     .await?;
+                    checkpoint(&args, "evidence-upload");
                     state
                         .repository
                         .accept_evidence(&assignment.lease, &reference)
