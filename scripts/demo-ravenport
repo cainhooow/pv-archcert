@@ -125,9 +125,10 @@ try:
     assert created[0]['job_id'] == created[1]['job_id']
     job = created[0]['job_id']; restart_api(); assert status(job)['state']=='QUEUED'
     # Each exit is a new process. Target executes once; all later continuations reload evidence.
-    for stop in ['evidence','evaluation','prepared','signed','certificate-upload']:
+    for stop in ['evidence-upload','evidence','evaluation','prepared','signed','certificate-upload']:
         controller(stop,ok=False); view=status(job); internal=json.loads(command([BIN/'archcert-controller','--config',config,'show',job]).stdout); checkpoints.append(dict(stage=stop,job=job,state=view['state'],issuance=internal['issuance'],attempt_count=len(internal['attempts'])))
         restart_api(); assert status(job)==view
+        if stop == 'evidence-upload': time.sleep(6)
         print('Recovered controller checkpoint:',stop,view['state'],flush=True)
     completed=json.loads(controller().stdout); assert completed['id']==job and completed['state']=='COMPLETED'; assert len(completed['attempts'])==1
     code, certificate=request('/api/v1/certifications/'+job+'/certificate');assert code==200
@@ -141,38 +142,98 @@ try:
     # Real worker loss during target execution. The dedicated test runtime starts clean.
     docker=[os.environ['ARCHCERT_TEST_DOCKER'],'--host',os.environ['ARCHCERT_TEST_ENDPOINT']]
     assert not run(docker+['ps','-aq','--filter','label=archcert.owner=execution-v1']).stdout.strip()
-    delayed="import time,runpy,sys; time.sleep(10); sys.argv=['checks.py','typecheck']; runpy.run_path('/source/checks.py',run_name='__main__')"
+    delayed="import time,runpy,sys; time.sleep(20); sys.argv=['checks.py','typecheck']; runpy.run_path('/source/checks.py',run_name='__main__')"
     cfg['grants'][0]['authority_toml']=controlled_recipe.replace('args = ["/source/checks.py", "typecheck"]','args = ["-c", '+json.dumps(delayed)+']')
     write_config();restart_api(); recovered_job=submit(source,'worker-loss')['job_id']
     pidfile=fixture.authority/'worker.pid';wrapper=fixture.authority/'worker-launcher'
-    wrapper.write_text('#!/bin/sh\nprintf "%s\\n" "$$" > '+shlex.quote(str(pidfile))+'\nexec '+shlex.quote(str(BIN/'archcert-worker'))+' "$@"\n');wrapper.chmod(0o700)
+    assignment_file=fixture.authority/'assignment.bin'; arguments_file=fixture.authority/'arguments.json'
+    wrapper.write_text('#!/usr/bin/python3\nimport os,sys,json\nfrom pathlib import Path\n'
+        +f'Path({str(pidfile)!r}).write_text(str(os.getpid()))\n'
+        +f'Path({str(arguments_file)!r}).write_text(json.dumps(sys.argv[1:]))\n'
+        +f'p=Path({str(assignment_file)!r});p.write_bytes(sys.stdin.buffer.read());p.chmod(0o600)\n'
+        +'os.dup2(os.open(str(p),os.O_RDONLY),0)\n'
+        +f"os.execv({str(BIN/'archcert-worker')!r},[{str(BIN/'archcert-worker')!r}]+sys.argv[1:])\n")
+    wrapper.chmod(0o700)
     argv=[BIN/'archcert-controller','--config',config,'run-once','--worker-binary',wrapper,'--workspace-root',workspaces,'--docker',os.environ['ARCHCERT_TEST_DOCKER'],'--endpoint',os.environ['ARCHCERT_TEST_ENDPOINT'],'--development-key',private,'--public-key',public,'--lease-seconds','5']
     commands.append([str(x) for x in argv]);lost=subprocess.Popen([str(x) for x in argv],env=ENV,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     targets=[]
     for _ in range(200):
-        targets=run(docker+['ps','-q','--filter','label=archcert.owner=execution-v1']).stdout.decode().split()
+        targets=run(docker+['ps','-q','--filter','label=archcert.certification-job='+recovered_job]).stdout.decode().split()
         if pidfile.exists() and targets:break
         time.sleep(.1)
     assert targets and pidfile.exists(),'target never reached execution'
+    old=status(recovered_job)['attempts'][-1]['attempt_id']
     os.kill(int(pidfile.read_text()),signal.SIGKILL);_,err=lost.communicate(timeout=20);assert lost.returncode!=0
-    # Explicit authority cleanup before requeue. Never infer target stopped from lease expiry.
-    containers=run(docker+['ps','-aq','--filter','label=archcert.owner=execution-v1']).stdout.decode().split()
-    if containers: run(docker+['rm','-f',*containers])
-    images=run(docker+['image','ls','-q','--filter','label=archcert.owner=execution-v1']).stdout.decode().split()
-    if images:run(docker+['image','rm','-f',*set(images)])
-    for path in workspaces.iterdir():
-        for directory,dirs,files in os.walk(path):os.chmod(directory,0o700)
-        shutil.rmtree(path)
-    # Heartbeats have stopped; PostgreSQL expiry is authoritative.
-    for _ in range(36):
-        r=command([BIN/'archcert-controller','--config',config,'recover',recovered_job,'--cleanup-confirmed'],ok=False)
-        if r.returncode==0:break
-        time.sleep(1)
-    assert r.returncode==0,err
+    recover_args=[BIN/'archcert-controller','--config',config,'recover',recovered_job,'--attempt',old]
+    assert command(recover_args,ok=False).returncode != 0
+    reconcile_args=[BIN/'archcert-controller','--config',config,'reconcile','--workspace-root',workspaces,
+        '--runtime-state-root',workspaces.with_suffix('.runtime'),'--docker',os.environ['ARCHCERT_TEST_DOCKER'],
+        '--endpoint',os.environ['ARCHCERT_TEST_ENDPOINT'],'--job',recovered_job]
+    # Inspection never stops the old target. Expiry is checked by PostgreSQL again on apply.
+    command(reconcile_args)
+    assert run(docker+['ps','-q','--filter','label=archcert.attempt='+old]).stdout.strip()
+    time.sleep(6)
+    # Fail removal after durable revocation: no new attempt is permitted.
+    shim=fixture.authority/'docker-fail-cleanup'
+    shim.write_text('#!/usr/bin/python3\nimport os,sys\n'
+        +'if "rm" in sys.argv[1:]: sys.exit(42)\n'
+        +f'os.execv({docker[0]!r},[{docker[0]!r}]+sys.argv[1:])\n');shim.chmod(0o700)
+    failed_args=reconcile_args.copy();failed_args[failed_args.index('--docker')+1]=shim
+    assert command(failed_args+['--apply'],ok=False).returncode != 0
+    failed=json.loads(command([BIN/'archcert-controller','--config',config,'show',recovered_job]).stdout)
+    assert failed['attempts'][-1]['runtime']['fenced']
+    assert failed['attempts'][-1]['runtime']['cleanup']=='FAILED'
+    assert command(recover_args,ok=False).returncode != 0
+    assert run(docker+['ps','-q','--filter','label=archcert.attempt='+old]).stdout.strip()
+    # Replay the exact old assignment through the actual worker after revocation.
+    replay=run([BIN/'archcert-worker',*json.loads(arguments_file.read_text())],input=assignment_file.read_bytes(),env={})
+    # Decode only wire fields needed for this assertion; production codec validates the result.
+    def fields(data):
+        def varint(offset):
+            value=shift=0
+            while True:
+                b=data[offset];offset+=1;value|=(b&127)<<shift
+                if b<128:return value,offset
+                shift+=7
+        offset=0
+        while offset<len(data):
+            tag,offset=varint(offset);kind=tag&7
+            if kind==0:value,offset=varint(offset)
+            elif kind==2:
+                size,offset=varint(offset);value=data[offset:offset+size];offset+=size
+            else:raise AssertionError('unexpected wire type')
+            yield tag>>3,value
+    steps=[v for k,v in fields(replay.stdout) if k==7]
+    assert steps and all(not any(k==3 for k,v in fields(step)) for step in steps)
+    # Crash the reconciler after it has fenced authority but before runtime removal.
+    marker=fixture.authority/'reconcile.pid'; pause=fixture.authority/'docker-pause-cleanup'
+    pause.write_text('#!/usr/bin/python3\nimport os,sys,time\nfrom pathlib import Path\n'
+        +'if "rm" in sys.argv[1:]:\n'
+        +f' Path({str(marker)!r}).write_text(str(os.getpid()));time.sleep(30)\n'
+        +f'os.execv({docker[0]!r},[{docker[0]!r}]+sys.argv[1:])\n');pause.chmod(0o700)
+    crash_args=reconcile_args.copy();crash_args[crash_args.index('--docker')+1]=pause
+    crashed=subprocess.Popen([str(x) for x in crash_args+['--apply']],env=ENV,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    for _ in range(100):
+        if marker.exists():break
+        if crashed.poll() is not None:raise AssertionError(crashed.communicate())
+        time.sleep(.05)
+    assert marker.exists()
+    crashed.kill();crashed.communicate(timeout=5);os.kill(int(marker.read_text()),signal.SIGKILL)
+    intermediate=json.loads(command([BIN/'archcert-controller','--config',config,'show',recovered_job]).stdout)
+    assert intermediate['attempts'][-1]['runtime']['cleanup']=='IN_PROGRESS'
+    assert command(recover_args,ok=False).returncode!=0
+    command(reconcile_args+['--apply'])
+    clean=json.loads(command([BIN/'archcert-controller','--config',config,'show',recovered_job]).stdout)
+    assert clean['attempts'][-1]['runtime']['cleanup']=='SUCCEEDED'
+    assert not run(docker+['ps','-aq','--filter','label=archcert.attempt='+old]).stdout.strip()
+    termination_confirmed=time.time_ns()
+    command(recover_args)
     recovered=json.loads(controller().stdout);assert recovered['id']==recovered_job and recovered['state']=='COMPLETED'
     assert len(recovered['attempts'])==2 and recovered['attempts'][0]['state']=='LOST'
     assert recovered['attempts'][0]['failure']=='WORKER_LOSS' and recovered['attempts'][0]['id']!=recovered['attempts'][1]['id']
-    (OUTPUT/'worker-loss-job.json').write_text(json.dumps(recovered,indent=2));print('Real worker SIGKILL -> confirmed cleanup -> new attempt -> verified certificate passed',flush=True)
+    (OUTPUT/'worker-loss-job.json').write_text(json.dumps(recovered,indent=2))
+    (OUTPUT/'worker-fence-observation.json').write_text(json.dumps(dict(old_attempt=old,cleanup_failure=failed['attempts'][-1]['runtime'],stale_worker_steps_rejected=len(steps),termination_confirmed_ns=termination_confirmed,new_attempt=recovered['attempts'][-1]['id']),indent=2))
+    print('Real worker SIGKILL, cleanup failure, stale assignment rejection, confirmed cleanup and replacement passed',flush=True)
 
     # Controlled interruption after lease and during execution artifact staging.
     cfg['grants'][0]['authority_toml']=controlled_recipe
@@ -180,18 +241,82 @@ try:
     write_config();restart_api(); staging_job=submit(source,'lease-and-staging')['job_id']
     for stage in ['lease','staging']:
         controller(stage,ok=False)
-        for _ in range(12):
-            argv=[BIN/'archcert-controller','--config',config,'recover',staging_job]
-            if stage=='staging': argv+=['--cleanup-confirmed']
-            recovery=command(argv,ok=False)
-            if recovery.returncode==0:break
-            time.sleep(1)
-        assert recovery.returncode==0, recovery.stderr
+        time.sleep(6)
+        if stage=='lease':
+            view=json.loads(command([BIN/'archcert-controller','--config',config,'show',staging_job]).stdout)
+            command([BIN/'archcert-controller','--config',config,'recover',staging_job,'--attempt',view['attempts'][-1]['id']])
+        else:
+            command([BIN/'archcert-controller','--config',config,'reconcile','--workspace-root',workspaces,
+                '--runtime-state-root',workspaces.with_suffix('.runtime'),'--docker',docker[0],
+                '--endpoint',os.environ['ARCHCERT_TEST_ENDPOINT'],'--job',staging_job,'--apply','--recover'])
     staged=json.loads(controller().stdout)
     assert staged['id']==staging_job and staged['state']=='COMPLETED' and len(staged['attempts'])==3
     assert all(a['state']=='LOST' for a in staged['attempts'][:2])
     (OUTPUT/'staging-recovery-job.json').write_text(json.dumps(staged,indent=2))
     print('Lease and artifact-staging interruption recovery passed with three preserved attempts',flush=True)
+
+    if os.environ.get('ARCHCERT_STONEWARD_NATIVE')=='1':
+        # The harness is permitted to interrupt only this explicitly dedicated daemon/DB.
+        assert os.uname().sysname=='Linux' and os.getuid()!=0
+        assert docker[1:]==['--host',f'unix:///run/user/{os.getuid()}/docker.sock']
+        info=json.loads(run(docker+['info','--format','{{json .}}']).stdout)
+        assert 'name=rootless' in info['SecurityOptions'] and info['DockerRootDir']!='/var/lib/docker'
+        pg='stoneward-postgres'
+        pginfo=json.loads(run(docker+['inspect',pg]).stdout)[0]
+        assert pginfo['Config']['Labels']['archcert.qualification']=='stoneward'
+        def pg_ready():
+            for _ in range(100):
+                if run(docker+['exec',pg,'pg_isready','-U','postgres'],ok=False).returncode==0:return
+                time.sleep(.1)
+            raise AssertionError('dedicated PostgreSQL did not recover')
+        # Persistence outage retains accepted evidence and never manufactures signing progress.
+        outage_job=submit(source,'artifact-outage')['job_id'];controller('evidence',ok=False)
+        retained=status(outage_job);objects.chmod(0)
+        try:
+            assert request('/healthz',authenticated=False)[0]==200
+            assert request('/readyz',authenticated=False)[0]==503
+            assert controller(ok=False).returncode!=0
+        finally:objects.chmod(0o700)
+        assert status(outage_job)==retained
+        artifact_recovered=json.loads(controller().stdout)
+        assert artifact_recovered['id']==outage_job and artifact_recovered['state']=='COMPLETED' and len(artifact_recovered['attempts'])==1
+        (OUTPUT/'artifact-outage-job.json').write_text(json.dumps(artifact_recovered,indent=2))
+        db_job=submit(source,'database-outage')['job_id'];controller('evidence',ok=False)
+        retained=status(db_job);run(docker+['stop',pg])
+        try:
+            assert request('/healthz',authenticated=False)[0]==200
+            assert request('/readyz',authenticated=False)[0]==503
+            assert request('/api/v1/certifications',data,'during-database-outage')[0]!=202
+            assert controller(ok=False).returncode!=0
+        finally:
+            run(docker+['start',pg]);pg_ready()
+        assert status(db_job)==retained
+        database_recovered=json.loads(controller().stdout)
+        assert database_recovered['id']==db_job and database_recovered['state']=='COMPLETED' and len(database_recovered['attempts'])==1
+        (OUTPUT/'database-outage-job.json').write_text(json.dumps(database_recovered,indent=2))
+        # Native socket epoch changes must classify interruption as infrastructure uncertainty.
+        cfg['grants'][0]['authority_toml']=controlled_recipe.replace('args = ["/source/checks.py", "typecheck"]','args = ["-c", '+json.dumps(delayed)+']')
+        write_config();restart_api();daemon_job=submit(source,'daemon-restart')['job_id']
+        proc=subprocess.Popen([str(x) for x in argv],env=ENV,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        for _ in range(200):
+            if run(docker+['ps','-q','--filter','label=archcert.certification-job='+daemon_job]).stdout.strip():break
+            if proc.poll() is not None:raise AssertionError(proc.communicate())
+            time.sleep(.1)
+        else:raise AssertionError('daemon interruption target not running')
+        run(['systemctl','--user','restart','docker'])
+        run(docker+['start',pg]);pg_ready()
+        out,err=proc.communicate(timeout=100)
+        if proc.returncode==0:
+            interrupted=json.loads(out)
+            assert interrupted['state']=='INCONCLUSIVE' and interrupted['failure']=='INFRASTRUCTURE_FAILURE'
+        else:
+            time.sleep(6)
+            interrupted=json.loads(controller().stdout)
+            assert interrupted['id']==daemon_job and interrupted['state']=='COMPLETED'
+            assert interrupted['attempts'][0]['state']=='LOST' and interrupted['attempts'][0]['failure']=='WORKER_LOSS'
+        (OUTPUT/'daemon-restart-job.json').write_text(json.dumps(interrupted,indent=2))
+        cfg['grants'][0]['authority_toml']=controlled_recipe;write_config();restart_api()
+        print('Artifact and PostgreSQL outages, readiness failure and dedicated rootless daemon restart passed',flush=True)
 
     # Bottle retains its historical identity and policy semantics. No private key exists now.
     private.unlink();bottle_job=submit(bottle,'bottle')['job_id'];rejected=json.loads(controller().stdout)
@@ -201,6 +326,7 @@ try:
     restart_api();assert status(bottle_job)['state']=='NOT_ELIGIBLE'
     print('Bottle remains NOT_ELIGIBLE with unchanged source identity; no certificate issued',flush=True)
     (OUTPUT/'checkpoints.json').write_text(json.dumps(checkpoints,indent=2))
+    (OUTPUT/'source-revision.txt').write_bytes(run(['/usr/bin/git','rev-parse','HEAD'],cwd=ROOT).stdout)
     (OUTPUT/'commands.json').write_text(json.dumps(commands,indent=2))
     (OUTPUT/'source-ingress.json').write_text(json.dumps(source,indent=2))
     print('Ravenport demonstration passed:',OUTPUT,flush=True)

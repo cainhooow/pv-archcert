@@ -404,6 +404,7 @@ fn issuance_failure_category(error: &archcert_certificate::CertificateError) -> 
     }
 }
 async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
+    checkpoint(args, "evidence");
     let mut job = state.repository.get(id).await?;
     ensure!(
         matches!(job.state, JobState::Evaluating | JobState::Signing),

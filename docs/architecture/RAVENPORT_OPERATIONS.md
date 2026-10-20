@@ -158,14 +158,19 @@ existing rootless OCI image, Git/SSH fixture prerequisites, and the historical
 Bottle test checkout. Build all five executables first. Set ARCHCERT_DATABASE_URL,
 ARCHCERT_TEST_DOCKER, ARCHCERT_TEST_ENDPOINT and ARCHCERT_TEST_IMAGE; optional
 ARCHCERT_RAVENPORT_OUTPUT chooses a new output directory. It refuses overwrites.
-The script performs real authenticated source push, concurrent HTTP admission,
+Set `ARCHCERT_STONEWARD_NATIVE=1` only on the dedicated native qualification
+account with `stoneward-postgres` labeled `archcert.qualification=stoneward` and
+the exact per-user rootless endpoint. This additionally interrupts that PostgreSQL
+container and the user's Docker service, and tests artifact permission outages.
+It never uses the host rootful daemon. The script performs authenticated source push, concurrent HTTP admission,
 service restarts, controller crash checkpoints, worker SIGKILL during execution,
-explicit cleanup/recovery, offline verification and unchanged Bottle rejection.
+fenced cleanup/recovery, stale assignment replay, cleanup failure/retry and a
+reconciler crash, offline verification and unchanged Bottle rejection.
 Private SSH/signing material and bearer tokens are temporary outside the repo;
 retained public evidence defaults to ignored target/m5.1/demonstration/.
 
 The authority-only --stop-after test flag exits the controller at explicit lease,
-artifact staging, evidence, evaluation, prepared issuance, signed, or certificate
+artifact staging, committed evidence upload, evidence, evaluation, prepared issuance, signed, or certificate
 upload boundaries. It is not read from project configuration or HTTP input.
 The demonstration restores each stage using a new process and preserves attempts.
 
