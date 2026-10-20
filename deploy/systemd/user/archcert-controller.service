@@ -1,0 +1,17 @@
+# Install only in the dedicated authority user's systemd configuration.
+[Unit]
+Description=ArchCert durable certification continuation
+After=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/archcert/controller.env
+ExecStart=%h/.local/bin/archcert-controller --config %h/.config/archcert/control-plane.json run-once --worker-binary %h/.local/bin/archcert-worker --workspace-root %h/.local/state/archcert/workspaces --runtime-state-root %h/.local/state/archcert/gates --docker /usr/bin/docker --endpoint unix://%t/docker.sock --development-key %h/.config/archcert/development.der --public-key %h/.config/archcert/public.hex
+UMask=0077
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitNOFILE=4096
+TasksMax=256
+KillMode=control-group
+TimeoutStartSec=2h
+TimeoutStopSec=30

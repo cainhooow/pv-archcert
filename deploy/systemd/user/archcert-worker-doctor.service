@@ -1,0 +1,13 @@
+[Unit]
+Description=Observe ArchCert rootless runtime prerequisites
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/archcert-worker --docker /usr/bin/docker --endpoint unix://%t/docker.sock doctor
+UMask=0077
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+LimitNOFILE=4096
+TasksMax=64
+TimeoutStartSec=30

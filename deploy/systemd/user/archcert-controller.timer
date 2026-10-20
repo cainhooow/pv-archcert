@@ -1,0 +1,10 @@
+[Unit]
+Description=Retry ArchCert durable work conservatively
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=10s
+Unit=archcert-controller.service
+
+[Install]
+WantedBy=timers.target

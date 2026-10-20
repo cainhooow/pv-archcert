@@ -1,4 +1,4 @@
-# Current architecture snapshot — M5.1 Ravenport
+# Current architecture snapshot — M5.2 Stoneward
 
 ArchCert accepts authenticated SSH Git pushes with bounded SHA-1/SHA-256 packs
 or explicit local loose objects, seals an independently hashed
@@ -222,3 +222,13 @@ late-create uncertainty and cleanup failures block retry. Accepted evidence clos
 execution authority; continuation reconciles cleanup before policy/signing without
 rerunning targets. The precise single-host protocol is in ADR 0039. Native OCI and
 PostgreSQL observations exist, but operational qualification is still in progress.
+
+Stoneward preserves certification semantics while adding single-host durable
+execution fencing, ownership-scoped runtime reconciliation, separate cleanup
+metadata/audit, dependency readiness and staging recovery. The worker holds a
+private persistent attempt gate before all runtime resource creation. Recovery
+revokes that gate before recording the PostgreSQL fence; runtime termination and
+absence plus durable SUCCEEDED cleanup precede retry. Uncertain pending daemon
+creation blocks indefinitely. Committed evidence is validated/adopted without a
+target rerun. See ADRs 0038–0040 and the native qualification document for the
+precise trusted-worker/filesystem profile and observed deployment limits.
