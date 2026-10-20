@@ -97,6 +97,10 @@ impl ExecutionGateRoot {
         file.write_all(&bytes).map_err(failure)?;
         file.sync_all().map_err(failure)?;
         self.directory.sync_all().map_err(failure)?;
+        // Release explicitly before closing. A concurrent trusted process spawn can
+        // briefly inherit the open file description before CLOEXEC takes effect.
+        // Publication is complete; no execution authority is held by this operation.
+        flock(&file, FlockOperation::Unlock).map_err(failure)?;
         Ok(())
     }
     /// Takes exclusive nonblocking execution/reconciliation ownership of this gate.

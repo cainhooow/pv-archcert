@@ -1210,9 +1210,16 @@ mod tests {
             daemon_id: "test-daemon".into(),
             gate_root: gate_root.to_string_lossy().into(),
         };
-        let gates = ExecutionGateRoot::open(&gate_root)?;
-        gates.create(job, attempt, &binding)?;
-        gates.lock(job, attempt)?.revoke()?;
+        let gates =
+            ExecutionGateRoot::open(&gate_root).map_err(|e| format!("test gate root: {e}"))?;
+        gates
+            .create(job, attempt, &binding)
+            .map_err(|e| format!("test gate create: {e}"))?;
+        gates
+            .lock(job, attempt)
+            .map_err(|e| format!("test gate lock: {e}"))?
+            .revoke()
+            .map_err(|e| format!("test gate revoke: {e}"))?;
         let calls = runtime.configuration.path().join("calls.jsonl");
         let runner = DockerRootlessRunner::for_attempt(runtime, gate_root, job, attempt);
         let (_source_root, source_cleanup, request) = request()?;
