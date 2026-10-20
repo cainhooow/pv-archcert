@@ -19,6 +19,7 @@ import subprocess
 import time
 import urllib.request
 import urllib.error
+import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
 F = runpy.run_path(str(ROOT / 'scripts/test-northgate'))
@@ -163,6 +164,10 @@ try:
         time.sleep(.1)
     assert targets and pidfile.exists(),'target never reached execution'
     old=status(recovered_job)['attempts'][-1]['attempt_id']
+    # Applying reconciliation while the lease is valid must leave execution alone.
+    active_reconcile=[BIN/'archcert-controller','--config',config,'reconcile','--workspace-root',workspaces,'--runtime-state-root',workspaces.with_suffix('.runtime'),'--docker',docker[0],'--endpoint',docker[2],'--job',recovered_job,'--apply']
+    command(active_reconcile)
+    assert run(docker+['ps','-q','--filter','label=archcert.attempt='+old]).stdout.strip()
     os.kill(int(pidfile.read_text()),signal.SIGKILL);_,err=lost.communicate(timeout=20);assert lost.returncode!=0
     recover_args=[BIN/'archcert-controller','--config',config,'recover',recovered_job,'--attempt',old]
     assert command(recover_args,ok=False).returncode != 0
@@ -234,6 +239,29 @@ try:
     (OUTPUT/'worker-loss-job.json').write_text(json.dumps(recovered,indent=2))
     (OUTPUT/'worker-fence-observation.json').write_text(json.dumps(dict(old_attempt=old,cleanup_failure=failed['attempts'][-1]['runtime'],stale_worker_steps_rejected=len(steps),termination_confirmed_ns=termination_confirmed,new_attempt=recovered['attempts'][-1]['id']),indent=2))
     print('Real worker SIGKILL, cleanup failure, stale assignment rejection, confirmed cleanup and replacement passed',flush=True)
+
+    # Authority-created disagreement fixtures have exact bounded labels; no mounts/network.
+    def residue(attempt):
+        execution=str(uuid.uuid4()); name='archcert-'+execution
+        labels={'archcert.owner':'execution-v1','archcert.ownership':'2','archcert.execution':execution,
+            'archcert.job':execution,'archcert.certification-job':recovered_job,'archcert.attempt':attempt,
+            'archcert.workspace':execution}
+        args=docker+['create','--name',name,'--network','none','--cap-drop','ALL','--user','10001:10001',
+            '--read-only','--memory','32m','--pids-limit','32','--entrypoint','/bin/sleep']
+        for key,value in labels.items():args+=['--label',key+'='+value]
+        handle=run(args+[os.environ['ARCHCERT_TEST_IMAGE'],'20']).stdout.decode().strip()
+        run(docker+['start',handle]);return handle
+    for prior in [old,recovered['attempts'][-1]['id']]:
+        handle=residue(prior)
+        command(reconcile_args+['--apply'])
+        assert not run(docker+['ps','-aq','--filter','id='+handle]).stdout.strip()
+    unknown=residue(str(uuid.uuid4()))
+    try:
+        assert command(reconcile_args+['--apply'],ok=False).returncode!=0
+        assert run(docker+['ps','-q','--filter','id='+unknown]).stdout.strip()
+        assert controller(ok=False).returncode!=0
+    finally:run(docker+['rm','-f',unknown])
+    print('Active ownership preserved; LOST/COMPLETED residue removed; unknown attempt retained and admission blocked',flush=True)
 
     # Controlled interruption after lease and during execution artifact staging.
     cfg['grants'][0]['authority_toml']=controlled_recipe
