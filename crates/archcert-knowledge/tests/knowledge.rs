@@ -478,3 +478,38 @@ fn canonical_artifacts_reject_non_ascii_map_keys_floats_and_unsafe_integers() ->
     );
     Ok(())
 }
+
+#[test]
+fn function_named_main_is_not_claimed_as_a_resolved_entry_point() -> R {
+    let snapshot = snapshot(
+        ProjectId::new(),
+        &[(
+            "module.rs",
+            b"mod nested { fn main() {} }",
+            SourceMode::File,
+        )],
+    )?;
+    let knowledge = engine()?.extract(&snapshot, &[], None)?;
+    let declaration = knowledge
+        .body()
+        .nodes
+        .iter()
+        .find(|node| node.label == "fn main")
+        .ok_or("main declaration missing")?;
+    assert_eq!(declaration.kind, NodeKind::Symbol);
+    assert!(
+        !knowledge
+            .body()
+            .nodes
+            .iter()
+            .any(|node| node.kind == NodeKind::EntryPoint)
+    );
+    assert!(
+        knowledge
+            .body()
+            .extractors
+            .iter()
+            .any(|identity| identity == "archcert-rust-syntax-v1/1.0.1")
+    );
+    Ok(())
+}

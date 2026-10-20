@@ -11,7 +11,7 @@ use quote::ToTokens;
 pub struct RustSyntaxExtractor;
 impl KnowledgeExtractor for RustSyntaxExtractor {
     fn identity(&self) -> &'static str {
-        "archcert-rust-syntax-v1/1.0.0"
+        "archcert-rust-syntax-v1/1.0.1"
     }
     fn supports(&self, file: &SourceFile) -> bool {
         file.path().as_str().ends_with(".rs")
@@ -98,8 +98,6 @@ fn items(
             syn::Item::Fn(i) => (
                 if is_test(&i.attrs) {
                     NodeKind::Test
-                } else if i.sig.ident == "main" {
-                    NodeKind::EntryPoint
                 } else {
                     NodeKind::Symbol
                 },

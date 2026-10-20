@@ -11,7 +11,8 @@ The initial knowledge core now owns generic graph/provenance/coverage vocabulary
 explicit scoped authority bundles and an application extractor registry over
 verified complete SourceSnapshot bytes. archcert-knowledge supplies passive pinned
 syn Rust syntax extraction; imports and impl trait names remain unresolved syntax,
-not resolved calls. Every accepted path/digest/size/mode is inventoried. SQL identity
+not resolved calls. A function named main remains a symbol; executable entry-point
+resolution is unavailable. Every accepted path/digest/size/mode is inventoried. SQL identity
 is retained without an invented schema. Canonical knowledge/impact artifacts carry
 extractor versions, authority identities, exact source/baseline pins, bounds and
 blind spots. Missing or uncertain baseline/relationships expand to full review.
