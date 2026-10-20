@@ -8,7 +8,7 @@ Ed25519 certificate after full integrity validation, signing and offline verific
 Eligibility remains unsigned and cannot itself report CERTIFIED.
 
 ```text
-HTTP (disabled submission) -> protocol -> application -> domain
+Authenticated HTTP -> protocol -> admission composition -> application ports -> PostgreSQL
 Operator source export ---> protocol Protobuf adapter -> application ingress read model -> domain
 CLI execution ------------> application + source/materialization/runner adapters
 CLI evaluation -----------> policy -> application + domain
@@ -93,7 +93,8 @@ same source is allowed. Trust-anchor distribution remains administrative.
 M1–M4A source, materialization, isolation, fixed environment/network/resource,
 structured observations and mandatory authority-policy guarantees remain active.
 Project configuration cannot select signer/key/algorithm/authority or weaken policy.
-No AI participates in issuance. HTTP submission remains 501 UNAVAILABLE. No database, web UI, durable jobs, release permit, artifact certification,
+No AI participates in issuance. Ravenport now implements authenticated durable
+HTTP job admission/status and PostgreSQL metadata. No web UI, release permit, artifact certification,
 waiver, policy inheritance, production KMS/HSM/PKCS#11, revocation or transparency
 service is added. Native Linux remains NOT YET QUALIFIED.
 
@@ -120,7 +121,7 @@ A shallow declaration is supported only for the exact selected commit.
 The finite local development store retains verified source separately from jobs.
 `source show` and later `certify --source-submission` reuse immutable bytes without
 Git acquisition. No acquisition credential reaches RunnerInput or certificate
-signing. REST remains 501. Source schema 1 is unchanged; old/new source identities
+signing. Ravenport REST now admits separate durable jobs. Source schema 1 is unchanged; old/new source identities
 and Bottle policy behavior are reproduced by real SSH push/OCI regressions.
 
 ExternalSourceAuthority verifies bounded LFS bytes and exact authority-mapped
@@ -156,9 +157,9 @@ certificate-specific contracts and cannot expose arbitrary-data signing.
 
 The final protocol task and required gate results are recorded in
 [MILESTONE_5_PROTOBUF_REPORT.md](../MILESTONE_5_PROTOBUF_REPORT.md), completing
-M5 Northgate. M5.1 Ravenport is next; its [handoff plan](RAVENPORT_PLAN.md) reserves
-future contract families without implementing durable jobs, persistence, workers,
-recovery, or production RPC. See [ADR 0034](../adr/0034-protobuf-internal-protocol-contracts.md)
+M5 Northgate. Its [handoff plan](RAVENPORT_PLAN.md) records the original
+Ravenport scope; the implementation below adds durable jobs and local worker
+process contracts. See [ADR 0034](../adr/0034-protobuf-internal-protocol-contracts.md)
 and [protocol architecture](PROTOBUF_PROTOCOL_CONTRACTS.md). Earlier reports retain
 their historical results.
 
@@ -169,8 +170,8 @@ attempt budgets and immutable job/attempt/fencing identities. Application owns
 repository/read-model contracts. archcert-storage implements PostgreSQL admission,
 scoped idempotency, row-locked claims, fenced leases, immutable artifact metadata,
 issuance bindings and append-only audit through explicit SQLx migrations. Real
-PostgreSQL tests cover concurrency and recovery. HTTP submission remains disabled;
-no worker scheduler is enabled yet. ADRs 0035–0037 govern the implementation.
+PostgreSQL tests cover concurrency and recovery. Authenticated loopback HTTP now
+admits actual durable jobs and returns status; controller orchestration is in progress. ADRs 0035–0037 govern the implementation.
 
 ImmutableArtifactStore now has an explicitly unencrypted local development
 adapter: project-scoped SHA-256 keys, atomic create-only publication, fsync and

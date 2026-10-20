@@ -1,23 +1,25 @@
-//! Bootstrap ArchCert control-plane API.
-
-use archcert_application::{BootstrapSubmitCertification, SubmitCertification};
-use archcert_protocol::{CertificationResponse, SubmitCertificationRequest};
+//! Authenticated durable ArchCert admission/status API. No execution or signing.
+use archcert_application::{artifacts::ImmutableArtifactStore, jobs::JobStoreError};
+use archcert_control_plane::{ControlPlane, ControlPlaneConfiguration};
+use archcert_domain::jobs::{IdempotencyKey, JobId};
+use archcert_protocol::jobs::{CertificationJobResponse, CreateCertificationRequest};
 use axum::{
     Json, Router,
-    extract::State,
-    http::StatusCode,
+    extract::{DefaultBodyLimit, Path, State},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use std::{net::SocketAddr, sync::Arc};
+use clap::Parser;
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tower_http::trace::TraceLayer;
-use tracing::info;
-
-#[derive(Clone)]
-struct AppState {
-    submitter: Arc<dyn SubmitCertification>,
+#[derive(Parser)]
+struct Args {
+    #[arg(long)]
+    config: PathBuf,
+    #[arg(long, default_value = "127.0.0.1:8080")]
+    listen: SocketAddr,
 }
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -26,65 +28,117 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| "archcertd=info,tower_http=info".into()),
         )
         .init();
-
-    let state = AppState {
-        submitter: Arc::new(BootstrapSubmitCertification),
-    };
-
+    let args = Args::parse();
+    anyhow::ensure!(
+        args.listen.ip().is_loopback(),
+        "development authority API must bind loopback"
+    );
+    let config = ControlPlaneConfiguration::load(&args.config)?;
+    let database_url = std::env::var("ARCHCERT_DATABASE_URL")?;
+    let state = Arc::new(ControlPlane::connect(&database_url, config).await?);
+    // Verify migrations were applied explicitly; do not mutate schema at startup.
+    state.repository.continuations().await?;
     let app = Router::new()
-        .route("/healthz", get(healthz))
-        .route("/api/v1/certifications", post(submit_certification))
+        .route("/healthz", get(|| async { "ok" }))
+        .route("/api/v1/certifications", post(submit))
+        .route("/api/v1/certifications/{id}", get(status))
+        .route("/api/v1/certifications/{id}/certificate", get(certificate))
+        .layer(DefaultBodyLimit::max(4096))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
-
-    let address = SocketAddr::from(([127, 0, 0, 1], 8080));
-    let listener = tokio::net::TcpListener::bind(address).await?;
-    info!(%address, "ArchCert API listening");
+    tracing::info!(address=%args.listen,"ArchCert durable API listening");
+    let listener = tokio::net::TcpListener::bind(args.listen).await?;
     axum::serve(listener, app).await?;
     Ok(())
 }
-
-async fn healthz() -> &'static str {
-    "ok"
+fn actor(
+    state: &ControlPlane,
+    headers: &HeaderMap,
+) -> Result<archcert_domain::ingress::GitActorId, JobStoreError> {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or(JobStoreError::Unauthorized)?;
+    state.configuration.authenticate(token)
 }
-
-async fn submit_certification(
-    State(state): State<AppState>,
-    Json(request): Json<SubmitCertificationRequest>,
+fn error(e: JobStoreError) -> Response {
+    let status = match e {
+        JobStoreError::Unauthorized => StatusCode::UNAUTHORIZED,
+        JobStoreError::Conflict => StatusCode::CONFLICT,
+        JobStoreError::Invalid => StatusCode::BAD_REQUEST,
+        JobStoreError::Precondition => StatusCode::NOT_FOUND,
+        JobStoreError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+    };
+    (status, e.to_string()).into_response()
+}
+async fn submit(
+    State(state): State<Arc<ControlPlane>>,
+    headers: HeaderMap,
+    Json(request): Json<CreateCertificationRequest>,
 ) -> Response {
-    match state.submitter.submit(request.into()) {
-        Ok(response) => (
-            StatusCode::NOT_IMPLEMENTED,
-            Json(CertificationResponse::from(response)),
+    let result = async {
+        let actor = actor(&state, &headers)?;
+        let key = headers
+            .get("idempotency-key")
+            .and_then(|v| v.to_str().ok())
+            .ok_or(JobStoreError::Invalid)?;
+        state
+            .submit(
+                actor,
+                request.project,
+                request.repository,
+                request.source_submission,
+                IdempotencyKey::parse(key.into())?,
+            )
+            .await
+    }
+    .await;
+    match result {
+        Ok(job) => (
+            StatusCode::ACCEPTED,
+            Json(CertificationJobResponse::from(job)),
         )
             .into_response(),
-        Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+        Err(e) => error(e),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[tokio::test]
-    async fn bootstrap_does_not_claim_a_persisted_job() -> anyhow::Result<()> {
-        let request = SubmitCertificationRequest {
-            project_id: "project".into(),
-            commit: archcert_domain::GitObjectId::parse("a".repeat(40))?,
-            profile: "node".into(),
-        };
-        let response = submit_certification(
-            State(AppState {
-                submitter: Arc::new(BootstrapSubmitCertification),
-            }),
-            Json(request),
+async fn status(
+    State(state): State<Arc<ControlPlane>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    let result = async {
+        let actor = actor(&state, &headers)?;
+        state.status(&actor, JobId::parse(&id)?).await
+    }
+    .await;
+    match result {
+        Ok(job) => Json(CertificationJobResponse::from(job)).into_response(),
+        Err(e) => error(e),
+    }
+}
+async fn certificate(
+    State(state): State<Arc<ControlPlane>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    let result = async {
+        let actor = actor(&state, &headers)?;
+        let job = state.status(&actor, JobId::parse(&id)?).await?;
+        let cert = job.certificate.ok_or(JobStoreError::Precondition)?;
+        state
+            .artifacts
+            .get(job.inputs.project, &cert.artifact)
+            .await
+    }
+    .await;
+    match result {
+        Ok(bytes) => (
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            bytes,
         )
-        .await;
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
-        let body = axum::body::to_bytes(response.into_body(), 1024).await?;
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&body)?,
-            serde_json::json!({"status":"UNAVAILABLE"})
-        );
-        Ok(())
+            .into_response(),
+        Err(e) => error(e),
     }
 }

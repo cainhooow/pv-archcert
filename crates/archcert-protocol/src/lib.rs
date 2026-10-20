@@ -74,3 +74,6 @@ mod tests {
         Ok(())
     }
 }
+
+/// Durable authenticated job submission/status HTTP projections.
+pub mod jobs;

@@ -185,6 +185,7 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
     // not acquire signing authority, directly or through an intermediate crate.
     for root in [
         "archcertd",
+        "archcert-control-plane",
         "archcert-worker",
         "archcert-gateway",
         "archcert-gateway-cli",

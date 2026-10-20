@@ -1,8 +1,9 @@
 # ArchCert Architecture Specification — Bootstrap v0.1
 
 This document describes the intended architecture, followed by implemented slices.
-Northgate implements authenticated restricted SSH ingress; HTTPS and durable jobs
-remain future work. M4B development issuance/offline verification continues after
+Northgate implements authenticated restricted SSH ingress. Ravenport adds
+authenticated durable HTTP job admission/status backed by PostgreSQL. HTTPS
+ingress remains future work. M4B development issuance/offline verification continues after
 deterministic eligibility. The [current snapshot](CURRENT_ARCHITECTURE_SNAPSHOT.md)
 and [Northgate report](../MILESTONE_5_REPORT.md) describe executable behavior.
 
@@ -12,7 +13,7 @@ Protobuf is the primary internal machine-to-machine wire format, not cryptograph
 canonicalization. See [ADR 0034](../adr/0034-protobuf-internal-protocol-contracts.md),
 [protocol contracts](PROTOBUF_PROTOCOL_CONTRACTS.md), and the
 [focused completion report](../MILESTONE_5_PROTOBUF_REPORT.md). M5.1 Ravenport
-will introduce actual durable process boundaries under those rules.
+introduces actual durable process boundaries under those rules.
 
 ## Purpose
 
@@ -171,7 +172,8 @@ schema parsing, digest recomputation, key-ID matching and strict Ed25519 verific
 All meaningful authority fields are signed, including exact-source scope and the
 development-only classification. See ADRs 0025–0027 and the signing threat model.
 Production custody, authority service authentication, expiration and revocation
-are deferred. HTTP submission remains disabled; no semantic AI participates.
+are deferred. Ravenport enables separate authenticated durable job submission;
+no semantic AI participates.
 
 ## Northgate authenticated source boundary
 

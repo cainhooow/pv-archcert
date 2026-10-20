@@ -7,6 +7,7 @@ members = [
     "apps/archcert-gateway",
     "crates/archcert-domain",
     "crates/archcert-storage",
+    "crates/archcert-control-plane",
     "crates/archcert-application",
     "crates/archcert-protocol",
     "crates/archcert-source",

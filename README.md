@@ -41,7 +41,7 @@ The first trustworthy vertical slice is:
 
 ## Workspace
 
-- `apps/archcertd`: bootstrap HTTP process; submission returns 501 UNAVAILABLE.
+- `apps/archcertd`: authenticated loopback durable job admission/status API.
 - `apps/archcert-cli`: command-line client.
 - `crates/archcert-domain`: infrastructure-free domain language.
 - `crates/archcert-application`: application use cases and ports.
@@ -154,8 +154,8 @@ and node. These names do not prove installed toolchain versions.
 
 Authority-required steps compose before project requests into immutable ValidationPlan
 steps. Structured ValidationObservation facts form the policy input boundary;
-observations themselves produce no verdict. The bootstrap API creates no jobs and returns HTTP 501
-with UNAVAILABLE. See [ADRs 0019–0021](docs/adr/0019-application-protocol-and-bootstrap-submission.md),
+observations themselves produce no verdict. The historical bootstrap API returned HTTP 501; Ravenport now admits durable jobs.
+The original bootstrap adapter still reports UNAVAILABLE. See [ADRs 0019–0021](docs/adr/0019-application-protocol-and-bootstrap-submission.md),
 [current architecture](docs/architecture/CURRENT_ARCHITECTURE_SNAPSHOT.md),
 [TCB/dependency review](docs/architecture/TCB_AND_DEPENDENCIES.md),
 [Milestone 3.5 report](docs/MILESTONE_3_5_REPORT.md) and

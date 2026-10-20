@@ -59,3 +59,29 @@ and unreferenced immutable objects remain unavailable and require reviewed clean
 no background deletion can accidentally remove issued evidence. ArtifactCipher
 reserves authenticated envelope encryption behind a provider port. Production
 private storage needs an actual encryption adapter; none is simulated here.
+
+The durable API starts with an explicit private configuration file and existing
+migrations/grants. `ARCHCERT_DATABASE_URL` is authority process configuration only.
+Start `archcertd --config /authority/control-plane.json --listen 127.0.0.1:8080`.
+The private JSON contains source_store, artifact_root and grants. Each grant has
+project, repository, actor, token_sha256, profile, image, authority_toml and
+maximum_attempts. Use a high-entropy generated bearer token; store only its SHA-256
+in configuration. Actor is an authority UUID, not a request field. Tokens, private
+configuration and keys remain outside repositories/workspaces/artifact storage.
+
+POST /api/v1/certifications requires Authorization: Bearer and Idempotency-Key.
+Its strict JSON is project, repository, source_submission. Scope authorization
+precedes accepted-source lookup. The source is reloaded/rehash-checked, complete
+source is required, and the job pins policy/version/digest plus the authority plan,
+profile/image and bounded retry settings. Reusing the scoped key with different
+pinned inputs returns conflict. Successful requests return 202, actual durable job
+ID, immutable source and state; the endpoint does not report certification success.
+GET /api/v1/certifications/{id} enforces the same actor scope and reads PostgreSQL.
+GET /api/v1/certifications/{id}/certificate exports the verified persisted envelope
+only after completion, with independently rehashed artifact bytes.
+
+The development authority uses private-file provisioning and loopback bearer
+transport, not enterprise IAM/TLS. No remote listener is permitted by this daemon.
+The daemon has no signing or target execution dependency; a separate trusted
+controller is responsible for orchestration. Configuration loading and HTTP
+startup do not grant new database permissions or run migrations.

@@ -1,0 +1,19 @@
+[package]
+name = "archcert-control-plane"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+[dependencies]
+archcert-domain = { path = "../archcert-domain", version = "=0.1.0" }
+archcert-application = { path = "../archcert-application", version = "=0.1.0" }
+archcert-storage = { path = "../archcert-storage", version = "=0.1.0" }
+archcert-gateway = { path = "../archcert-gateway", version = "=0.1.0" }
+archcert-policy = { path = "../archcert-policy", version = "=0.1.0" }
+serde.workspace = true
+serde_json.workspace = true
+rustix.workspace = true
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

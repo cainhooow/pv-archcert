@@ -127,6 +127,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "archcert-control-plane"
+version = "0.1.0"
+dependencies = [
+ "archcert-application",
+ "archcert-domain",
+ "archcert-gateway",
+ "archcert-policy",
+ "archcert-storage",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "archcert-crypto"
 version = "0.1.0"
 dependencies = [
@@ -302,9 +317,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "archcert-application",
+ "archcert-control-plane",
  "archcert-domain",
  "archcert-protocol",
  "axum",
+ "clap",
  "serde_json",
  "tokio",
  "tower-http",
