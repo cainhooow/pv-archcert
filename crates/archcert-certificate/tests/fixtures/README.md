@@ -6,3 +6,9 @@ constructed canonical payload, signed envelope, SHA-256 digest, and OpenSSL publ
 verification key. They are required regression inputs, not demonstration output.
 No private key is retained. Tests must continue to verify these historical bytes
 without regenerating them through the implementation being tested.
+
+Default issuance tests construct their relational evidence fixtures in memory.
+They never require untracked `docs/certificates/development` milestone output.
+The durable native demonstration separately checks public exported certificate,
+manifest/bundle bindings and Bottle rejection against actual execution evidence.
+No temporary demonstration certificate becomes a committed regression fixture.

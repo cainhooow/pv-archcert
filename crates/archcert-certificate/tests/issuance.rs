@@ -935,13 +935,16 @@ fn detailed_records_must_reproduce_consumed_observations_before_signing() -> R {
 }
 
 #[test]
-fn retained_development_certificate_resolves_the_exact_manifest_and_detailed_bundle() -> R {
-    use std::{fs, path::PathBuf};
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/certificates/development/controlled");
-    let certificate: Value = serde_json::from_slice(&fs::read(root.join("certificate.json"))?)?;
-    let manifest_bytes = fs::read(root.join("evidence-manifest.json"))?;
-    let bundle_bytes = fs::read(root.join("evidence-bundle.json"))?;
+fn issued_certificate_resolves_the_exact_manifest_and_detailed_bundle() -> R {
+    // A clean checkout must not depend on untracked local milestone output.
+    // Fixed independent signature bytes are covered by openssl-vector.* separately.
+    let f = fixture()?;
+    let signer = CountingSigner::new(7);
+    let draft = f.draft(Some(f.evaluation()?), signer.public()?)?;
+    let manifest_bytes = draft.manifest().canonical_bytes().to_vec();
+    let bundle_bytes = draft.evidence_bundle().canonical_bytes().to_vec();
+    let issued = draft.issue(&signer)?;
+    let certificate: Value = serde_json::from_slice(&issued.envelope().to_json()?)?;
     let manifest: Value = serde_json::from_slice(&manifest_bytes)?;
     let bundle: Value = serde_json::from_slice(&bundle_bytes)?;
     assert_eq!(canonical_bytes(&manifest)?, manifest_bytes);
@@ -975,19 +978,7 @@ fn retained_development_certificate_resolves_the_exact_manifest_and_detailed_bun
             .len(),
         3
     );
-    let key = PublicKey::from_hex(&fs::read_to_string(root.join("public-key.hex"))?)?;
-    assert!(verified(&certificate, &key));
-    let rejected: Value = serde_json::from_slice(&fs::read(
-        root.parent().ok_or("parent")?.join("bottle/rejection.json"),
-    )?)?;
-    assert_eq!(rejected["certificate"], "CERTIFICATE NOT ISSUED");
-    assert!(
-        !root
-            .parent()
-            .ok_or("parent")?
-            .join("bottle/certificate.json")
-            .exists()
-    );
+    assert!(verified(&certificate, &signer.public()?));
     Ok(())
 }
 
