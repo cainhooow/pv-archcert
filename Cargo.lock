@@ -232,6 +232,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "archcert-knowledge"
+version = "0.1.0"
+dependencies = [
+ "archcert-application",
+ "archcert-domain",
+ "quote",
+ "serde_json",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "archcert-materialization"
 version = "0.1.0"
 dependencies = [

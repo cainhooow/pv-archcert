@@ -11,6 +11,7 @@ use uuid::Uuid;
 pub mod execution;
 pub mod ingress;
 pub mod jobs;
+pub mod knowledge;
 pub mod materialization;
 pub mod source;
 /// Unique identifier of a registered project.

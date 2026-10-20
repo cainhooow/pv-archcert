@@ -3,9 +3,21 @@
 Ironcrest architecture is defined in ADRs 0041–0042 and
 threat-model/SEMANTIC_REVIEW.md. The design adds immutable knowledge, bounded
 semantic veto and authority challenge selection above the existing trust core.
-At this design checkpoint these components are not integrated or qualified;
+These components are not yet integrated with durable certification or qualified;
 no Ironcrest completion or semantic issuance guarantee is claimed. Historical
 policy/certificate semantics and the exact Stoneward qualification remain intact.
+
+The initial knowledge core now owns generic graph/provenance/coverage vocabulary,
+explicit scoped authority bundles and an application extractor registry over
+verified complete SourceSnapshot bytes. archcert-knowledge supplies passive pinned
+syn Rust syntax extraction; imports and impl trait names remain unresolved syntax,
+not resolved calls. Every accepted path/digest/size/mode is inventoried. SQL identity
+is retained without an invented schema. Canonical knowledge/impact artifacts carry
+extractor versions, authority identities, exact source/baseline pins, bounds and
+blind spots. Missing or uncertain baseline/relationships expand to full review.
+No runtime/provider/signing boundary is changed. Parser limits and residual risks
+are documented in IRONCREST_DEPENDENCY_REVIEW.md. Persistence, semantic review,
+challenge execution and issuance binding remain outstanding at this checkpoint.
 
 ArchCert accepts authenticated SSH Git pushes with bounded SHA-1/SHA-256 packs
 or explicit local loose objects, seals an independently hashed

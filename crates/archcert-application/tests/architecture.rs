@@ -7,6 +7,11 @@ use std::{
 
 fn allowed_inward_dependency(package: &str, dependency: &str) -> bool {
     if ["archcert-domain", "archcert-application"].contains(&package)
+        && is_semantic_provider_dependency(dependency)
+    {
+        return false;
+    }
+    if ["archcert-domain", "archcert-application"].contains(&package)
         && (is_protobuf_dependency(dependency) || is_persistence_dependency(dependency))
     {
         return false;
@@ -37,6 +42,12 @@ fn allowed_inward_dependency(package: &str, dependency: &str) -> bool {
         }
         "archcert-application" => {
             !dependency.starts_with("archcert-") || dependency == "archcert-domain"
+        }
+        "archcert-knowledge" => {
+            (!dependency.starts_with("archcert-")
+                || ["archcert-domain", "archcert-application"].contains(&dependency))
+                && !["reqwest", "tokio", "rustix", "sqlx"].contains(&dependency)
+                && !is_semantic_provider_dependency(dependency)
         }
         "archcert-policy" => {
             (!dependency.starts_with("archcert-")
@@ -113,6 +124,20 @@ fn allowed_inward_dependency(package: &str, dependency: &str) -> bool {
     }
 }
 
+fn is_semantic_provider_dependency(name: &str) -> bool {
+    [
+        "async-openai",
+        "openai",
+        "anthropic",
+        "rig-core",
+        "genai",
+        "llm",
+        "ollama-rs",
+    ]
+    .iter()
+    .any(|prefix| name == *prefix || name.starts_with(&format!("{prefix}-")))
+}
+
 fn is_persistence_dependency(name: &str) -> bool {
     name == "sqlx"
         || name.starts_with("sqlx-")
@@ -176,7 +201,9 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
                 continue;
             }
             assert!(
-                !(is_protobuf_dependency(&name) || is_persistence_dependency(&name)),
+                !(is_protobuf_dependency(&name)
+                    || is_persistence_dependency(&name)
+                    || is_semantic_provider_dependency(&name)),
                 "Protobuf enters inward graph {root}: {name}"
             );
             pending.extend(graph.get(&name).into_iter().flatten().cloned());
@@ -195,6 +222,7 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
         "archcert-materialization",
         "archcert-application",
         "archcert-policy",
+        "archcert-knowledge",
     ] {
         let mut pending = vec![root.to_owned()];
         let mut seen = BTreeSet::new();
@@ -256,6 +284,12 @@ fn guard_rejects_forbidden_dependencies_including_renamed_package_names() {
         ("archcert-application", "sqlx"),
         ("archcert-application", "archcert-storage"),
         ("archcert-domain", "tokio"),
+        ("archcert-domain", "async-openai"),
+        ("archcert-application", "anthropic"),
+        ("archcert-application", "openai-api"),
+        ("archcert-knowledge", "archcert-crypto"),
+        ("archcert-knowledge", "archcert-storage"),
+        ("archcert-knowledge", "archcert-runner"),
         ("archcert-application", "archcert-protocol"),
         ("archcert-domain", "archcert-proto"),
         ("archcert-domain", "prost"),
