@@ -171,3 +171,8 @@ scoped idempotency, row-locked claims, fenced leases, immutable artifact metadat
 issuance bindings and append-only audit through explicit SQLx migrations. Real
 PostgreSQL tests cover concurrency and recovery. HTTP submission remains disabled;
 no worker scheduler is enabled yet. ADRs 0035–0037 govern the implementation.
+
+ImmutableArtifactStore now has an explicitly unencrypted local development
+adapter: project-scoped SHA-256 keys, atomic create-only publication, fsync and
+bounded verified retrieval. ArtifactCipher defines the future encryption seam.
+No production encryption provider or MinIO-specific semantics are implemented.

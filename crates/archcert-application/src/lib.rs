@@ -3,6 +3,7 @@
 use archcert_domain::GitObjectId;
 use thiserror::Error;
 
+pub mod artifacts;
 pub mod configuration;
 pub mod execution;
 pub mod ingress;

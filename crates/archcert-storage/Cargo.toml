@@ -8,6 +8,7 @@ publish.workspace = true
 archcert-domain = { path = "../archcert-domain", version = "=0.1.0" }
 archcert-application = { path = "../archcert-application", version = "=0.1.0" }
 async-trait.workspace = true
+rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "json", "migrate"] }

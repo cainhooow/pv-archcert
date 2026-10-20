@@ -47,3 +47,15 @@ kept outside target/, are the specific docs/certificates/development/ and
  docs/source-ingress/development/ trees; currently they remain visibly untracked
 for review. New engineering records stay untracked, while ADRs and architecture
 contracts are committed with their implementation.
+
+Bulk storage currently uses the explicitly selected unencrypted development
+filesystem adapter through ImmutableArtifactStore. The port requires S3-compatible
+conditional create-only put and verified bounded get, with project-scoped SHA-256
+keys. No MinIO-specific behavior enters the application. The authority creates
+an existing private 0700 absolute object root. Writes fsync bytes, publish without
+replacement, fsync directories and rehash on retrieval. Database STAGING metadata
+becomes AVAILABLE only after independent byte verification. Orphan staging files
+and unreferenced immutable objects remain unavailable and require reviewed cleanup;
+no background deletion can accidentally remove issued evidence. ArtifactCipher
+reserves authenticated envelope encryption behind a provider port. Production
+private storage needs an actual encryption adapter; none is simulated here.
