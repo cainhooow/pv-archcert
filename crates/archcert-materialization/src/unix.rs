@@ -179,6 +179,8 @@ fn recovery_directories(
 struct Node {
     device: u64,
     inode: u64,
+    // POSIX entry type (S_IFMT), independent of permission changes during sealing.
+    kind: u64,
 }
 impl Node {
     fn of(file: &File) -> Result<Self, Error> {
@@ -186,6 +188,7 @@ impl Node {
         Ok(Self {
             device: m.dev(),
             inode: m.ino(),
+            kind: m.mode() as u64 & 0o170000,
         })
     }
     fn at(parent: &File, name: &OsStr) -> Result<Self, Error> {
@@ -194,6 +197,7 @@ impl Node {
         Ok(Self {
             device: stat.st_dev as u64,
             inode: stat.st_ino as u64,
+            kind: stat.st_mode as u64 & 0o170000,
         })
     }
 }
@@ -909,6 +913,7 @@ impl Walk<'_> {
             let node = Node {
                 device: stat.st_dev as u64,
                 inode: stat.st_ino as u64,
+                kind: stat.st_mode as u64 & 0o170000,
             };
             if node.device != self.device || self.nodes.get(path.as_str()) != Some(&node) {
                 return Err(Error::EntryTypeConflict);
@@ -1026,6 +1031,7 @@ fn seal_directory(
         let node = Node {
             device: stat.st_dev as u64,
             inode: stat.st_ino as u64,
+            kind: stat.st_mode as u64 & 0o170000,
         };
         if expected.get(&path) != Some(&node) {
             return Err(Error::SealFailed);
