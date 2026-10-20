@@ -36,7 +36,10 @@ environment and uses a fresh empty private Docker configuration; ambient context
 proxy, credential-helper and TLS environment cannot select a different daemon.
 
 Preflight requires Linux, rootless and builtin-seccomp reports, cgroup v2/systemd,
-memory/swap/PID/CPU-limit support, no daemon warnings, and a runc default/runtime.
+memory/swap/PID/CPU-limit support, no unknown/required-resource warnings, and a
+runc default/runtime. The explicit warning allowlist covers only missing cpuset
+pinning and block-I/O throttling, which this profile does not enforce; those
+warnings remain recorded in evidence. Missing required limit flags still reject.
 Target configuration independently requires runc and private cgroup namespaces.
 Preparation containers explicitly select runc/private cgroups and never start.
 Execution evidence records the selected `authority/endpoint`, reported daemon ID,

@@ -137,6 +137,7 @@ impl DockerRuntime {
             "SecurityOptions".into(),
             info["SecurityOptions"].to_string(),
         );
+        runtime_information.insert("Warnings".into(), info["Warnings"].to_string());
         let components = version["Server"]["Components"]
             .as_array()
             .ok_or(ExecutionError::RuntimeFailure)?;
@@ -228,12 +229,36 @@ fn verify_daemon(info: &Value) -> Result<(), ExecutionError> {
         ]
         .iter()
         .any(|k| info[*k] != true)
-        || !empty(info.get("Warnings"))
+        || !supported_warnings(info.get("Warnings"))
         || info["Runtimes"].get("runc").is_none()
     {
         return Err(ExecutionError::EnvironmentNotProven);
     }
     Ok(())
+}
+
+fn supported_warnings(warnings: Option<&Value>) -> bool {
+    if empty(warnings) {
+        return true;
+    }
+    // This profile enforces CPU quota, not cpuset pinning or block-I/O throttling.
+    // Unknown warnings and missing required resource flags still reject.
+    warnings.and_then(Value::as_array).is_some_and(|items| {
+        items.iter().all(|warning| {
+            matches!(
+                warning.as_str(),
+                Some(
+                    "WARNING: No cpuset support"
+                        | "WARNING: No io.weight support"
+                        | "WARNING: No io.weight (per device) support"
+                        | "WARNING: No io.max (rbps) support"
+                        | "WARNING: No io.max (wbps) support"
+                        | "WARNING: No io.max (riops) support"
+                        | "WARNING: No io.max (wiops) support"
+                )
+            )
+        })
+    })
 }
 
 /// A synchronous guard also attempts bounded cleanup during unwinding. Crashes
@@ -933,6 +958,13 @@ mod tests {
         }
         let mut warning = daemon();
         warning["Warnings"] = serde_json::json!(["No memory limit support"]);
+        assert!(verify_daemon(&warning).is_err());
+        warning["Warnings"] = serde_json::json!([
+            "WARNING: No cpuset support",
+            "WARNING: No io.max (rbps) support"
+        ]);
+        assert!(verify_daemon(&warning).is_ok());
+        warning["MemoryLimit"] = serde_json::json!(false);
         assert!(verify_daemon(&warning).is_err());
     }
     #[test]

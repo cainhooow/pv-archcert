@@ -25,6 +25,12 @@ execution evidence. Require the runc default as well as explicit runc selection
 for both target and never-started preparation resources. This narrows the initial
 profile and avoids relying on a different daemon default for preparation.
 
+The native host reports missing cpuset and block-I/O controller support alongside
+reported CPU-quota/memory/PID support. Explicitly allow only those exact
+warnings and retain them in evidence. This profile does not claim cpuset pinning
+or block-I/O rate enforcement. Unknown warnings or missing required limit support
+still reject; no host-wide delegation change or privileged fallback is permitted.
+
 Expose `archcert-worker doctor` as a non-executing prerequisite diagnostic. It
 does not claim effective enforcement or full readiness and receives no DB, object
 store or signing credentials. Full readiness still requires independently observed
