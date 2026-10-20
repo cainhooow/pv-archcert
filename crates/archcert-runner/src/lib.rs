@@ -11,6 +11,10 @@ mod docker;
 #[cfg(unix)]
 mod gate;
 #[cfg(unix)]
+mod reconciliation;
+#[cfg(unix)]
+pub use reconciliation::{RuntimeObject, RuntimeObjectKind};
+#[cfg(unix)]
 mod process;
 #[cfg(unix)]
 pub use docker::{DockerRootlessRunner, DockerRuntime};

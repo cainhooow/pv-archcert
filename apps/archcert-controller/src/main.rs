@@ -1,4 +1,5 @@
 //! Trusted durable orchestration. Execution runs in a separate credential-free process.
+mod runtime;
 use anyhow::{Context, Result, ensure};
 use archcert_application::{
     artifacts::ImmutableArtifactStore,
@@ -27,6 +28,8 @@ enum Command {
     Provision,
     /// Advances one durable job, or resumes retained evaluation/signing after restart.
     RunOnce(Box<RunArgs>),
+    /// Inspects or safely reconciles exact-attempt runtime ownership and durable state.
+    Reconcile(runtime::ReconcileArgs),
     /// Shows internal authority state, including all attempts.
     Show { job: String },
     /// Recovers expired execution after explicit authority confirmation of cleanup.
@@ -42,6 +45,8 @@ struct RunArgs {
     worker_binary: PathBuf,
     #[arg(long)]
     workspace_root: PathBuf,
+    #[arg(long)]
+    runtime_state_root: Option<PathBuf>,
     #[arg(long)]
     docker: PathBuf,
     #[arg(long)]
@@ -74,6 +79,17 @@ async fn main() -> Result<()> {
     )
     .await?;
     match args.command {
+        Command::Reconcile(args) => {
+            let blocked = runtime::all(&state, &args).await?;
+            println!(
+                "{}",
+                serde_json::json!({"blocked":blocked,"applied":args.apply})
+            );
+            ensure!(
+                !blocked || !args.apply,
+                "runtime reconciliation remains blocked"
+            );
+        }
         Command::Provision => {
             state.provision().await?;
             println!("Authority grants provisioned");
@@ -103,59 +119,94 @@ async fn main() -> Result<()> {
                     "{}",
                     serde_json::to_string_pretty(&state.repository.get(id).await?)?
                 );
-            } else if let Some(assignment) = state
-                .repository
-                .claim(&args.worker_id, args.lease_seconds)
-                .await?
-            {
-                let id = assignment.job.id;
-                checkpoint(&args, "lease");
-                let source = state.source(&assignment.job.inputs)?;
-                let mut source_artifact = Vec::new();
-                archcert_source::write_snapshot(&source, &mut source_artifact)?;
-                let work = WorkerAssignment {
-                    job: id,
-                    attempt: assignment.lease.attempt,
-                    inputs: assignment.job.inputs.clone(),
-                    source_artifact,
+            } else {
+                let root = runtime::state_root(&args)?;
+                let startup = runtime::ReconcileArgs {
+                    docker: args.docker.clone(),
+                    endpoint: args.endpoint.clone(),
+                    runtime_state_root: root.clone(),
+                    workspace_root: args.workspace_root.clone(),
+                    apply: true,
+                    recover: true,
+                    job: None,
                 };
-                state.repository.start(&assignment.lease).await?;
-                let bytes = execute(&state, &assignment.lease, &work, &args).await?;
-                let result = decode_result(&bytes)?;
-                result.validate(id, assignment.lease.attempt, &assignment.job.inputs)?;
-                if args.stop_after.as_deref() == Some("staging") {
-                    let reference = ArtifactReference {
-                        sha256: digest_bytes(&bytes),
-                        size: bytes.len() as u64,
-                        schema: 1,
-                        producer: "archcert-controller-v1/0.1.0".into(),
+                ensure!(
+                    !runtime::all(&state, &startup).await?,
+                    "startup reconciliation is blocked; no new execution admitted"
+                );
+                let runtime = runtime::runtime(&args)?;
+                let binding = runtime::binding(&runtime, &root)?;
+                if let Some(assignment) = state
+                    .repository
+                    .claim(&args.worker_id, args.lease_seconds)
+                    .await?
+                {
+                    let id = assignment.job.id;
+                    checkpoint(&args, "lease");
+                    let source = state.source(&assignment.job.inputs)?;
+                    let mut source_artifact = Vec::new();
+                    archcert_source::write_snapshot(&source, &mut source_artifact)?;
+                    let work = WorkerAssignment {
+                        job: id,
+                        attempt: assignment.lease.attempt,
+                        inputs: assignment.job.inputs.clone(),
+                        source_artifact,
                     };
+                    state.repository.start(&assignment.lease).await?;
                     state
                         .repository
-                        .stage_artifact(id, Some(assignment.lease.attempt), "EXECUTION", &reference)
+                        .bind_runtime(&assignment.lease, &binding)
                         .await?;
-                    checkpoint(&args, "staging");
-                }
-                let reference = persist(
-                    &state,
-                    &assignment.job,
-                    Some(assignment.lease.attempt),
-                    "EXECUTION",
-                    &bytes,
-                )
-                .await?;
-                state
-                    .repository
-                    .accept_evidence(&assignment.lease, &reference)
+                    archcert_runner::ExecutionGateRoot::open(&root)?.create(
+                        id,
+                        assignment.lease.attempt,
+                        &binding,
+                    )?;
+                    let bytes = execute(&state, &assignment.lease, &work, &args).await?;
+                    let result = decode_result(&bytes)?;
+                    result.validate(id, assignment.lease.attempt, &assignment.job.inputs)?;
+                    archcert_runner::ExecutionGateRoot::open(&root)?
+                        .lock(id, assignment.lease.attempt)?
+                        .revoke()?;
+                    if args.stop_after.as_deref() == Some("staging") {
+                        let reference = ArtifactReference {
+                            sha256: digest_bytes(&bytes),
+                            size: bytes.len() as u64,
+                            schema: 1,
+                            producer: "archcert-controller-v1/0.1.0".into(),
+                        };
+                        state
+                            .repository
+                            .stage_artifact(
+                                id,
+                                Some(assignment.lease.attempt),
+                                "EXECUTION",
+                                &reference,
+                            )
+                            .await?;
+                        checkpoint(&args, "staging");
+                    }
+                    let reference = persist(
+                        &state,
+                        &assignment.job,
+                        Some(assignment.lease.attempt),
+                        "EXECUTION",
+                        &bytes,
+                    )
                     .await?;
-                checkpoint(&args, "evidence");
-                resume(&state, id, &args).await?;
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&state.repository.get(id).await?)?
-                );
-            } else {
-                println!("{{\"status\":\"IDLE\"}}");
+                    state
+                        .repository
+                        .accept_evidence(&assignment.lease, &reference)
+                        .await?;
+                    checkpoint(&args, "evidence");
+                    resume(&state, id, &args).await?;
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&state.repository.get(id).await?)?
+                    );
+                } else {
+                    println!("{{\"status\":\"IDLE\"}}");
+                }
             }
         }
     }
@@ -172,10 +223,18 @@ async fn execute(
             && args.worker_binary.canonicalize()? == args.worker_binary,
         "worker executable must be an explicit canonical authority path"
     );
+    use std::os::unix::fs::DirBuilderExt;
+    let workspace = args.workspace_root.join(work.attempt.to_string());
+    archcert_materialization::AuthorityWorkspaceRoot::open(&args.workspace_root)?;
+    std::fs::DirBuilder::new().mode(0o700).create(&workspace)?;
+    let runtime_root = runtime::state_root(args)?;
     let mut child = tokio::process::Command::new(&args.worker_binary)
         .env_clear()
+        .env("TMPDIR", &workspace)
         .arg("--workspace-root")
-        .arg(&args.workspace_root)
+        .arg(&workspace)
+        .arg("--runtime-state-root")
+        .arg(runtime_root)
         .arg("--docker")
         .arg(&args.docker)
         .arg("--endpoint")
@@ -305,6 +364,28 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
         matches!(job.state, JobState::Evaluating | JobState::Signing),
         "job has no continuation"
     );
+    if let Some(attempt) = job.attempts.last()
+        && let Some(bound) = &attempt.runtime
+        && bound.cleanup != RuntimeCleanupState::Succeeded
+    {
+        let root = runtime::state_root(args)?;
+        let runtime = runtime::runtime(args)?;
+        ensure!(
+            runtime::one(
+                state,
+                &runtime,
+                &root,
+                &args.workspace_root,
+                id,
+                attempt.id,
+                true
+            )
+            .await?
+                == RuntimeCleanupState::Succeeded,
+            "durable evidence retained; runtime cleanup must finish before continuation"
+        );
+        job = state.repository.get(id).await?;
+    }
     let attempt = job.attempts.last().context("attempt missing")?;
     let evidence = attempt
         .evidence

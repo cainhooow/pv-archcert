@@ -23,7 +23,7 @@ cargo deny check
 ./scripts/check-architecture
 ```
 
-These are STATIC / DEFAULT GATES. Fifteen OCI tests are explicitly ignored here.
+These are STATIC / DEFAULT GATES. Eighteen OCI tests are explicitly ignored here.
 The architecture test is also part of the default workspace tests.
 
 ## Live OCI gates, opt-in
@@ -35,7 +35,8 @@ ARCHCERT_TEST_IMAGE='python@sha256:AUTHORITY_APPROVED_DIGEST' \
 ./scripts/test-live-oci
 ```
 
-This runs all fifteen tests serially and fails on missing settings/prerequisites.
+This runs the original fifteen hostile tests and three reconciliation tests
+serially and fails on missing settings/prerequisites.
 LIVE OCI GATES — NOT RUN IN STANDARD CI. Use the same pinned image and explicit
 endpoint for independent cleanup queries. The simulator tests use trusted host
 /usr/bin/python3 and never execute project code. Run default and live suites

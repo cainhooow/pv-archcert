@@ -236,8 +236,12 @@ elif mode == "process":
     for mapping in (uid_map, gid_map):
         rows = [list(map(int, row.split())) for row in mapping.splitlines()]
         assert rows and [0, 0, 4294967295] not in rows, mapping
+    try:
+        security_label = Path("/proc/self/attr/current").read_text().strip()
+    except OSError as error:
+        security_label = "NOT_OBSERVED:errno=" + str(error.errno)
     print(json.dumps({"uid_map": uid_map, "gid_map": gid_map,
-                      "groups": os.getgroups()}))
+                      "groups": os.getgroups(), "security_label": security_label}))
     for action in (lambda: os.setuid(0), lambda: os.setgid(0)):
         try:
             action()

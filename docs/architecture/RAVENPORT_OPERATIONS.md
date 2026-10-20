@@ -97,8 +97,13 @@ archcert-controller --config /authority/control-plane.json run-once \
   --development-key /authority/signing/development.der \
   --public-key /authority/signing/public.hex
 archcert-controller --config /authority/control-plane.json show JOB_UUID
-archcert-controller --config /authority/control-plane.json recover JOB_UUID \
-  --cleanup-confirmed
+archcert-controller --config /authority/control-plane.json reconcile \
+  --workspace-root /authority/workspaces --runtime-state-root /authority/workspaces.runtime \
+  --docker /absolute/docker --endpoint unix:///authority/rootless.sock
+# After reviewing the inspection, apply bounded fenced cleanup and safe recovery:
+archcert-controller --config /authority/control-plane.json reconcile \
+  --workspace-root /authority/workspaces --runtime-state-root /authority/workspaces.runtime \
+  --docker /absolute/docker --endpoint unix:///authority/rootless.sock --apply --recover
 ```
 
 Run-once first resumes a retained EVALUATING/SIGNING job, otherwise claims queued
@@ -112,13 +117,30 @@ only source/plan bytes plus explicit runtime configuration. The worker has no DB
 object-store or signing dependency. The existing fixed target environment remains
 credential-free.
 
-Lease expiry never proves target termination. LEASED attempts can recover before
-target start; RUNNING attempts require an operator to confirm source workspace,
-container and job-image cleanup before requeue. `recover` is an authority command,
-not an anonymously callable endpoint. This development topology does not provide
-remote process fencing or an automatic runtime orphan reconciler. A stale result
-is transactionally fenced even if its target kept running. Maximum attempts are
-pinned at admission (1–3); target/policy rejection never queues another attempt.
+Lease expiry never proves target termination. Stoneward binds a persistent local
+gate to the exact job/attempt/runtime before dispatch. Every execution holds its
+exclusive lock through runtime creation and cleanup. Startup reconciliation
+inspects owned resources and expired DB attempts. A valid live attempt is left
+alone; a busy gate, unknown ownership, disagreement or pending create/commit blocks
+new execution. Revocation is fsynced locally before the database fence commits.
+Old workers cannot create a later execution through a revoked gate. Exact-label/
+identity checks precede removal; containers are removed before job images and
+absence is independently checked before durable SUCCEEDED cleanup permits retry.
+No global prune or caller cleanup assertion grants authority. Maximum attempts
+remain pinned (1–3); target/policy rejection never retries. See ADR 0039 for the
+single-host trust model, late-create uncertainty and crash-ordering invariant.
+
+The default gate root is the authority workspace path with extension `.runtime`;
+`--runtime-state-root` explicitly overrides it. All controllers and workers on this
+single host must share the same canonical private root. It contains retained
+revocation tombstones and must not be reset/deleted to unblock recovery. Attempt
+workspaces are UUID subdirectories beneath the authority workspace root. Cleanup
+is descriptor-relative, bounded and does not follow source symlinks. Admission
+requires at least 1 GiB available space and 1024 free inodes on the gate/workspace
+filesystem; inventory is bounded at 256 owned-labelled objects. Capacity failure
+blocks work while allowing inspection/cleanup. This is not a storage scheduler or
+a reservation against other host users; separate filesystem layouts need separate
+capacity monitoring. The native qualification layout uses one local ext4 mount.
 
 After evidence acceptance, continuation reads/revalidates the exact immutable
 result artifact and original source/plan/policy. The evaluation phase time is
@@ -154,4 +176,4 @@ container; an invalid/unavailable runtime exits nonzero. This is a runtime
 preflight check, not full service readiness or native qualification. See
 [native qualification status](../qualification/NATIVE_LINUX_RUNNER.md) and
 [ADR 0038](../adr/0038-stoneward-native-qualification-profile.md). Current running
-attempt recovery still requires the explicit authority cleanup path above.
+attempt recovery requires the fenced reconciliation path above.

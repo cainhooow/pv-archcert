@@ -28,6 +28,8 @@ struct Args {
     docker: PathBuf,
     #[arg(long)]
     endpoint: String,
+    #[arg(long)]
+    runtime_state_root: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -68,7 +70,14 @@ fn main() -> Result<()> {
     let mut store = MemorySourceStore::default();
     store.retain(snapshot)?;
     let materializer = UnixSourceMaterializer::new(AuthorityWorkspaceRoot::open(&workspace_root)?);
-    let runner = DockerRootlessRunner::new(DockerRuntime::new(args.docker, args.endpoint)?);
+    let runner = DockerRootlessRunner::for_attempt(
+        DockerRuntime::new(args.docker, args.endpoint)?,
+        args.runtime_state_root.ok_or_else(|| {
+            anyhow::anyhow!("--runtime-state-root is required for durable execution")
+        })?,
+        assignment.job,
+        assignment.attempt,
+    );
     let mut steps = Vec::new();
     for step in plan.steps() {
         let prepared = materialize_source(

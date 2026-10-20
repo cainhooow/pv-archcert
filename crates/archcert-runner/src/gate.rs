@@ -75,6 +75,7 @@ impl ExecutionGateRoot {
     }
     /// Creates a never-reused attempt gate before dispatch. Existing files reject.
     pub fn create(&self, job: JobId, attempt: AttemptId, binding: &RuntimeBinding) -> Result<()> {
+        capacity(&self.directory)?;
         binding.validate().map_err(failure)?;
         let mut file = File::from(
             openat(
@@ -150,6 +151,8 @@ impl ExecutionGateRoot {
         file.seek(SeekFrom::End(0)).map_err(failure)?;
         Ok(ExecutionGateLease {
             file,
+            job,
+            attempt,
             binding: header.binding,
             revoked,
             pending,
@@ -160,11 +163,17 @@ impl ExecutionGateRoot {
 /// Exclusive operation gate; dropping it releases the OS lock, never revocation.
 pub struct ExecutionGateLease {
     file: File,
+    job: JobId,
+    attempt: AttemptId,
     binding: RuntimeBinding,
     revoked: bool,
     pending: bool,
 }
 impl ExecutionGateLease {
+    /// Exact immutable scope; a revoked gate cannot authorize another attempt's cleanup.
+    pub fn matches(&self, job: JobId, attempt: AttemptId) -> bool {
+        self.job == job && self.attempt == attempt
+    }
     /// Immutable observed runtime binding.
     pub fn binding(&self) -> &RuntimeBinding {
         &self.binding
@@ -179,6 +188,7 @@ impl ExecutionGateLease {
     }
     /// Required before each complete execution. The exclusive lock lasts through cleanup.
     pub fn authorize(&self) -> Result<()> {
+        capacity(&self.file)?;
         if self.revoked || self.pending {
             Err(ExecutionError::EnvironmentNotProven)
         } else {
@@ -216,6 +226,17 @@ impl ExecutionGateLease {
         self.pending = false;
         Ok(())
     }
+}
+
+fn capacity(file: &File) -> Result<()> {
+    let stat = rustix::fs::fstatvfs(file).map_err(failure)?;
+    // A bounded admission defense, not a storage scheduler or reserved-space guarantee.
+    if (stat.f_bavail as u128) * (stat.f_frsize as u128) < 1024 * 1024 * 1024
+        || stat.f_favail < 1024
+    {
+        return Err(ExecutionError::EnvironmentNotProven);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

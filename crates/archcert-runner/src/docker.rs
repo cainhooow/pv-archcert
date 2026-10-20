@@ -1,5 +1,6 @@
 use crate::{
     archive,
+    gate::{ExecutionGateLease, ExecutionGateRoot},
     process::{self, IoPolicy, ProcessOutput},
 };
 use archcert_application::{
@@ -7,10 +8,12 @@ use archcert_application::{
     materialization::{CleanupStatus, VerifiedSourceExport},
 };
 use archcert_domain::execution::*;
+use archcert_domain::jobs::{AttemptId, JobId};
 use serde_json::Value;
 use std::{
     collections::BTreeSet,
     fs,
+    os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt},
     path::{Component, Path, PathBuf},
     process::Command,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -27,6 +30,10 @@ pub struct DockerRuntime {
     configuration: tempfile::TempDir,
 }
 impl DockerRuntime {
+    /// Observes required runtime configuration without creating target resources.
+    pub fn observed_identity(&self) -> Result<ObservedRuntimeIdentity, ExecutionError> {
+        self.preflight()
+    }
     /// Requires an absolute trusted executable and explicit Unix API endpoint.
     /// A fresh empty Docker config excludes proxies, auth and credential helpers.
     pub fn new(executable: PathBuf, endpoint: String) -> Result<Self, ExecutionError> {
@@ -47,6 +54,8 @@ impl DockerRuntime {
         let configuration = tempfile::Builder::new()
             .prefix("archcert-runtime-")
             .tempdir()
+            .map_err(|_| ExecutionError::RuntimeFailure)?;
+        fs::set_permissions(configuration.path(), fs::Permissions::from_mode(0o700))
             .map_err(|_| ExecutionError::RuntimeFailure)?;
         fs::write(configuration.path().join("config.json"), b"{}")
             .map_err(|_| ExecutionError::RuntimeFailure)?;
@@ -70,7 +79,7 @@ impl DockerRuntime {
             .args(args);
         command
     }
-    fn call(
+    pub(crate) fn call(
         &self,
         args: &[String],
         input: &[u8],
@@ -96,7 +105,7 @@ impl DockerRuntime {
         }
         Ok(output)
     }
-    fn json(&self, args: &[&str]) -> Result<Value, ExecutionError> {
+    pub(crate) fn json(&self, args: &[&str]) -> Result<Value, ExecutionError> {
         let args = args.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
         let out = self.call(&args, &[], CONTROL_BYTES)?;
         serde_json::from_slice(&out.stdout.excerpt).map_err(|_| ExecutionError::RuntimeFailure)
@@ -108,7 +117,8 @@ impl DockerRuntime {
             CONTROL_BYTES,
         );
     }
-    fn preflight(&self) -> Result<ObservedRuntimeIdentity, ExecutionError> {
+    pub(crate) fn preflight(&self) -> Result<ObservedRuntimeIdentity, ExecutionError> {
+        let endpoint_epoch = self.endpoint_epoch()?;
         let info = self.json(&["info", "--format", "{{json .}}"])?;
         verify_daemon(&info)?;
         let version = self.json(&["version", "--format", "{{json .}}"])?;
@@ -118,6 +128,7 @@ impl DockerRuntime {
         }
         let mut runtime_information = std::collections::BTreeMap::new();
         runtime_information.insert("authority/endpoint".into(), self.endpoint.clone());
+        runtime_information.insert("authority/endpoint-epoch".into(), endpoint_epoch.clone());
         for key in [
             "ID",
             "KernelVersion",
@@ -147,6 +158,9 @@ impl DockerRuntime {
                 field(component, "Version")?.into(),
             );
         }
+        if self.endpoint_epoch()? != endpoint_epoch {
+            return Err(ExecutionError::RuntimeFailure);
+        }
         Ok(ObservedRuntimeIdentity {
             client_path: self
                 .executable
@@ -158,16 +172,75 @@ impl DockerRuntime {
             runtime_information,
         })
     }
+    fn endpoint_epoch(&self) -> Result<String, ExecutionError> {
+        let path = self
+            .endpoint
+            .strip_prefix("unix://")
+            .ok_or(ExecutionError::InvalidRuntimeConfiguration)?;
+        let metadata = fs::symlink_metadata(path).map_err(|_| ExecutionError::RuntimeFailure)?;
+        if !metadata.file_type().is_socket() {
+            return Err(ExecutionError::EnvironmentNotProven);
+        }
+        Ok(format!(
+            "{}:{}:{}:{}",
+            metadata.dev(),
+            metadata.ino(),
+            metadata.ctime(),
+            metadata.ctime_nsec()
+        ))
+    }
 }
 
 /// Initial OCI backend. All target commands run inside a verified rootless sandbox.
 pub struct DockerRootlessRunner {
     runtime: DockerRuntime,
+    attempt: Option<AttemptScope>,
+}
+struct AttemptScope {
+    job: JobId,
+    attempt: AttemptId,
+    gate_root: PathBuf,
 }
 impl DockerRootlessRunner {
     /// Composes an explicit authority-owned Docker client.
     pub fn new(runtime: DockerRuntime) -> Self {
-        Self { runtime }
+        Self {
+            runtime,
+            attempt: None,
+        }
+    }
+    /// Requires the durable attempt gate created by the trusted controller.
+    /// The worker has no ungated fallback for a pinned assignment.
+    pub fn for_attempt(
+        runtime: DockerRuntime,
+        gate_root: PathBuf,
+        job: JobId,
+        attempt: AttemptId,
+    ) -> Self {
+        Self {
+            runtime,
+            attempt: Some(AttemptScope {
+                job,
+                attempt,
+                gate_root,
+            }),
+        }
+    }
+    fn execution_gate(&self) -> Result<Option<ExecutionGateLease>, ExecutionError> {
+        self.attempt
+            .as_ref()
+            .map(|scope| {
+                let gate =
+                    ExecutionGateRoot::open(&scope.gate_root)?.lock(scope.job, scope.attempt)?;
+                gate.authorize()?;
+                if gate.binding().endpoint != self.runtime.endpoint
+                    || gate.binding().gate_root != scope.gate_root.to_string_lossy()
+                {
+                    return Err(ExecutionError::EnvironmentNotProven);
+                }
+                Ok(gate)
+            })
+            .transpose()
     }
     /// Non-executing capability probe. Failure never permits a rootful fallback.
     pub fn verify_environment(&self) -> Result<ObservedRuntimeIdentity, ExecutionError> {
@@ -350,6 +423,12 @@ impl Drop for SandboxLease<'_> {
 
 impl<S: VerifiedSourceExport> SandboxRunner<S> for DockerRootlessRunner {
     fn execute(&self, request: ExecutionRequest<S>) -> Result<ExecutionResult, ExecutionFailure> {
+        let mut gate = self.execution_gate().map_err(|error| ExecutionFailure {
+            error,
+            evidence: None,
+            cleanup: CleanupStatus::NotCreated,
+            events: vec![ExecutionEvent::ExecutionPrepared],
+        })?;
         let id = ExecutionId::new();
         let mut lease = SandboxLease {
             runtime: &self.runtime,
@@ -360,7 +439,7 @@ impl<S: VerifiedSourceExport> SandboxRunner<S> for DockerRootlessRunner {
             destroyed: false,
         };
         let mut events = vec![ExecutionEvent::ExecutionPrepared];
-        let attempt = self.execute_inner(&request, id, &mut lease, &mut events);
+        let attempt = self.execute_inner(&request, id, &mut lease, &mut events, &mut gate);
         let cleanup = lease.cleanup();
         if cleanup == CleanupStatus::Failed {
             events.push(ExecutionEvent::SandboxCleanupFailed);
@@ -395,6 +474,7 @@ impl DockerRootlessRunner {
         id: ExecutionId,
         lease: &mut SandboxLease<'_>,
         events: &mut Vec<ExecutionEvent>,
+        gate: &mut Option<ExecutionGateLease>,
     ) -> Result<ExecutionEvidence, ExecutionError> {
         let started = Instant::now();
         let started_at_ms = now()?;
@@ -422,7 +502,12 @@ impl DockerRootlessRunner {
             return Err(ExecutionError::SourceIntegrity);
         }
         let source_tar = archive::encode(&files)?;
-        let observed_runtime = self.runtime.preflight()?;
+        let mut observed_runtime = self.runtime.preflight()?;
+        if gate.as_ref().is_some_and(|gate| {
+            observed_runtime.runtime_information.get("ID") != Some(&gate.binding().daemon_id)
+        }) {
+            return Err(ExecutionError::EnvironmentNotProven);
+        }
         let image = self
             .runtime
             .json(&["image", "inspect", request.profile().image()])?;
@@ -455,11 +540,11 @@ impl DockerRootlessRunner {
             "--entrypoint",
             "/usr/bin/env",
         ]);
-        add_labels(&mut prepare, id, request);
+        add_labels(&mut prepare, id, request, self.attempt.as_ref());
         prepare.push(base_image_id.clone());
         prepare.push("--version".into());
         lease.touched = true;
-        self.runtime.call(&prepare, &[], CONTROL_BYTES)?;
+        self.creation_call(&prepare, gate)?;
         self.runtime.call(
             &strings(&[
                 "container",
@@ -471,21 +556,38 @@ impl DockerRootlessRunner {
             &source_tar,
             CONTROL_BYTES,
         )?;
-        self.runtime.call(
+        self.creation_call(
             &strings(&["container", "commit", &lease.prep, &lease.image_tag]),
-            &[],
-            CONTROL_BYTES,
+            gate,
         )?;
         let committed = self.runtime.json(&["image", "inspect", &lease.image_tag])?;
         let execution_image_id = image_id(&first(&committed)?["Id"])?;
-        let mut create = target_args(request, id, &lease.target, &execution_image_id, image_env)?;
-        self.runtime.call(&create, &[], CONTROL_BYTES)?;
+        let mut create = target_args(
+            request,
+            id,
+            &lease.target,
+            &execution_image_id,
+            image_env,
+            self.attempt.as_ref(),
+        )?;
+        self.creation_call(&create, gate)?;
         create.clear();
         events.push(ExecutionEvent::SandboxCreated);
         let inspection = self
             .runtime
             .json(&["container", "inspect", &lease.target])?;
+        observed_runtime.runtime_information.insert(
+            "container/AppArmorProfile".into(),
+            first(&inspection)?["AppArmorProfile"]
+                .as_str()
+                .unwrap_or("NOT_OBSERVED")
+                .into(),
+        );
         verify_container(first(&inspection)?, request, id, &execution_image_id)?;
+        verify_attempt_labels(
+            &first(&inspection)?["Config"]["Labels"],
+            self.attempt.as_ref(),
+        )?;
         let view = self.runtime.call(
             &strings(&["container", "cp", &format!("{}:/source", lease.target), "-"]),
             &[],
@@ -533,6 +635,13 @@ impl DockerRootlessRunner {
             .runtime
             .json(&["container", "inspect", &lease.target])?;
         let after = first(&after)?;
+        if observed_runtime
+            .runtime_information
+            .get("authority/endpoint-epoch")
+            != Some(&self.runtime.endpoint_epoch()?)
+        {
+            return Err(ExecutionError::RuntimeFailure);
+        }
         if after["State"]["Running"] != false || after["State"]["Dead"] != false {
             return Err(ExecutionError::RuntimeFailure);
         }
@@ -570,6 +679,20 @@ impl DockerRootlessRunner {
             outcome,
         })
     }
+    fn creation_call(
+        &self,
+        args: &[String],
+        gate: &mut Option<ExecutionGateLease>,
+    ) -> Result<(), ExecutionError> {
+        if let Some(gate) = gate {
+            gate.begin_creation()?;
+        }
+        self.runtime.call(args, &[], CONTROL_BYTES)?;
+        if let Some(gate) = gate {
+            gate.finish_creation()?;
+        }
+        Ok(())
+    }
 }
 fn now() -> Result<u64, ExecutionError> {
     SystemTime::now()
@@ -582,15 +705,40 @@ fn add_labels<S: VerifiedSourceExport>(
     args: &mut Vec<String>,
     id: ExecutionId,
     request: &ExecutionRequest<S>,
+    scope: Option<&AttemptScope>,
 ) {
     for label in [
         format!("archcert.job={id}"),
         format!("archcert.workspace={}", request.input().workspace()),
         "archcert.owner=execution-v1".into(),
+        "archcert.ownership=2".into(),
+        format!("archcert.execution={id}"),
+        format!(
+            "archcert.certification-job={}",
+            scope.map_or_else(|| "standalone".into(), |s| s.job.to_string())
+        ),
+        format!(
+            "archcert.attempt={}",
+            scope.map_or_else(|| "standalone".into(), |s| s.attempt.to_string())
+        ),
     ] {
         args.push("--label".into());
         args.push(label);
     }
+}
+fn verify_attempt_labels(
+    labels: &Value,
+    scope: Option<&AttemptScope>,
+) -> Result<(), ExecutionError> {
+    let job = scope.map_or_else(|| "standalone".into(), |s| s.job.to_string());
+    let attempt = scope.map_or_else(|| "standalone".into(), |s| s.attempt.to_string());
+    if labels["archcert.certification-job"] != job
+        || labels["archcert.attempt"] != attempt
+        || labels["archcert.ownership"] != "2"
+    {
+        return Err(ExecutionError::EnvironmentNotProven);
+    }
+    Ok(())
 }
 fn tmpfs(path: &str, bytes: u64, executable: bool) -> String {
     format!(
@@ -604,6 +752,7 @@ fn target_args<S: VerifiedSourceExport>(
     name: &str,
     image: &str,
     image_env: &[Value],
+    scope: Option<&AttemptScope>,
 ) -> Result<Vec<String>, ExecutionError> {
     let limits = request.profile().limits();
     let mut args = strings(&[
@@ -676,7 +825,7 @@ fn target_args<S: VerifiedSourceExport>(
         args.push("--env".into());
         args.push(format!("{key}={value}"));
     }
-    add_labels(&mut args, id, request);
+    add_labels(&mut args, id, request, scope);
     args.push(image.into());
     args.push("-i".into());
     args.extend(environment.iter().map(|(k, v)| format!("{k}={v}")));
@@ -723,6 +872,8 @@ fn verify_container<S: VerifiedSourceExport>(
         || c["Labels"]["archcert.job"] != id.to_string()
         || c["Labels"]["archcert.workspace"] != request.input().workspace().to_string()
         || c["Labels"]["archcert.owner"] != "execution-v1"
+        || c["Labels"]["archcert.execution"] != id.to_string()
+        || c["Labels"]["archcert.ownership"] != "2"
         || c["Hostname"] != "archcert"
         || c["Healthcheck"]["Test"] != serde_json::json!(["NONE"])
         || h["RestartPolicy"]["Name"] != "no"
@@ -864,7 +1015,9 @@ mod tests {
             include_bytes!("../tests/fixtures/runtime_mock.py"),
         )?;
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
-        let runtime = DockerRuntime::new(executable, "unix:///not-a-real-runtime.sock".into())?;
+        let socket = temp.path().join("runtime.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket)?;
+        let runtime = DockerRuntime::new(executable, format!("unix://{}", socket.display()))?;
         fs::write(
             runtime.configuration.path().join("config.json"),
             serde_json::to_vec(&serde_json::json!({"mock_mode":mode,"info":daemon()}))?,
@@ -1010,10 +1163,8 @@ mod tests {
         );
         assert!(identity.client_path.ends_with("runtime-mock"));
         assert_eq!(identity.runtime_information["ID"], "test-daemon");
-        assert_eq!(
-            identity.runtime_information["authority/endpoint"],
-            "unix:///not-a-real-runtime.sock"
-        );
+        assert!(identity.runtime_information["authority/endpoint"].starts_with("unix:///"));
+        assert!(identity.runtime_information["authority/endpoint"].ends_with("/runtime.sock"));
         Ok(())
     }
     #[test]
@@ -1048,6 +1199,37 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn a_stale_worker_cannot_create_a_later_target_after_durable_gate_revocation() -> TestResult {
+        let (root, runtime) = mock("removed")?;
+        let gate_root = root.path().canonicalize()?;
+        fs::set_permissions(&gate_root, fs::Permissions::from_mode(0o700))?;
+        let job = JobId::new();
+        let attempt = AttemptId::new();
+        let binding = archcert_application::jobs::RuntimeBinding {
+            endpoint: runtime.endpoint.clone(),
+            daemon_id: "test-daemon".into(),
+            gate_root: gate_root.to_string_lossy().into(),
+        };
+        let gates = ExecutionGateRoot::open(&gate_root)?;
+        gates.create(job, attempt, &binding)?;
+        gates.lock(job, attempt)?.revoke()?;
+        let calls = runtime.configuration.path().join("calls.jsonl");
+        let runner = DockerRootlessRunner::for_attempt(runtime, gate_root, job, attempt);
+        let (_source_root, source_cleanup, request) = request()?;
+        let result = runner.execute(request);
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().ok_or("expected rejection")?.cleanup,
+            CleanupStatus::NotCreated
+        );
+        assert!(
+            !calls.exists(),
+            "a stale worker must be rejected before any runtime API request"
+        );
+        source_cleanup.destroy()?;
+        Ok(())
+    }
+    #[test]
     fn argv_has_no_shell_host_mounts_runtime_socket_or_ambient_environment() -> TestResult {
         let (_root, lease, request) = request()?;
         let args = target_args(
@@ -1056,6 +1238,7 @@ mod tests {
             "job",
             "sha256:test",
             &[serde_json::json!("GITHUB_TOKEN=image-value")],
+            None,
         )?;
         assert!(args.contains(&"--network=none".into()));
         assert!(args.contains(&"--read-only".into()));
@@ -1089,7 +1272,7 @@ mod tests {
         let id = ExecutionId::new();
         let mut valid: Value =
             serde_json::from_str(include_str!("../tests/fixtures/docker-inspect.json"))?;
-        valid["Config"]["Labels"] = serde_json::json!({"archcert.job":id.to_string(),"archcert.workspace":request.input().workspace().to_string(),"archcert.owner":"execution-v1"});
+        valid["Config"]["Labels"] = serde_json::json!({"archcert.job":id.to_string(),"archcert.execution":id.to_string(),"archcert.ownership":"2","archcert.workspace":request.input().workspace().to_string(),"archcert.owner":"execution-v1"});
         let image = format!("sha256:{}", "a".repeat(64));
         verify_container(&valid, &request, id, &image)?;
         for (key, value) in [

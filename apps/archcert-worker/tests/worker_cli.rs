@@ -26,6 +26,9 @@ fn doctor_reports_observed_identity_without_authority_environment()
     use std::{fs, os::unix::fs::PermissionsExt};
     let root = tempfile::tempdir()?;
     let executable = root.path().join("runtime");
+    let socket = root.path().join("runtime.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket)?;
+    let endpoint = format!("unix://{}", socket.display());
     fs::write(
         &executable,
         r#"#!/usr/bin/python3
@@ -54,14 +57,14 @@ else:
         .env("DOCKER_CONTEXT", "ambient-context-canary")
         .arg("--docker")
         .arg(&executable)
-        .args(["--endpoint", "unix:///test-only.sock", "doctor"])
+        .args(["--endpoint", &endpoint, "doctor"])
         .stdin(std::process::Stdio::null())
         .output()?;
     assert!(output.status.success(), "{:?}", output.stderr);
     let observed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(
         observed["runtime_information"]["authority/endpoint"],
-        "unix:///test-only.sock"
+        endpoint
     );
     assert_eq!(observed["runtime_information"]["ID"], "test-daemon");
     assert!(!String::from_utf8(output.stdout)?.contains("canary"));

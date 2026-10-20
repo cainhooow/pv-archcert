@@ -34,7 +34,7 @@ retain commands, versions, raw bounded evidence and deviations with the report.
 - [ ] Exercise actual OOM, PID exhaustion, CPU ceilings, tmpfs ENOSPC, timeouts,
       ignored signals, detached children and parent-exit descendants. Confirm whole
       sandbox termination, bounded binary output/digests/truncation and deadlines.
-- [ ] Run every default gate and `./scripts/check-architecture`, then run all 15
+- [ ] Run every default gate and `./scripts/check-architecture`, then run all 18
       opt-in `./scripts/test-live-oci` tests using explicit endpoint/pinned image.
       No ignored test counts as exercised. Capture runtime identity with a CLI run.
 - [ ] Independently query job-labelled containers/images after success, nonzero
@@ -50,7 +50,7 @@ retain commands, versions, raw bounded evidence and deviations with the report.
 ## Future dedicated CI workflow
 
 Standard CI is STATIC / DEFAULT GATES. **LIVE OCI GATES — NOT RUN IN STANDARD CI**.
-The default suite deliberately reports fifteen ignored runtime-dependent tests.
+The default suite deliberately reports eighteen ignored runtime-dependent tests.
 
 A future isolated, ephemeral, dedicated Linux runner should receive only a pinned
 credential-free image and explicit rootless endpoint. Preflight and canary setup

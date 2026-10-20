@@ -211,3 +211,14 @@ status and support limits are in qualification/NATIVE_LINUX_RUNNER.md. Worker
 or gaining control-plane credentials. Runtime evidence now retains the explicitly
 selected Unix endpoint and reported daemon ID/security options/default runtime.
 These observations do not attest runtime binaries or establish native deployment.
+
+Stoneward now adds durable attempt/runtime bindings, irreversible DB fencing,
+audited bounded cleanup states and a persistent local execution gate. Workers
+receive no database credential. Each execution holds the gate through runtime
+operations/cleanup; revoked gates reject stale later steps before the runtime API.
+Controller startup and `reconcile` combine DB state/expiry, the exclusive gate,
+bound daemon identity and exact ownership labels. Busy workers, unknown ownership,
+late-create uncertainty and cleanup failures block retry. Accepted evidence closes
+execution authority; continuation reconciles cleanup before policy/signing without
+rerunning targets. The precise single-host protocol is in ADR 0039. Native OCI and
+PostgreSQL observations exist, but operational qualification is still in progress.

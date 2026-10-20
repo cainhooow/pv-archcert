@@ -73,6 +73,39 @@ pub struct AuthorityWorkspaceRoot {
     location: PathBuf,
 }
 impl AuthorityWorkspaceRoot {
+    /// Removes one authority-created attempt subtree after durable execution revocation.
+    /// The caller must hold the attempt gate; this method grants no runtime authority.
+    /// Traversal is bounded, descriptor-relative, same-device and never follows links.
+    pub fn destroy_attempt_directory(
+        &self,
+        attempt: archcert_domain::jobs::AttemptId,
+    ) -> Result<(), Error> {
+        let name = attempt.to_string();
+        match fs::statat(&self.directory, &name, AtFlags::SYMLINK_NOFOLLOW) {
+            Err(rustix::io::Errno::NOENT) => return Ok(()),
+            Err(_) => return Err(Error::CleanupFailed),
+            Ok(stat) if FileType::from_raw_mode(stat.st_mode) != FileType::Directory => {
+                return Err(Error::CleanupFailed);
+            }
+            _ => {}
+        }
+        let root = directory(&self.directory, &name)?;
+        let node = Node::of(&root)?;
+        if node.device != Node::of(&self.directory)?.device {
+            return Err(Error::CleanupFailed);
+        }
+        let mut remaining = 100_000;
+        let mut owned = BTreeSet::new();
+        recovery_directories(&root, node.device, &mut owned, &mut remaining, 0)?;
+        let mut remaining = 100_000;
+        delete_contents(&root, node.device, &owned, &mut remaining, 0)?;
+        if Node::at(&self.directory, OsStr::new(&name))? != node {
+            return Err(Error::CleanupFailed);
+        }
+        fs::unlinkat(&self.directory, &name, AtFlags::REMOVEDIR)
+            .map_err(|_| Error::CleanupFailed)?;
+        self.directory.sync_all().map_err(|_| Error::CleanupFailed)
+    }
     /// Requires an explicit absolute directory owned by the current effective UID,
     /// with exact mode 0700. No HOME/TMPDIR/configuration is consulted.
     pub fn open(path: &Path) -> Result<Self, Error> {
@@ -102,6 +135,44 @@ impl AuthorityWorkspaceRoot {
             location: path.to_owned(),
         })
     }
+}
+
+fn recovery_directories(
+    root: &File,
+    device: u64,
+    owned: &mut BTreeSet<Node>,
+    remaining: &mut u64,
+    depth: u32,
+) -> Result<(), Error> {
+    let metadata = root.metadata().map_err(|_| Error::CleanupFailed)?;
+    if depth > 128
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.dev() != device
+    {
+        return Err(Error::CleanupFailed);
+    }
+    owned.insert(Node::of(root)?);
+    for entry in Dir::read_from(root).map_err(|_| Error::CleanupFailed)? {
+        let entry = entry.map_err(|_| Error::CleanupFailed)?;
+        let name = entry.file_name();
+        if name.to_bytes() == b"." || name.to_bytes() == b".." {
+            continue;
+        }
+        *remaining = remaining.checked_sub(1).ok_or(Error::CleanupFailed)?;
+        let stat =
+            fs::statat(root, name, AtFlags::SYMLINK_NOFOLLOW).map_err(|_| Error::CleanupFailed)?;
+        if stat.st_dev as u64 != device {
+            return Err(Error::CleanupFailed);
+        }
+        if FileType::from_raw_mode(stat.st_mode) == FileType::Directory {
+            let child = directory(root, name)?;
+            if Node::of(&child)? != Node::at(root, OsStr::from_bytes(name.to_bytes()))? {
+                return Err(Error::CleanupFailed);
+            }
+            recovery_directories(&child, device, owned, remaining, depth + 1)?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1001,6 +1072,36 @@ fn seal_directory(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fenced_attempt_cleanup_removes_sealed_trees_without_following_links()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir()?;
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700))?;
+        let path = root.path().canonicalize()?;
+        let attempt = archcert_domain::jobs::AttemptId::new();
+        let tree = path.join(attempt.to_string());
+        std::fs::create_dir_all(tree.join("sealed/sub"))?;
+        std::fs::write(tree.join("sealed/sub/file"), b"source")?;
+        let canary = path.join("outside-canary");
+        std::fs::write(&canary, b"host")?;
+        std::os::unix::fs::symlink(&canary, tree.join("sealed/link"))?;
+        std::fs::set_permissions(
+            tree.join("sealed/sub"),
+            std::fs::Permissions::from_mode(0o500),
+        )?;
+        std::fs::set_permissions(tree.join("sealed"), std::fs::Permissions::from_mode(0o500))?;
+        let authority = AuthorityWorkspaceRoot::open(&path)?;
+        authority.destroy_attempt_directory(attempt)?;
+        authority.destroy_attempt_directory(attempt)?;
+        assert!(!tree.exists());
+        assert_eq!(std::fs::read(&canary)?, b"host");
+        let other = archcert_domain::jobs::AttemptId::new();
+        std::os::unix::fs::symlink(&path, path.join(other.to_string()))?;
+        assert!(authority.destroy_attempt_directory(other).is_err());
+        assert_eq!(std::fs::read(&canary)?, b"host");
+        Ok(())
+    }
     use archcert_domain::{
         GitObjectId, ProjectId,
         materialization::SnapshotReference,

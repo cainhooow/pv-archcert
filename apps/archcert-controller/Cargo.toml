@@ -8,6 +8,8 @@ anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true
 serde_json.workspace = true
+archcert-runner = { path = "../../crates/archcert-runner", version = "=0.1.0" }
+archcert-materialization = { path = "../../crates/archcert-materialization", version = "=0.1.0" }
 archcert-domain = { path = "../../crates/archcert-domain", version = "=0.1.0" }
 archcert-application = { path = "../../crates/archcert-application", version = "=0.1.0" }
 archcert-control-plane = { path = "../../crates/archcert-control-plane", version = "=0.1.0" }

@@ -38,6 +38,21 @@ Linux qualification is tracked in
 [the qualification report](../qualification/NATIVE_LINUX_RUNNER.md); no native
 guarantee is inferred from default tests or runtime-reported configuration alone.
 
+Stoneward's durable worker path requires an exact-attempt persistent execution
+gate. Revocation precedes the DB fence while the exclusive gate is held; stale
+later steps reject before Docker API access. Runtime reconciliation checks the DB
+binding, gate, daemon identity, ownership version and exact job/attempt/execution
+labels before removal. Unknown ownership is retained. Busy gates, pending creates,
+cleanup errors and disagreement block retry. See ADR 0039 for the single-host
+trusted-worker assumptions and why an empty inventory is insufficient.
+
+Execution evidence records the local Unix socket's device/inode/change-time
+incarnation. A changed endpoint during execution rejects as infrastructure failure
+before target-result classification. This is useful for a directly connected
+native daemon restart; a macOS forwarded socket does not attest the remote daemon's
+incarnation. AppArmorProfile and /proc/self/attr/current observations report actual
+availability/assignment without making AppArmor mandatory or claiming attestation.
+
 ## What the tests establish
 
 Unit/mock tests validate policy, argument construction, configuration downgrades,
