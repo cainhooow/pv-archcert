@@ -1,4 +1,5 @@
 //! Trusted admission/read composition. No execution or signing capability.
+mod ironcrest;
 use archcert_application::{jobs::*, worker::resolve_authority_plan};
 use archcert_domain::{
     ProjectId,
@@ -7,6 +8,7 @@ use archcert_domain::{
     source::{RepositoryId, SourceSnapshot, digest_bytes},
 };
 use archcert_storage::{PostgresJobRepository, artifacts::FilesystemArtifactStore};
+pub use ironcrest::PreparedIroncrestReview;
 use serde::Deserialize;
 use std::{
     io::Read,
@@ -45,6 +47,12 @@ pub struct AuthorityGrant {
     pub authority_toml: String,
     /// Maximum total attempts, authority-bounded to 1–3.
     pub maximum_attempts: u16,
+    /// Explicit new-profile opt-in. Target requests cannot override this selection.
+    #[serde(default)]
+    pub ironcrest: bool,
+    /// Authority-only accepted baseline. None explicitly requires full review.
+    #[serde(default)]
+    pub ironcrest_baseline: Option<SourceSubmissionId>,
 }
 /// Reads an existing private owned regular authority file without symlink following.
 pub fn read_private(path: &Path, maximum: u64) -> Result<Vec<u8>, JobStoreError> {
@@ -89,7 +97,9 @@ impl ControlPlaneConfiguration {
         }
         for (index, g) in config.grants.iter().enumerate() {
             resolve_authority_plan(&g.profile, &g.image, &g.authority_toml)?;
-            if !(1..=3).contains(&g.maximum_attempts)
+            if (g.ironcrest && g.profile != "python")
+                || (!g.ironcrest && g.ironcrest_baseline.is_some())
+                || !(1..=3).contains(&g.maximum_attempts)
                 || config.grants[..index].iter().any(|p| {
                     p.project == g.project && p.repository == g.repository && p.actor == g.actor
                 })
@@ -192,6 +202,9 @@ impl ControlPlane {
         key: IdempotencyKey,
     ) -> Result<CertificationJob, JobStoreError> {
         let grant = self.configuration.grant_for(&actor, project, &repository)?;
+        if grant.ironcrest {
+            return Err(JobStoreError::Precondition);
+        }
         if !self
             .repository
             .authorized(project, &repository, &actor)
@@ -287,6 +300,8 @@ mod tests {
                 authority_toml: include_str!("../../../docs/policy/CONTROLLED_AUTHORITY.toml")
                     .into(),
                 maximum_attempts: 2,
+                ironcrest: false,
+                ironcrest_baseline: None,
             }],
         };
         assert_eq!(configuration.authenticate(token)?, actor);

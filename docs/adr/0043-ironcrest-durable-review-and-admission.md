@@ -1,8 +1,8 @@
 # ADR 0043: Review before immutable execution admission
 
-Status: Partially implemented: session journal, immutable publication, accepted-review
-restore and transactional reviewed admission. Controller and issuance integration
-remain outstanding.
+Status: Implemented: immutable journal, accepted-review recovery, transactional
+reviewed admission and durable controller/issuance composition. Final milestone
+validation and support limits are recorded separately.
 Date: October 20, 2026.
 Extends ADRs 0035–0037 and 0041–0042.
 
@@ -95,9 +95,9 @@ references, rechecks the grant under a shared row lock and accepted target/basel
 then inserts the reserved job ID, final inputs, complete evidence linkage and audit
 in one transaction. Exact concurrent/restarted calls return the same job; conflicts
 reject. Worker leases and historical job inputs are not repurposed. The capability
-has no deserialization constructor. These application/storage APIs still require
-controller and authenticated admission composition; they do not establish the
-complete certification lifecycle alone.
+has no deserialization constructor. Authenticated controller composition now opens
+sessions only for explicit Ironcrest grants, selects pinned authority inputs and
+uses these application services before durable execution admission.
 
 ## Issuance prerequisites
 
@@ -111,7 +111,8 @@ that prerequisite and independent deterministic re-evaluation. PostgreSQL guards
 issuance preparation/completion against missing reviewed linkage or challenge
 publication. Its immutable metadata reads avoid taking the session row lock after
 the job lock. See ADR 0044 for the explicit schema-2 manifest grammar and historical
-certificate compatibility. Controller orchestration is a separate composition step.
+certificate compatibility. The controller restores this evidence before normal
+deterministic evaluation and again when resuming signing preparation.
 
 ## Continuation and signing
 
@@ -160,3 +161,32 @@ Editing JobInputs after review invalidates admitted identity. Reusing worker lea
 expiry for provider retry can produce a different review silently. Storage without
 durable stage metadata cannot safely recover an accepted response. Changing the
 certificate cryptographic format is unnecessary. These alternatives are rejected.
+
+## Controller recovery and controlled validation
+
+The private authority grant opts into Ironcrest and may pin an accepted baseline.
+Historical grants default to their prior behavior. The historical submission API
+rejects a grant requiring Ironcrest; target requests cannot downgrade it. The
+controller provides explicit authenticated `ironcrest open`, `prepare`, `review`
+and scoped `show` commands. Knowledge orchestration remains in application services
+and separate authority composition, not the executable's main function. Private
+operator replay is the only provisioned reviewer. No external adapter is implicit.
+
+Accepted artifacts are deterministically reconstructed with pinned inputs and
+compared against create-only references; differing bytes fail closed. Source,
+profile, baseline and challenge authority never resolve through latest/default.
+Accepted review is restored before any invocation. An unknown claimed outcome
+reports OPERATOR_RECOVERY_REQUIRED; staged accepted response bytes may only be
+restored exactly. An unsupported retained profile requires its original authority
+implementation, rather than reinterpretation under the new profile.
+
+`scripts/demo-ironcrest` exercises real SSH source acceptance, a pinned accepted
+baseline, semantic review, gate/plan publication, transactional admission, rootless
+challenge execution, deterministic eligibility, signing and offline verification.
+The harness sends SIGKILL after each of sixteen explicit durable checkpoints,
+including a separate uncertain provider claim. Accepted target execution remains
+one attempt with the same worker-artifact digest; signing preparation retains one
+payload/time/key identity. Blocker and unavailable-provider sessions never create
+execution jobs. A real failed challenge remains NOT_ELIGIBLE under semantic CLEAR.
+These are controlled engineering regressions, not universal model-quality proof,
+power-loss durability or broader native execution qualification.

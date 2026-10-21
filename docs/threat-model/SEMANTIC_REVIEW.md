@@ -1,6 +1,6 @@
 # Ironcrest semantic review threat model
 
-Scope: the design in ADRs 0041–0043. Implementation and executed validation are
+Scope: the design and integrated controls in ADRs 0041–0044. Implementation and executed validation are
 listed separately in the current architecture snapshot. This is an engineering
 review, not independent certification. Authority provisioning, controller, storage,
 build/toolchain and OS remain trusted. Repository bytes and semantic output are
@@ -47,8 +47,9 @@ accepted source/baseline and the locked actor grant before atomically inserting 
 reserved job and its create-only evidence linkage. Six interrupted object-publication
 boundaries and concurrent/restarted admission are covered by real database tests.
 The gate artifact binds its algorithm, exact accepted review and required bounded
-challenge identities. Controller/issuance integration remains outstanding; these
-controls alone do not prove a complete veto-before-signing lifecycle.
+challenge identities. Controller continuation and issuer preparation now consume
+these controls before signing. The controlled durable blocker/outage paths produce
+no execution job and do not enter the signing path.
 
 The issuance foundation now requires accepted deterministic challenge results before
 constructing the private Ironcrest prerequisite. The new controlled policy requires
@@ -58,3 +59,13 @@ obligations as REQUIRE_MORE_EVIDENCE; provider failure/incomplete context cannot
 authorize execution to resolve an unspecified requirement. Immutable schema-2
 manifests retain the schema-1 deterministic manifest plus all eight exact artifact
 roles. Historical profile/manifest/certificate bytes are never migrated or redefined.
+
+The controlled source-to-certificate regression now kills/restarts actual controller
+processes at sixteen durable checkpoints. Accepted response reuse is exercised with
+the replay file removed and only the unavailable adapter available on restart.
+The uncertain-claim case explicitly remains OPERATOR_RECOVERY_REQUIRED. Replayed
+source/request identity fails through the durable path. A real failed challenge
+under semantic CLEAR produces NOT_ELIGIBLE without reading signer/public-key files.
+These results support implemented capability and recovery boundaries; they do not
+prove model honesty, exactly-once external inference, general test adequacy,
+host power-loss durability or resistance to a compromised authority host.

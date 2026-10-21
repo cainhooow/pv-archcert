@@ -1,6 +1,7 @@
 # Ironcrest dependency review
 
-Scope: passive knowledge extraction and local semantic replay. Date: October 20, 2026. This is a scoped
+Scope: passive knowledge, local semantic replay and durable authority composition.
+Updated: October 21, 2026. This is a scoped
 dependency review, not an independent source audit or parser safety proof.
 
 ## Rust syntax parser
@@ -49,3 +50,24 @@ the parser lives in archcert-knowledge behind the application extractor port.
 
 Validation commands and actual outcomes are retained in the intentionally untracked
 M6 working report and ignored target/m6 logs. cargo-deny must pass before completion.
+
+## Integrated controller and issuance composition
+
+The continuation adds no third-party package or version. Cargo.lock records only
+new existing-workspace edges: control-plane to knowledge, controller to semantic
+and its already resolved async-trait dependency. PostgreSQL, immutable objects,
+TOML/canonical JSON, source loading and Ed25519 reuse the reviewed implementations.
+No provider SDK, HTTP client, dynamic registry loader, generic graph/database,
+process-based reviewer or external disclosure path was added.
+
+Application owns orchestration, canonical evidence identities and private
+reviewed-admission/accepted-challenge prerequisites. Control-plane and controller
+remain trusted composition. New policy data uses the existing deterministic
+command-evidence rule; certificate v1 retains its grammar, signature algorithm and
+offline verifier. Manifest schema 2 is explicit and preserves the complete original
+schema-1 deterministic manifest. See ADR 0044 for compatibility/security details.
+
+Real rootless controlled challenges and source-to-certificate/crash regressions
+exercise this composition. No Stoneward runner, worker, fencing, reconciliation or
+cleanup implementation changed, so no native Linux requalification was required.
+This does not establish a broader qualified execution platform or production keys.

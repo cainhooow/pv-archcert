@@ -1,4 +1,5 @@
 //! Trusted durable orchestration. Execution runs in a separate credential-free process.
+mod ironcrest;
 mod runtime;
 use anyhow::{Context, Result, ensure};
 use archcert_application::{
@@ -24,6 +25,11 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Durable pre-admission Ironcrest lifecycle under explicit authority controls.
+    Ironcrest {
+        #[command(subcommand)]
+        command: ironcrest::IroncrestCommand,
+    },
     /// Explicitly provisions configured development scope grants, without schema DDL.
     Provision,
     /// Checks control-plane/storage readiness without execution or signing.
@@ -72,12 +78,20 @@ struct RunArgs {
     #[arg(long,default_value_t=30,value_parser=clap::value_parser!(u32).range(5..=300))]
     lease_seconds: u32,
     /// Authority-only controlled crash injection. Never read from target configuration.
-    #[arg(long,value_parser=["lease","staging","evidence-upload","evidence","evaluation","prepared","signed","certificate-upload"])]
+    #[arg(long,value_parser=["lease","staging","evidence-upload","evidence","evaluation","prepared","signed","certificate-upload","challenge","before-evaluation","before-signing"])]
     stop_after: Option<String>,
+    /// Authority-only regression hook: wait for the harness to send SIGKILL.
+    #[arg(long)]
+    hold_checkpoint: bool,
 }
 fn checkpoint(args: &RunArgs, stage: &str) {
     if args.stop_after.as_deref() == Some(stage) {
         eprintln!("Controlled Ravenport interruption after {stage}");
+        if args.hold_checkpoint {
+            loop {
+                std::thread::park();
+            }
+        }
         std::process::exit(75);
     }
 }
@@ -90,6 +104,7 @@ async fn main() -> Result<()> {
     )
     .await?;
     match args.command {
+        Command::Ironcrest { command } => ironcrest::command(&state, command).await?,
         Command::Doctor => {
             state.repository.check_readiness().await?;
             state.artifacts.check_readiness()?;
@@ -354,7 +369,11 @@ async fn persist(
     Ok(reference)
 }
 fn policy(inputs: &JobInputs) -> Result<archcert_policy::PolicyBundle> {
-    let bundle = archcert_policy::development_bundle()?;
+    let bundle = if inputs.policy.id == archcert_policy::IRONCREST_CONTROLLED_POLICY_ID {
+        archcert_policy::ironcrest_controlled_bundle()?
+    } else {
+        archcert_policy::development_bundle()?
+    };
     let p = bundle.identity();
     ensure!(
         p.id == inputs.policy.id
@@ -439,6 +458,21 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
         .context("durable evidence missing")?;
     let result = decode_result(&state.artifacts.get(job.inputs.project, evidence).await?)?;
     result.validate(id, attempt.id, &job.inputs)?;
+    let ironcrest = if job.inputs.policy.id == archcert_policy::IRONCREST_CONTROLLED_POLICY_ID {
+        let admission = ironcrest::restore_admission(state, job.inputs.project, id).await?;
+        let workflow = archcert_application::ironcrest::IroncrestWorkflow {
+            repository: &state.repository,
+            artifacts: state.artifacts.as_ref(),
+        };
+        let challenges = workflow
+            .record_challenges(&admission, &job, &result)
+            .await?;
+        checkpoint(args, "challenge");
+        Some(challenges)
+    } else {
+        None
+    };
+    checkpoint(args, "before-evaluation");
     let source = state.source(&job.inputs)?;
     let plan = pinned_plan(&job.inputs)?;
     let bundle = policy(&job.inputs)?;
@@ -516,23 +550,32 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
             .as_secs(),
         |i| i.issued_at,
     );
-    let draft = CertificateDraft::prepare(
-        IssuanceContext {
-            source: &source,
-            plan: &plan,
-            executions: &executions,
-            observations: &observations,
-            execution_records: &records,
-            bundle: &bundle,
-            selected: bundle.identity(),
-        },
-        Some(evaluation),
-        IssuanceMetadata {
-            issued_at,
-            certifier: "archcert-ravenport-development".into(),
-        },
-        key.clone(),
-    )?;
+    checkpoint(args, "before-signing");
+    let ironcrest_evidence = ironcrest.map(|e| e.for_issuance()).transpose()?;
+    let context = IssuanceContext {
+        source: &source,
+        plan: &plan,
+        executions: &executions,
+        observations: &observations,
+        execution_records: &records,
+        bundle: &bundle,
+        selected: bundle.identity(),
+    };
+    let metadata = IssuanceMetadata {
+        issued_at,
+        certifier: "archcert-ravenport-development".into(),
+    };
+    let draft = if let Some(evidence) = &ironcrest_evidence {
+        CertificateDraft::prepare_ironcrest(
+            context,
+            Some(evaluation),
+            metadata,
+            key.clone(),
+            evidence,
+        )?
+    } else {
+        CertificateDraft::prepare(context, Some(evaluation), metadata, key.clone())?
+    };
     let issuance = PreparedIssuance {
         certificate_sha256: draft.certificate().digest().clone(),
         signing_key_id: key.key_id().as_str().into(),

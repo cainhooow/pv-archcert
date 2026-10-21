@@ -223,3 +223,65 @@ lease timestamps, job/attempt state and artifact availability on an error. Prese
 these observations when diagnosing a future failure. Do not treat a successful
 retry as proof that a prior ownership/state failure was harmless. Stable wall-clock
 provisioning remains an operational prerequisite, including outside this VM.
+
+## Ironcrest review before admission
+
+A private authority grant opts into the separately versioned controlled profile:
+`"ironcrest": true` and an authority-selected accepted baseline submission in
+`"ironcrest_baseline"` (or explicit null for full review). This profile supports
+only the controlled Python settlement contract. Historical grants omit these
+fields and retain their previous behavior. A grant requiring Ironcrest is rejected
+by the historical job-submission endpoint; target requests cannot disable review
+or choose provider/profile/baseline/challenge controls.
+
+The authority provisions the same reviewed policy/profile implementation, pinned
+image and base mandatory recipe before recovery. Prepare rechecks exact accepted
+source/baseline and reconstructs artifacts against immutable role references. Any
+differing bytes, missing original version or changed recipe fails closed. Never
+substitute latest authority or silently delete a retained role to permit recovery.
+
+The controller exposes these explicit operator steps after normal migration and
+grant provisioning (all paths belong outside target source/workspaces):
+
+```sh
+archcert-controller --config /private/authority.json ironcrest open \
+  --project PROJECT_UUID --repository REPOSITORY --submission ACCEPTED_SUBMISSION_UUID \
+  --session RESERVED_JOB_UUID --token-file /private/request-token
+archcert-controller --config /private/authority.json ironcrest prepare \
+  --project PROJECT_UUID --session RESERVED_JOB_UUID
+archcert-controller --config /private/authority.json ironcrest review \
+  --project PROJECT_UUID --session RESERVED_JOB_UUID --response-file /private/exact-replay.json
+archcert-controller --config /private/authority.json ironcrest show \
+  --project PROJECT_UUID --session RESERVED_JOB_UUID
+```
+
+`open` authenticates the private bearer token and checks scope before private
+source/knowledge access. `prepare` prints request identity metadata. `review` accepts
+only bounded authority-provisioned exact replay, or represents reviewer unavailability
+when no response file is supplied. A response names only registered template IDs
+and bounded parameters; authority references include bundle digest and entry ID.
+There is no external provider fallback or source-disclosure authorization.
+
+A complete non-blocking review freezes the final additive challenge plan before
+transactional job admission. Its persisted gate records REQUIRE_MORE_EVIDENCE for
+the required registered challenge. Normal `run-once` executes the already frozen
+plan, persists accepted challenge records, runs the existing deterministic evaluator
+and prepares signing only after every prerequisite passes. CONTINUE alone proves
+nothing. BLOCK, unresolved context and provider failure cannot admit a job. A real
+failed challenge cannot reach signing or obtain a certificate.
+
+Repeat `review` without a response file to restore an accepted response; it must
+not call an unavailable reviewer again. OPERATOR_RECOVERY_REQUIRED means a durable
+invocation claim has no recoverable response. It never expires or transfers.
+Operator recovery requires an explicit separately authorized new session/review;
+there is no force-clear or old-token reset command. STAGING response bytes may be
+adopted only through exact verified readback of the original pinned artifact.
+
+The opt-in `scripts/demo-ironcrest` requires a dedicated development PostgreSQL
+database and independently provisioned rootless daemon/pinned Python image. It
+uses real authenticated SSH source, then sends SIGKILL after sixteen explicit
+checkpoints. `--hold-checkpoint` is an authority-only regression hook and otherwise
+has no effect. Accepted target evidence, frozen plans and prepared issuance survive
+restart. Private keys/tokens are temporary; retained engineering output stays under
+ignored target/. The final exported certificate/public key can be verified after
+controller, worker, database and runtime stop; no semantic infrastructure is needed.

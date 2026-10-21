@@ -77,3 +77,21 @@ cryptographically safe. Direct model verdicts, executable model commands, automa
 policy approval and target-supplied provider responses are rejected. Integration
 must not claim completion until durable recovery, controlled challenge execution,
 source-to-certificate and semantic-blocker demonstrations pass.
+
+## Implemented controlled composition
+
+Profile `ironcrest-controlled-v1` version 1.1.0 composes the unchanged review gate
+with registered deterministic obligations. Its immutable gate artifact retains the
+review decision and records REQUIRE_MORE_EVIDENCE while approved challenges remain
+pending. Only complete non-blocking review may freeze that resolvable plan before
+admission. Failed/incomplete required review still blocks. The gate artifact is
+never rewritten to create proof; accepted challenge results and the independently
+evaluated new deterministic policy must satisfy issuance separately.
+
+The durable controller now restores accepted review without reinvocation, persists
+challenge results and passes the private Ironcrest prerequisite to the existing
+issuer. Controlled live blocker/outage paths never admit an execution job or enter
+signing; a real challenge failure remains NOT_ELIGIBLE under semantic CLEAR. The
+manifest extension is explicitly versioned in ADR 0044; certificate v1 and offline
+verification retain their meaning. Local replay is the only configured provider,
+so no live model-quality, drift resistance or universal bug-detection claim follows.

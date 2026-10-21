@@ -1,7 +1,7 @@
 # ADR 0044: Explicit Ironcrest evidence-manifest extension
 
-Status: Implemented construction and compatibility guards; durable controller
-composition and full source-to-certificate validation remain outstanding.
+Status: Implemented construction, compatibility guards and durable controller
+composition; controlled source-to-certificate and restart regressions passed.
 Date: October 21, 2026. Extends ADRs 0025, 0042 and 0043.
 
 ## Context

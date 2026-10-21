@@ -1,11 +1,10 @@
-# Current architecture snapshot — Stoneward with Ironcrest work in progress
+# Current architecture snapshot — Stoneward with integrated Ironcrest
 
-Ironcrest architecture is defined in ADRs 0041–0043 and
-threat-model/SEMANTIC_REVIEW.md. The design adds immutable knowledge, bounded
-semantic veto and authority challenge selection above the existing trust core.
-These components are not yet integrated with durable certification or qualified;
-no Ironcrest completion or semantic issuance guarantee is claimed. Historical
-policy/certificate semantics and the exact Stoneward qualification remain intact.
+Ironcrest architecture is defined in ADRs 0041–0044 and the semantic review threat
+model. Controlled authority-profile review, immutable challenge selection, durable
+admission and issuance are integrated. Final milestone gates and explicit support
+limits are recorded in the M6 working report. This does not broaden Stoneward's
+exact native execution qualification or establish a production certifier.
 
 The initial knowledge core now owns generic graph/provenance/coverage vocabulary,
 explicit scoped authority bundles and an application extractor registry over
@@ -56,8 +55,8 @@ rechecked before admission. Concurrent retries cannot create another job or
 replace an admitted plan. Versioned gate evidence includes its algorithm, accepted
 review and required challenge identities. Real PostgreSQL/private object tests
 cover six interrupted publication boundaries, exact admission/restart and replay
-rejection. Authenticated controller orchestration and issuance remain outstanding;
-these APIs do not establish full Ironcrest completion.
+rejection. Authenticated controller orchestration now consumes these APIs; the
+application capability alone grants no signing authority.
 
 The issuance foundation now has a private accepted-challenge prerequisite, a new
 controlled deterministic policy and explicit schema-2 manifest construction. The
@@ -66,8 +65,9 @@ Ironcrest roles with exact digest/size/schema/producer metadata. Profile version
 1.1.0 records pending required challenges as REQUIRE_MORE_EVIDENCE while retaining
 the review decision. The certificate constructor independently re-evaluates policy;
 CONTINUE creates no PROVEN result. Historical bundle identities, certificate schema
-1, signing and offline verification remain compatible. Controller composition and
-final milestone validation are tracked separately below and in the M6 working report.
+1, signing and offline verification remain compatible. Controller composition
+restores the reviewed chain and accepted challenge evidence before evaluation and
+preparation. Final milestone gates are tracked in the M6 working report.
 
 Migration 0004 and the application IroncrestRepository port now add a separate
 project-scoped pre-admission journal. It checks repository grants and accepted
@@ -82,14 +82,12 @@ publication, reconnect, repeated preparation/gate and no duplicate accepted revi
 Historical job/attempt tables, leases and readiness requirements are unchanged;
 optional journal readiness requires migration 4 explicitly.
 
-Controller execution admission, actual process crash checkpoints, the separately
-versioned Ironcrest issuance profile and evidence-manifest extension remain
-unimplemented. Existing certification paths do not consume the new semantic gate.
-Ironcrest source-to-certificate and semantic-veto-before-signing guarantees therefore
-remain NOT PROVEN. The baseline controller still accepts only its historical policy.
-ADR 0043 defines the required pre-admission review session and recovery boundary:
-the final challenge plan must be frozen before a new immutable job is admitted.
-An admitted Ravenport plan may never be patched to add semantic challenges.
+Controller execution admission, the versioned Ironcrest issuance profile, schema-2
+manifest binding and actual process-crash checkpoints are implemented. Controlled
+source-to-certificate and veto-before-signing regressions passed. The controller
+supports separately pinned historical and Ironcrest policies. ADR 0043 requires
+the final challenge plan to be frozen before the new immutable job is admitted;
+an admitted Ravenport plan may never be patched to add semantic challenges.
 
 ArchCert accepts authenticated SSH Git pushes with bounded SHA-1/SHA-256 packs
 or explicit local loose objects, seals an independently hashed
@@ -323,3 +321,31 @@ absence plus durable SUCCEEDED cleanup precede retry. Uncertain pending daemon
 creation blocks indefinitely. Committed evidence is validated/adopted without a
 target rerun. See ADRs 0038–0040 and the native qualification document for the
 precise trusted-worker/filesystem profile and observed deployment limits.
+
+## Ironcrest controller and validation boundary
+
+Explicit private grants select Ironcrest, mandatory knowledge and an accepted
+baseline before source/knowledge access. Historical grants retain their prior
+behavior; the old submission API refuses grants requiring review. The controller's
+separate Ironcrest module composes application workflow and authority ports. Its
+normal continuation reuses accepted worker evidence, persists exact challenge
+results and independently evaluates the separately pinned Ironcrest policy. The
+issuer additionally requires the private accepted-challenge prerequisite and binds
+schema-2 evidence without changing certificate v1 or offline verification.
+
+The controlled live regression passed authenticated SSH source-to-certificate,
+semantic blocker, unavailable reviewer, persisted replay rejection, a real failing
+challenge under semantic CLEAR, and historical Bottle NOT_ELIGIBLE. Sixteen actual
+SIGKILL checkpoints retain one execution attempt and immutable issuance identity.
+Unknown provider outcome remains OPERATOR_RECOVERY_REQUIRED, never a retry permit.
+Semantic review uses local exact replay; no live external model is configured or
+qualified. Syntax extraction is not compiler resolution; model nondeterminism,
+provider drift, false positives/negatives and injection susceptibility remain.
+There is no universal bug detection or external disclosure authorization by default.
+
+Runner, worker, runtime reconciliation, execution fencing/cleanup, deterministic
+rule evaluation and certificate cryptography/offline verification mechanisms were
+not changed. New policy data, issuance prerequisites and manifest construction sit
+above that qualified execution boundary. Relevant real OCI challenges were rerun;
+no changed Stoneward mechanism required native Linux requalification. The existing
+exact qualified platform and its limitations remain as previously documented.

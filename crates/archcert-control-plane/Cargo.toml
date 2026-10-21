@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
 [dependencies]
+archcert-knowledge = { path = "../archcert-knowledge", version = "=0.1.0" }
 archcert-domain = { path = "../archcert-domain", version = "=0.1.0" }
 archcert-application = { path = "../archcert-application", version = "=0.1.0" }
 archcert-storage = { path = "../archcert-storage", version = "=0.1.0" }

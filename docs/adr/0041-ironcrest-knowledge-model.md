@@ -76,3 +76,13 @@ Historical source/policy/certificate identities are unchanged.
 Mutable checkout analysis breaks source binding. Repository-owned approval files
 confuse data and authority. Compiler-quality resolution claims without a compiler
 are misleading. An extra graph service adds no required capability. All are rejected.
+
+## Integrated authority selection
+
+The controlled authority profile and private grant now select the extractor
+registry, scoped mandatory knowledge, accepted baseline and bounded limits before
+packaging. Durable reconstruction must reproduce exact accepted role digests;
+drift fails closed instead of selecting another baseline or silently replacing
+knowledge. Authority-profile and all knowledge/impact/request identities are bound
+through the explicit evidence-manifest extension in ADR 0044. Syntax extraction
+remains passive and does not become compiler-level semantic resolution.

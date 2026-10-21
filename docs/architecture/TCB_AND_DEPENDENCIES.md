@@ -1,23 +1,38 @@
 # Current trusted computing base and dependency review
 
-## Ironcrest work in progress
+## Ironcrest integrated authority path
 
-The optional review path adds application knowledge/semantic/challenge models and
-ports, archcert-knowledge's pinned passive syntax parser, archcert-semantic's local
-exact replay, and the separate PostgreSQL pre-admission journal in migration 0004.
-IroncrestWorkflow composes the existing project-scoped immutable artifact store
-with create-only role metadata and a single non-expiring provider claim. Its
-readback/restore logic and the metadata adapter are operational TCB for review
-evidence. They have no signer or runtime capability. The semantic provider adapter
-has no database/storage adapter dependency or administrative credentials.
+The controlled review path adds application knowledge/semantic/challenge models,
+ports and private admission/issuance prerequisites; archcert-knowledge's passive
+syntax parser; archcert-semantic's local exact replay; and the independent
+PostgreSQL review/admission journal in migrations 0004–0005. IroncrestWorkflow
+composes verified immutable object publication with create-only role metadata,
+one non-expiring invocation claim, exact review restore, gate/plan freeze and
+accepted deterministic challenge evidence. These services grant no signer or
+runtime capability to a reviewer or extractor.
 
-The original certificate/controller path does not consume these new components
-yet. Full Ironcrest admission, issuance binding and process recovery are not
-implemented or qualified. See ADRs 0041–0043 and the current architecture snapshot.
-IRONCREST_DEPENDENCY_REVIEW.md documents newly active parser risk; the journal
-reuses existing SQLx/PostgreSQL/serialization dependencies without new packages,
-services or license exceptions. Historical job/attempt/fencing tables and signing
-semantics remain unchanged.
+archcert-control-plane now selects accepted target/baseline, the fixed versioned
+profile, scoped mandatory knowledge and extractor registry under a private grant.
+The controller's separate Ironcrest module composes those application services;
+normal continuation restores accepted review/challenge evidence before policy and
+certificate preparation. Policy data adds a distinct controlled bundle requiring
+the challenge, while the deterministic rule engine remains unchanged. The issuer
+adds the private Ironcrest prerequisite and schema-2 manifest binding; certificate
+v1 payload grammar, cryptography and offline verification retain their semantics.
+
+These authority selections, controller, metadata/object adapters and issuer remain
+TCB. A digest is not authentication of a compromised authority. The reviewer has
+no database, storage, runtime, signing or administrative credential capability.
+No external provider is configured or implicitly selected. Local replay establishes
+boundary behavior, not model quality or universal defect detection. Prompt injection
+containment is architectural, not a mathematical model-safety guarantee.
+
+The continuation activates only existing workspace edges: control-plane to
+knowledge, controller to semantic and controller's already resolved async-trait.
+No third-party package/version, network service or license exception was added.
+See ADRs 0041–0044, IRONCREST_DEPENDENCY_REVIEW.md and the current architecture
+snapshot. Stoneward worker/runner, lease/fencing and cleanup mechanisms remain
+unchanged; the original exact native qualification is not broadened.
 
 ## Existing certification path
 

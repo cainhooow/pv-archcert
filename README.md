@@ -8,19 +8,21 @@ Its core rule is simple:
 
 > Trust claims less. Reproduce evidence. Bind results to immutable inputs. Sign the verdict.
 
-This repository implements Milestones 1–4B: verified source preparation, a rootless
-execution plane, authority-resolved plans, deterministic policy evaluation and
-canonical certificate issuance with offline verification. Signing is DEVELOPMENT
+The development implementation includes verified source preparation, authenticated
+Northgate ingress, durable Ravenport jobs, Stoneward execution fencing, and the
+controlled Ironcrest review-to-certificate lifecycle. Authority-resolved plans,
+deterministic policy evaluation and canonical certificates retain offline verification. Signing is DEVELOPMENT
 ONLY; ArchCert is not a production certifier.
 
-## Future bootstrap goal
+## Certification lifecycle
 
-The first trustworthy vertical slice is:
+The implemented development path is:
 
 1. receive an exact Git commit through an ArchCert-controlled ingress;
 2. quarantine and validate Git objects;
 3. derive an immutable `SourceIdentity` containing commit, tree and an ArchCert SHA-256 snapshot digest;
-4. create a certification job;
+4. for an Ironcrest grant, persist authority-selected knowledge, impact, review,
+   semantic gate and a frozen registered challenge plan before admitting the job;
 5. materialize source into an ephemeral isolated runner without Git credentials;
 6. execute authority-controlled deterministic checks;
 7. retain redacted evidence and hashes;
@@ -64,9 +66,19 @@ The first trustworthy vertical slice is:
 The local Git gateway reads loose objects; Northgate adds restricted SSH push and
 pack ingress. Ravenport adds durable development PostgreSQL jobs and immutable
 artifact storage. Production deployment qualification and production
-runner/key operations remain deferred. Ironcrest knowledge, semantic review and
-bounded authority challenge primitives are implemented; durable controller and
-issuance integration remains in progress. They do not currently gate certificates.
+runner/key operations remain deferred. Ironcrest now gates execution admission and
+issuance under a separate authority profile and deterministic policy. Semantic
+CONTINUE creates no deterministic proof; BLOCK prevents certification, mandatory
+reviewer failure stays inconclusive, and required challenges must pass. Historical
+policy/certificate behavior remains unchanged. Only local exact semantic replay is
+configured; external source disclosure is denied by default.
+
+The controlled implementation retains semantic nondeterminism/provider-drift risks,
+syntax-only extraction limits and explicit blind spots. Injection containment is
+architectural, not a mathematical guarantee. No universal bug detection or
+production certification authority is claimed. See [the current architecture](docs/architecture/CURRENT_ARCHITECTURE_SNAPSHOT.md),
+[Ironcrest operations](docs/architecture/RAVENPORT_OPERATIONS.md#ironcrest-review-before-admission)
+and [manifest compatibility](docs/adr/0044-ironcrest-evidence-manifest.md).
 
 ## Inspect exact source
 
