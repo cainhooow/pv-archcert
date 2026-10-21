@@ -137,7 +137,7 @@ async fn ironcrest_response_publication_recovery_reuses_accepted_provider_work()
     assert_eq!(reviewer.0.load(Ordering::SeqCst), 1);
     assert_eq!(
         workflow.persist_gate(&request, &accepted).await?,
-        SemanticGateDecision::Continue
+        SemanticGateDecision::RequireMoreEvidence
     );
     let reconnected = PostgresJobRepository::from_pool(pool.clone());
     let resumed = IroncrestWorkflow {
@@ -152,13 +152,13 @@ async fn ironcrest_response_publication_recovery_reuses_accepted_provider_work()
     assert_eq!(accepted.artifact().bytes(), restored.artifact().bytes());
     assert_eq!(
         resumed.persist_gate(&request, &restored).await?,
-        SemanticGateDecision::Continue
+        SemanticGateDecision::RequireMoreEvidence
     );
     // A different valid response for the same request is not the accepted role.
     let alternate = SemanticReviewArtifact::accept(
         &request,
         Err(SemanticReviewError::Unavailable),
-        1700000001,
+        accepted.timestamp(),
     )?;
     assert!(resumed.persist_gate(&request, &alternate).await.is_err());
     let second = JobId::new();
@@ -563,6 +563,7 @@ async fn admission_fixture(repo: &PostgresJobRepository) -> R<AdmissionFixture> 
         &inputs.authority_toml,
     )?
     .digest()?;
+    inputs.policy.id = IRONCREST_CONTROLLED_POLICY_ID.into();
     inputs.policy.sha256 = digest_bytes(br#"{"kind":"controlled-admission-policy"}"#);
     let source = SourceSnapshot::seal(
         inputs.project,
@@ -622,6 +623,14 @@ async fn ironcrest_admission_freezes_exact_plan_transactionally_and_rejects_repl
     let f = admission_fixture(&repo)
         .await
         .map_err(|e| format!("fixture: {e}"))?;
+    assert!(
+        repo.create(CreateJob {
+            inputs: f.inputs.clone(),
+            idempotency: IdempotencyKey::parse("forbidden-direct-ironcrest".into())?
+        })
+        .await
+        .is_err()
+    );
     let id = JobId::new();
     repo.open_session(id, &f.pin).await?;
     let root = tempfile::tempdir()?;
@@ -725,6 +734,126 @@ async fn ironcrest_admission_freezes_exact_plan_transactionally_and_rejects_repl
             "mismatch {field}"
         );
     }
+    // Exercise each review replay dimension with the SAME reserved job UUID.
+    // Rejection must not depend only on a foreign job identity.
+    for dimension in 0..5 {
+        use archcert_application::{knowledge::*, semantic::*};
+        let source = SourceSnapshot::seal(
+            if dimension == 1 {
+                ProjectId::new()
+            } else {
+                f.inputs.project
+            },
+            f.inputs.repository.clone(),
+            if dimension == 0 {
+                GitObjectId::parse("c".repeat(40))?
+            } else {
+                f.inputs.source.commit.clone()
+            },
+            f.inputs.source.tree.clone(),
+            vec![],
+            1,
+            1700000000,
+        )?;
+        let selected = if dimension == 4 {
+            Some(SelectedBaseline::accepted(
+                &source,
+                "Controlled alternative baseline".into(),
+            )?)
+        } else {
+            None
+        };
+        let engine = KnowledgeEngine::new(vec![], KnowledgeLimits::default())?;
+        let knowledge = engine.extract(&source, &[], selected.as_ref())?;
+        let baseline = if dimension == 4 {
+            Some(engine.extract(&source, &[], None)?)
+        } else {
+            None
+        };
+        let impact = analyze_impact(&knowledge, baseline.as_ref())?;
+        let mut policy = f.inputs.policy.clone();
+        let bytes = if dimension == 2 {
+            br#"{"kind":"different-controlled-policy"}"#.as_slice()
+        } else {
+            br#"{"kind":"controlled-admission-policy"}"#.as_slice()
+        };
+        policy.sha256 = digest_bytes(bytes);
+        let foreign = SemanticReviewRequest::prepare(
+            ReviewContext {
+                job: id,
+                source: &source,
+                knowledge: &knowledge,
+                impact: &impact,
+                bundles: &[],
+                policy: &policy,
+                policy_bytes: bytes,
+                authority_profile_sha256: if dimension == 3 {
+                    digest_bytes(b"different-profile")
+                } else {
+                    f.pin.authority_profile_sha256.clone()
+                },
+                observations: &[],
+                claims: &[],
+            },
+            f.profile.reviewer(),
+            f.profile.semantic_limits(),
+        )?;
+        assert!(
+            resumed
+                .review_or_restore(&foreign, &reviewer)
+                .await
+                .is_err(),
+            "replay dimension {dimension}"
+        );
+        assert!(
+            resumed.persist_gate(&foreign, &review).await.is_err(),
+            "gate replay dimension {dimension}"
+        );
+    }
+    let mut foreign_registry = f.pin.clone();
+    foreign_registry.challenge_registry_sha256 = digest_bytes(b"foreign-challenge-registry");
+    assert!(repo.open_session(id, &foreign_registry).await.is_err());
+    assert_eq!(reviewer.0.load(Ordering::SeqCst), 1);
+    // A trusted controller recording eligible metadata still cannot prepare
+    // signing before the mandatory reviewed challenge result is available.
+    let assignment = repo.claim("issuance-guard", 30).await?.ok_or("claim")?;
+    repo.start(&assignment.lease).await?;
+    let execution = ArtifactReference {
+        sha256: digest_bytes(b"database-only-execution"),
+        size: 23,
+        schema: 1,
+        producer: "storage-regression".into(),
+    };
+    repo.stage_artifact(id, Some(assignment.lease.attempt), "EXECUTION", &execution)
+        .await?;
+    repo.artifact_available(id, Some(assignment.lease.attempt), "EXECUTION", &execution)
+        .await?;
+    repo.accept_evidence(&assignment.lease, &execution).await?;
+    let evaluation = ArtifactReference {
+        sha256: digest_bytes(b"database-only-evaluation"),
+        size: 24,
+        schema: 1,
+        producer: "storage-regression".into(),
+    };
+    repo.stage_artifact(id, None, "EVALUATION", &evaluation)
+        .await?;
+    repo.artifact_available(id, None, "EVALUATION", &evaluation)
+        .await?;
+    repo.record_evaluation(id, &evaluation, EvaluationDecision::Eligible)
+        .await?;
+    assert!(
+        repo.prepare_issuance(
+            id,
+            &PreparedIssuance {
+                certificate_sha256: digest_bytes(b"unissued"),
+                signing_key_id: "a".repeat(64),
+                issued_at: 1700000000
+            }
+        )
+        .await
+        .is_err()
+    );
+    assert!(repo.get(id).await?.issuance.is_none());
     // Same text/response cannot authorize another reserved job or baseline.
     let other = JobId::new();
     let mut other_pin = f.pin.clone();

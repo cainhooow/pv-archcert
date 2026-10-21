@@ -12,7 +12,11 @@ pub fn ironcrest_reference(artifact: &CanonicalArtifact) -> ArtifactReference {
     ArtifactReference {
         sha256: artifact.digest().clone(),
         size: artifact.bytes().len() as u64,
-        schema: 1,
+        schema: serde_json::from_slice::<serde_json::Value>(artifact.bytes())
+            .ok()
+            .and_then(|v| v.get("schema").and_then(|n| n.as_u64()))
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(1),
         producer: "archcert-ironcrest-v1/0.1.0".into(),
     }
 }
@@ -33,6 +37,19 @@ impl IroncrestWorkflow<'_> {
         knowledge: &KnowledgeArtifact,
         impact: &ImpactArtifact,
         profile: &CanonicalArtifact,
+    ) -> Result<(), JobStoreError> {
+        self.prepare_with_checkpoints(request, knowledge, impact, profile, &|_| Ok(()))
+            .await
+    }
+    /// The same immutable preparation with authority-owned interruption hooks after
+    /// each AVAILABLE stage. Hooks grant no execution or provider capability.
+    pub async fn prepare_with_checkpoints(
+        &self,
+        request: &SemanticReviewRequest,
+        knowledge: &KnowledgeArtifact,
+        impact: &ImpactArtifact,
+        profile: &CanonicalArtifact,
+        checkpoint: &(dyn Fn(IroncrestEvidenceRole) -> Result<(), JobStoreError> + Sync),
     ) -> Result<(), JobStoreError> {
         let binding = request.binding();
         let session = self
@@ -59,6 +76,7 @@ impl IroncrestWorkflow<'_> {
         ] {
             self.persist(binding.project, binding.job, role, artifact, None)
                 .await?;
+            checkpoint(role)?;
         }
         Ok(())
     }
@@ -231,12 +249,20 @@ impl IroncrestWorkflow<'_> {
                 "sha256":digest_bytes(&canonical_bytes(&identity).map_err(|_|JobStoreError::Invalid)?)
             }));
         }
+        let review_decision = decision;
+        let decision = if review_decision == SemanticGateDecision::Continue
+            && !required_challenges.is_empty()
+        {
+            SemanticGateDecision::RequireMoreEvidence
+        } else {
+            review_decision
+        };
         let artifact = CanonicalArtifact::freeze(&serde_json::json!({
             "schema":2,"kind":"ARCHCERT_SEMANTIC_GATE","binding":request.binding(),
             "algorithm":IRONCREST_GATE_ALGORITHM,
             "authority_profile_sha256":session.pin.authority_profile_sha256,
             "request_sha256":request.artifact().digest(),"review_sha256":review.artifact().digest(),
-            "decision":decision,"required_challenges":required_challenges
+            "review_decision":review_decision,"decision":decision,"required_challenges":required_challenges
         }),65536).map_err(|_|JobStoreError::Invalid)?;
         self.persist(
             request.binding().project,

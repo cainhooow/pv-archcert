@@ -110,7 +110,7 @@ impl IroncrestWorkflow<'_> {
         self.prepare(c.request, c.knowledge, c.impact, c.profile.artifact())
             .await?;
         let decision = self.persist_gate(c.request, c.review).await?;
-        if decision != SemanticGateDecision::Continue
+        if decision == SemanticGateDecision::Block
             || semantic_gate(c.request, Some(c.review)) != SemanticGateDecision::Continue
         {
             return Err(JobStoreError::Precondition);

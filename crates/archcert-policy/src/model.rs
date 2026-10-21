@@ -24,6 +24,27 @@ pub fn development_bundle() -> Result<PolicyBundle, PolicyError> {
     Ok(bundle)
 }
 
+/// Separately versioned Ironcrest deterministic requirements. Historical bundles
+/// retain their original rule set and canonical identity.
+pub use archcert_application::ironcrest::IRONCREST_CONTROLLED_POLICY_ID;
+/// Embedded authority bundle, never discovered in a target repository.
+pub const IRONCREST_CONTROLLED_POLICY: &str =
+    include_str!("../../../policies/archcert-ironcrest-controlled-v1.toml");
+/// Independently re-canonicalized SHA-256 of the controlled policy.
+pub const IRONCREST_CONTROLLED_POLICY_SHA256: &str =
+    "2f0101fffb230caf6957065e91ba0655c25893dbee2f6105f44ce3e62cafef4e";
+/// Loads the explicit controlled Ironcrest policy with required challenge evidence.
+pub fn ironcrest_controlled_bundle() -> Result<PolicyBundle, PolicyError> {
+    let bundle = PolicyBundle::read(IRONCREST_CONTROLLED_POLICY.as_bytes())?;
+    if bundle.identity().id != IRONCREST_CONTROLLED_POLICY_ID
+        || bundle.identity().version != "1.0.0"
+        || bundle.identity().sha256.as_str() != IRONCREST_CONTROLLED_POLICY_SHA256
+    {
+        return Err(PolicyError::SelectionMismatch);
+    }
+    Ok(bundle)
+}
+
 /// Policy input or authority-selection error. Errors never yield eligibility.
 #[derive(Debug, Error)]
 pub enum PolicyError {
@@ -273,4 +294,25 @@ pub(crate) fn canonical_json(value: &impl Serialize) -> Result<Vec<u8>, serde_js
     let mut value = serde_json::to_value(value)?;
     value.sort_all_objects();
     serde_json::to_vec(&value)
+}
+
+#[cfg(test)]
+mod ironcrest_tests {
+    use super::*;
+    #[test]
+    fn ironcrest_policy_retains_historical_policy_identity() -> Result<(), PolicyError> {
+        let historical = development_bundle()?;
+        let current = ironcrest_controlled_bundle()?;
+        assert_eq!(
+            historical.identity().sha256.as_str(),
+            DEVELOPMENT_POLICY_SHA256
+        );
+        assert_ne!(historical.identity(), current.identity());
+        assert_eq!(current.identity().id, IRONCREST_CONTROLLED_POLICY_ID);
+        assert_eq!(
+            current.identity().sha256.as_str(),
+            IRONCREST_CONTROLLED_POLICY_SHA256
+        );
+        Ok(())
+    }
 }

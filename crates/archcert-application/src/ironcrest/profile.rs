@@ -6,10 +6,16 @@ use crate::{
     semantic::{ReviewerSelection, SemanticLimits, SemanticReviewRequest},
 };
 
+/// Separately selected deterministic bundle for the controlled Ironcrest lifecycle.
+pub const IRONCREST_CONTROLLED_POLICY_ID: &str = "archcert-ironcrest-controlled-v1";
+
 /// Fixed gate algorithm. Changing its semantics requires a new profile version.
-pub const IRONCREST_GATE_ALGORITHM: &str = "archcert-semantic-gate-v1/1.0.0";
+pub const IRONCREST_GATE_ALGORITHM: &str = "archcert-ironcrest-gate-v1/1.0.0";
 /// Separately versioned authority profile; historical policies do not opt in.
 pub const IRONCREST_PROFILE_ID: &str = "ironcrest-controlled-v1";
+/// Explicit pending-challenge gate semantics; the earlier admission-only 1.0.0
+/// profile is not silently reinterpreted or selected on recovery.
+pub const IRONCREST_PROFILE_VERSION: &str = "1.1.0";
 
 /// Immutable authority capability. There is no target parser or deserializer.
 /// The initial profile supports local exact replay and denies external disclosure.
@@ -43,13 +49,13 @@ impl IroncrestAuthorityProfile {
         let artifact = CanonicalArtifact::freeze(
             &serde_json::json!({
                 "schema":1,"kind":"ARCHCERT_IRONCREST_AUTHORITY_PROFILE",
-                "id":IRONCREST_PROFILE_ID,"version":"1.0.0","policy":policy,
+                "id":IRONCREST_PROFILE_ID,"version":IRONCREST_PROFILE_VERSION,"policy":policy,
                 "semantic_required":true,"reviewer":ReviewerSelection::replay(),
                 "extractor_registry_sha256":extractor_registry,"authority_bundles":authority_bundles,
                 "challenge_registry_sha256":challenge_registry,
                 "gate_algorithm":IRONCREST_GATE_ALGORITHM,
                 "gate_behavior":{"block":"VETO_ADMISSION_AND_ISSUANCE",
-                    "require_more_evidence":"BLOCK_UNRESOLVED_CONTEXT",
+                    "require_more_evidence":"EXECUTE_FROZEN_CHALLENGES_OR_BLOCK_UNRESOLVED_CONTEXT",
                     "continue":"NO_DETERMINISTIC_PROOF"},
                 "required_challenges":[{"template_id":IDEMPOTENCY_TEMPLATE,"minimum_repetitions":3}],
                 "knowledge_limits":KnowledgeLimits::default(),"semantic_limits":SemanticLimits::default(),
@@ -112,6 +118,27 @@ impl IroncrestAuthorityProfile {
     }
 }
 
+/// Fixed project-scoped controlled settlement invariant, selected by the authority
+/// composition before source extraction. Targets have no bundle-selection field.
+pub fn controlled_settlement_knowledge(
+    project: ProjectId,
+    policy: Sha256Digest,
+) -> Result<crate::knowledge::AuthorityKnowledgeBundle, KnowledgeError> {
+    use archcert_domain::knowledge::*;
+    crate::knowledge::AuthorityKnowledgeBundle::approve(
+        "ironcrest-controlled-settlement".into(),"1.0.0".into(),KnowledgeScope::Project(project),
+        vec![AuthorityKnowledgeEntry {
+            id:"SETTLEMENT-IDEMPOTENCY-001".into(),version:"1.0.0".into(),
+            kind:AuthorityEntryKind::Invariant,scope:KnowledgeScope::Project(project),
+            severity:KnowledgeSeverity::High,authority:"archcert-controlled-authority".into(),
+            description:"Repeated settlement with an identical idempotency key must retain exactly one ledger entry with the original amount. Review is bounded and does not prove general correctness.".into(),
+            origin:"ArchCert controlled settlement contract v1".into(),approval:ApprovalState::Approved,
+            supersedes:None,paths:vec![archcert_domain::source::SourcePath::from_bytes(b"settlement.py").map_err(|_|KnowledgeError::Invalid)?],
+            policy_sha256:vec![policy],
+        }],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,6 +196,7 @@ mod tests {
         assert_eq!(body["semantic_required"], true);
         assert_eq!(body["external_disclosure"], "DENIED");
         assert_eq!(body["id"], IRONCREST_PROFILE_ID);
+        assert_eq!(body["version"], IRONCREST_PROFILE_VERSION);
         Ok(())
     }
 }

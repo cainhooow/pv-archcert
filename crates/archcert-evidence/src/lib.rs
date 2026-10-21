@@ -206,6 +206,66 @@ impl EvidenceManifest {
             bytes,
         })
     }
+    /// Explicit schema-2 extension: preserve the complete historical schema-1
+    /// manifest and bind exact typed Ironcrest artifacts. This validates identity
+    /// grammar, not semantic/provider honesty or issuance authorization.
+    pub fn with_ironcrest(
+        &self,
+        binding: &archcert_application::ironcrest::IroncrestEvidenceBinding,
+    ) -> Result<Self, EvidenceError> {
+        use archcert_application::ironcrest::IroncrestEvidenceRole as R;
+        let original: Value = serde_json::from_slice(&self.bytes)
+            .map_err(|_| EvidenceError::CanonicalizationFailed)?;
+        if original["schema"] != 1
+            || original["kind"] != "ARCHCERT_EVIDENCE_MANIFEST"
+            || original["source"]
+                != serde_json::to_value(&binding.pin.source)
+                    .map_err(|_| EvidenceError::CanonicalizationFailed)?
+            || original["policy"]
+                != serde_json::to_value(&binding.pin.policy)
+                    .map_err(|_| EvidenceError::CanonicalizationFailed)?
+            || original["plan_sha256"] != binding.plan_sha256.as_str()
+            || binding.roles.len() != 8
+        {
+            return Err(EvidenceError::EvidenceBindingMismatch);
+        }
+        let expected = [
+            R::AuthorityProfile,
+            R::Knowledge,
+            R::Impact,
+            R::Request,
+            R::Review,
+            R::Gate,
+            R::ChallengePlan,
+            R::ChallengeResult,
+        ];
+        for ((role, reference), expected) in binding.roles.iter().zip(expected) {
+            let schema = if matches!(role, R::Gate | R::ChallengePlan) {
+                2
+            } else {
+                1
+            };
+            if *role != expected
+                || reference.schema != schema
+                || reference.size == 0
+                || reference.size > 32 * 1024 * 1024
+                || reference.producer != "archcert-ironcrest-v1/0.1.0"
+                || (*role == R::AuthorityProfile
+                    && reference.sha256 != binding.pin.authority_profile_sha256)
+            {
+                return Err(EvidenceError::EvidenceBindingMismatch);
+            }
+        }
+        let bytes = canonical_bytes(&serde_json::json!({
+            "schema":2,"kind":"ARCHCERT_EVIDENCE_MANIFEST",
+            "deterministic_manifest_sha256":self.digest,
+            "deterministic_manifest":original,"ironcrest":binding
+        }))?;
+        Ok(Self {
+            digest: digest_bytes(&bytes),
+            bytes,
+        })
+    }
     /// Exact deterministic manifest preimage.
     pub fn canonical_bytes(&self) -> &[u8] {
         &self.bytes

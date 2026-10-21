@@ -1,0 +1,67 @@
+schema = 1
+id = "archcert-ironcrest-controlled-v1"
+version = "1.0.0"
+producers = ["archcert-docker-cli-v1/0.1.0", "archcert-controller-v1/0.1.0"]
+
+[[properties]]
+id = "SOURCE_IDENTITY_VERIFIED"
+description = "The isolated source view matched the accepted exact source before each planned execution."
+severity = "P0"
+mandatory = true
+allow_not_applicable = false
+applicability = { kind = "ALWAYS" }
+rule = { kind = "SOURCE_IDENTITY" }
+
+[[properties]]
+id = "SOURCE_COMPLETE"
+description = "The immutable accepted snapshot contains no unresolved required LFS or submodule source."
+severity = "P0"
+mandatory = true
+allow_not_applicable = false
+applicability = { kind = "ALWAYS" }
+rule = { kind = "SOURCE_COMPLETE" }
+
+[[properties]]
+id = "SANDBOX_ENVIRONMENT_ESTABLISHED"
+description = "Authority sandbox configuration was established before every planned execution; toolchain versions remain unobserved."
+severity = "P0"
+mandatory = true
+allow_not_applicable = false
+applicability = { kind = "ALWAYS" }
+rule = { kind = "SANDBOX" }
+
+[[properties]]
+id = "NETWORK_ISOLATION_ESTABLISHED"
+description = "Denied external network configuration was established before every planned execution."
+severity = "P0"
+mandatory = true
+allow_not_applicable = false
+applicability = { kind = "ALWAYS" }
+rule = { kind = "NETWORK" }
+
+[[properties]]
+id = "TYPECHECK_COMPLETES"
+description = "The authority-selected typecheck command completed with exit zero; no type system soundness claim."
+severity = "P1"
+mandatory = true
+allow_not_applicable = false
+applicability = { kind = "ALWAYS" }
+rule = { kind = "COMMAND", steps = ["typecheck"], category = "TYPECHECK" }
+
+[[properties]]
+id = "TEST_SUITE_COMPLETES"
+description = "The authority-selected test and registered idempotency challenge completed with exit zero; no universal defect-detection claim."
+severity = "P1"
+mandatory = true
+allow_not_applicable = false
+applicability = { kind = "ALWAYS" }
+rule = { kind = "COMMAND", steps = ["ironcrest-idempotency", "test"], category = "TEST" }
+
+[[properties]]
+id = "BUILD_COMPLETES"
+description = "The authority-selected build command completed with exit zero; no build artifact security claim."
+severity = "P1"
+mandatory = true
+allow_not_applicable = false
+applicability = { kind = "ALWAYS" }
+rule = { kind = "COMMAND", steps = ["build"], category = "BUILD" }

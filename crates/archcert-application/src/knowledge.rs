@@ -485,6 +485,18 @@ impl KnowledgeEngine {
         }
         Ok(Self { extractors, limits })
     }
+    /// Digest of the complete authority-selected inventory/extractor registry,
+    /// available before source or private knowledge is read.
+    pub fn registry_digest(&self) -> Result<Sha256Digest, KnowledgeError> {
+        Ok(digest_bytes(&canonical_bytes(
+            &self.extractor_identities(),
+        )?))
+    }
+    fn extractor_identities(&self) -> Vec<String> {
+        std::iter::once("archcert-inventory-v1/1.0.0".into())
+            .chain(self.extractors.iter().map(|e| e.identity().into()))
+            .collect()
+    }
     /// Rehashes exact accepted bytes. Caller supplies authority-owned bundles and
     /// baseline; repository files are never interpreted as either capability.
     pub fn extract(
@@ -705,9 +717,7 @@ impl KnowledgeEngine {
             repository: source.repository().clone(),
             source: source.identity().clone(),
             baseline: baseline.cloned(),
-            extractors: std::iter::once("archcert-inventory-v1/1.0.0".into())
-                .chain(self.extractors.iter().map(|e| e.identity().into()))
-                .collect(),
+            extractors: self.extractor_identities(),
             authority_bundles: authority_digests,
             files,
             nodes: graph.nodes.into_values().collect(),

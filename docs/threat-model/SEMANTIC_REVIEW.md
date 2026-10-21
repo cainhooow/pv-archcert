@@ -49,3 +49,12 @@ boundaries and concurrent/restarted admission are covered by real database tests
 The gate artifact binds its algorithm, exact accepted review and required bounded
 challenge identities. Controller/issuance integration remains outstanding; these
 controls alone do not prove a complete veto-before-signing lifecycle.
+
+The issuance foundation now requires accepted deterministic challenge results before
+constructing the private Ironcrest prerequisite. The new controlled policy requires
+the same challenge under the existing deterministic command rule, and the issuer
+recomputes that evaluation. The explicit profile 1.1.0 gate records pending
+obligations as REQUIRE_MORE_EVIDENCE; provider failure/incomplete context cannot
+authorize execution to resolve an unspecified requirement. Immutable schema-2
+manifests retain the schema-1 deterministic manifest plus all eight exact artifact
+roles. Historical profile/manifest/certificate bytes are never migrated or redefined.

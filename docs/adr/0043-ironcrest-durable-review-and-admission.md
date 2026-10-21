@@ -67,7 +67,13 @@ session validation reject mismatched selections. There is no repository parser o
 deserialization path that grants this capability. The profile currently supports
 the controlled settlement API only; it makes no general challenge support claim.
 Historical policy bundles and certificates retain their existing identities and
-semantics. This profile capability alone does not implement admission or issuance.
+semantics. The profile capability alone grants neither execution nor issuance.
+
+The issuance-capable controlled profile is explicitly version 1.1.0. It pins the
+new `archcert-ironcrest-gate-v1/1.0.0` composition: an accepted review CONTINUE with
+required registered challenges records REQUIRE_MORE_EVIDENCE until the immutable
+challenge results satisfy them. Missing/incomplete review still blocks admission.
+Profile 1.0.0 artifacts are not rewritten or interpreted with these new semantics.
 
 ## Implemented admission transaction
 
@@ -92,6 +98,20 @@ reject. Worker leases and historical job inputs are not repurposed. The capabili
 has no deserialization constructor. These application/storage APIs still require
 controller and authenticated admission composition; they do not establish the
 complete certification lifecycle alone.
+
+## Issuance prerequisites
+
+The application now persists challenge execution results against the exact admitted
+job, accepted attempt, worker-artifact digest, registry, source and frozen plan.
+Only successful required results with confirmed cleanup produce the private
+Ironcrest issuance prerequisite. It cannot be deserialized or add a deterministic
+property verdict. The new deterministic policy requires the challenge step using
+the unchanged command-evidence rule. The certificate constructor requires both
+that prerequisite and independent deterministic re-evaluation. PostgreSQL guards
+issuance preparation/completion against missing reviewed linkage or challenge
+publication. Its immutable metadata reads avoid taking the session row lock after
+the job lock. See ADR 0044 for the explicit schema-2 manifest grammar and historical
+certificate compatibility. Controller orchestration is a separate composition step.
 
 ## Continuation and signing
 

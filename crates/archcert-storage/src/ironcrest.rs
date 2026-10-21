@@ -3,7 +3,7 @@ use super::*;
 use archcert_application::{ironcrest::*, semantic::ReviewBinding};
 
 fn valid_reference(reference: &ArtifactReference) -> Result<()> {
-    if reference.schema != 1
+    if ![1, 2].contains(&reference.schema)
         || reference.size == 0
         || reference.size > 32 * 1024 * 1024
         || reference.producer != "archcert-ironcrest-v1/0.1.0"
@@ -176,6 +176,28 @@ impl IroncrestRepository for PostgresJobRepository {
         tx.commit().await.map_err(db)?;
         Ok(job)
     }
+    async fn admitted_review(
+        &self,
+        admission: &ReviewedIroncrestAdmission,
+    ) -> Result<CertificationJob> {
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let stored: Option<Value> = sqlx::query_scalar(
+            "SELECT binding FROM ironcrest_admissions WHERE session=$1 AND job=$1",
+        )
+        .bind(admission.id().to_string())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db)?;
+        if stored.as_ref() != Some(&json(admission)?) {
+            return Err(JobStoreError::Precondition);
+        }
+        let job = load(&mut tx, admission.id()).await?;
+        if job.inputs != *admission.inputs() {
+            return Err(JobStoreError::Precondition);
+        }
+        tx.commit().await.map_err(db)?;
+        Ok(job)
+    }
     async fn open_session(&self, id: JobId, pin: &IroncrestSessionPin) -> Result<IroncrestSession> {
         pin.validate()?;
         let mut tx = self.pool.begin().await.map_err(db)?;
@@ -327,4 +349,69 @@ impl IroncrestRepository for PostgresJobRepository {
         tx.commit().await.map_err(db)?;
         Ok(Some(invocation))
     }
+}
+
+/// Additional control-plane issuance guard. Read immutable review metadata without
+/// taking a session lock after the job lock, preserving admission lock ordering.
+pub(super) async fn require_reviewed_issuance(
+    c: &mut PgConnection,
+    job: &CertificationJob,
+) -> Result<()> {
+    let present: bool = sqlx::query_scalar(
+        "SELECT to_regclass(current_schema() || '.ironcrest_admissions') IS NOT NULL",
+    )
+    .fetch_one(&mut *c)
+    .await
+    .map_err(db)?;
+    if !present {
+        return if job.inputs.policy.id == IRONCREST_CONTROLLED_POLICY_ID {
+            Err(JobStoreError::Precondition)
+        } else {
+            Ok(())
+        };
+    }
+    let binding: Option<Value> =
+        sqlx::query_scalar("SELECT binding FROM ironcrest_admissions WHERE job=$1 AND session=$1")
+            .bind(job.id.to_string())
+            .fetch_optional(&mut *c)
+            .await
+            .map_err(db)?;
+    let Some(binding) = binding else {
+        return if job.inputs.policy.id == IRONCREST_CONTROLLED_POLICY_ID {
+            Err(JobStoreError::Precondition)
+        } else {
+            Ok(())
+        };
+    };
+    if binding["inputs"] != json(&job.inputs)? {
+        return Err(JobStoreError::Precondition);
+    }
+    let pin: Value =
+        sqlx::query_scalar("SELECT pin FROM ironcrest_sessions WHERE id=$1 AND project=$2")
+            .bind(job.id.to_string())
+            .bind(job.inputs.project.to_string())
+            .fetch_one(&mut *c)
+            .await
+            .map_err(db)?;
+    if binding["pin"] != pin {
+        return Err(JobStoreError::Precondition);
+    }
+    let evidence: Vec<(IroncrestEvidenceRole, ArtifactReference)> =
+        decode(binding["evidence"].clone())?;
+    if evidence.len() != 7 {
+        return Err(JobStoreError::Precondition);
+    }
+    for (role, reference) in evidence {
+        let available:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ironcrest_evidence WHERE session=$1 AND role=$2 AND reference=$3 AND state='AVAILABLE')")
+            .bind(job.id.to_string()).bind(role.as_str()).bind(json(&reference)?).fetch_one(&mut *c).await.map_err(db)?;
+        if !available {
+            return Err(JobStoreError::Precondition);
+        }
+    }
+    let challenge_ready:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ironcrest_evidence WHERE session=$1 AND role='CHALLENGE_RESULT' AND state='AVAILABLE')")
+        .bind(job.id.to_string()).fetch_one(c).await.map_err(db)?;
+    if !challenge_ready {
+        return Err(JobStoreError::Precondition);
+    }
+    Ok(())
 }

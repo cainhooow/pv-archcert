@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 mod admission;
 pub use admission::*;
 
+mod issuance;
+pub use issuance::*;
 mod profile;
 mod workflow;
 pub use profile::*;
@@ -150,6 +152,41 @@ pub struct IroncrestSession {
     /// Immutable role metadata, including interrupted staging.
     pub evidence: Vec<IroncrestEvidenceReference>,
 }
+/// Explicit operational recovery state; none of these values authorizes inference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum IroncrestReviewRecovery {
+    /// Exact prepared inputs still need their first durable invocation claim.
+    AwaitingFirstInvocation,
+    /// A process may have called the provider; a new session/operator policy is
+    /// required. Restart never grants another invocation.
+    OperatorRecoveryRequired,
+    /// Retained metadata permits only recovery of the exact accepted response bytes.
+    RestoreAcceptedResponse,
+    /// An available accepted result can be reused without provider invocation.
+    AcceptedResponseAvailable,
+}
+impl IroncrestSession {
+    /// Distinguishes uncertain in-flight outcome from safely reusable acceptance.
+    pub fn review_recovery(&self) -> IroncrestReviewRecovery {
+        if let Some(response) = self
+            .evidence
+            .iter()
+            .find(|e| e.role == IroncrestEvidenceRole::Review)
+        {
+            return if response.available {
+                IroncrestReviewRecovery::AcceptedResponseAvailable
+            } else {
+                IroncrestReviewRecovery::RestoreAcceptedResponse
+            };
+        }
+        if self.review_claimed {
+            IroncrestReviewRecovery::OperatorRecoveryRequired
+        } else {
+            IroncrestReviewRecovery::AwaitingFirstInvocation
+        }
+    }
+}
 /// Private authority capability for the first provider invocation. No Debug,
 /// Serialize or target transport is provided. Expiry never reissues this token.
 #[derive(Clone)]
@@ -166,6 +203,13 @@ pub trait IroncrestRepository: Send + Sync {
     /// source, authority profile, evidence chain and final execution plan. Exact
     /// retries return the same job; mismatches and partial review reject.
     async fn admit_reviewed(
+        &self,
+        admission: &ReviewedIroncrestAdmission,
+    ) -> Result<crate::jobs::CertificationJob, JobStoreError>;
+
+    /// Read an already admitted job only if its create-only reviewed linkage
+    /// exactly matches the revalidated application capability. Never creates work.
+    async fn admitted_review(
         &self,
         admission: &ReviewedIroncrestAdmission,
     ) -> Result<crate::jobs::CertificationJob, JobStoreError>;

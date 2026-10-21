@@ -350,6 +350,9 @@ impl JobRepository for PostgresJobRepository {
     async fn create(&self, request: CreateJob) -> Result<CertificationJob> {
         let i = &request.inputs;
         i.validate()?;
+        if i.policy.id == archcert_application::ironcrest::IRONCREST_CONTROLLED_POLICY_ID {
+            return Err(JobStoreError::Precondition);
+        }
         let mut tx = self.pool.begin().await.map_err(db)?;
         // A grant row lock serializes revocation against authorized admission.
         let grant=sqlx::query("SELECT actor FROM repository_grants WHERE project=$1 AND repository=$2 AND actor=$3 FOR SHARE").bind(i.project.to_string()).bind(i.repository.as_str()).bind(i.actor.as_str()).fetch_optional(&mut *tx).await.map_err(db)?;
@@ -574,6 +577,7 @@ impl JobRepository for PostgresJobRepository {
     ) -> Result<PreparedIssuance> {
         let mut tx = self.pool.begin().await.map_err(db)?;
         let job = load(&mut tx, id).await?;
+        ironcrest::require_reviewed_issuance(&mut tx, &job).await?;
         if let Some(old) = job.issuance {
             if &old != issuance {
                 return Err(JobStoreError::Conflict);
@@ -596,6 +600,7 @@ impl JobRepository for PostgresJobRepository {
     async fn complete(&self, id: JobId, certificate: &PersistedCertificate) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(db)?;
         let job = load(&mut tx, id).await?;
+        ironcrest::require_reviewed_issuance(&mut tx, &job).await?;
         if job.certificate.as_ref() == Some(certificate) {
             return Ok(());
         }

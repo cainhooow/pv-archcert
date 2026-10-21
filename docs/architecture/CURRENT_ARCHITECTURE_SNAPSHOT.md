@@ -59,6 +59,16 @@ cover six interrupted publication boundaries, exact admission/restart and replay
 rejection. Authenticated controller orchestration and issuance remain outstanding;
 these APIs do not establish full Ironcrest completion.
 
+The issuance foundation now has a private accepted-challenge prerequisite, a new
+controlled deterministic policy and explicit schema-2 manifest construction. The
+manifest preserves the complete schema-1 manifest and binds all eight typed
+Ironcrest roles with exact digest/size/schema/producer metadata. Profile version
+1.1.0 records pending required challenges as REQUIRE_MORE_EVIDENCE while retaining
+the review decision. The certificate constructor independently re-evaluates policy;
+CONTINUE creates no PROVEN result. Historical bundle identities, certificate schema
+1, signing and offline verification remain compatible. Controller composition and
+final milestone validation are tracked separately below and in the M6 working report.
+
 Migration 0004 and the application IroncrestRepository port now add a separate
 project-scoped pre-admission journal. It checks repository grants and accepted
 target/baseline identities, freezes authority/source pins and eight create-only

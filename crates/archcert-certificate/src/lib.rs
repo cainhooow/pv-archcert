@@ -258,6 +258,31 @@ impl CertificateDraft {
         metadata: IssuanceMetadata,
         key: PublicKey,
     ) -> Result<Self, CertificateError> {
+        Self::prepare_inner(context, evaluation, metadata, key, None)
+    }
+    /// Ironcrest preparation requires the accepted review/challenge evidence in
+    /// addition to independently recomputing all deterministic requirements.
+    pub fn prepare_ironcrest(
+        context: IssuanceContext<'_>,
+        evaluation: Option<PolicyEvaluation>,
+        metadata: IssuanceMetadata,
+        key: PublicKey,
+        ironcrest: &archcert_application::ironcrest::IroncrestIssuanceEvidence,
+    ) -> Result<Self, CertificateError> {
+        Self::prepare_inner(context, evaluation, metadata, key, Some(ironcrest))
+    }
+    fn prepare_inner(
+        context: IssuanceContext<'_>,
+        evaluation: Option<PolicyEvaluation>,
+        metadata: IssuanceMetadata,
+        key: PublicKey,
+        ironcrest: Option<&archcert_application::ironcrest::IroncrestIssuanceEvidence>,
+    ) -> Result<Self, CertificateError> {
+        if context.bundle.identity().id == archcert_policy::IRONCREST_CONTROLLED_POLICY_ID
+            && ironcrest.is_none()
+        {
+            return Err(CertificateError::EvidenceBindingMismatch);
+        }
         let e = evaluation.ok_or(CertificateError::MissingEvaluation)?;
         if e.schema != 1 || e.evaluator_version != "archcert-policy-evaluator-v1/0.1.0" {
             return Err(CertificateError::UnsupportedEvaluationSchema);
@@ -386,6 +411,22 @@ impl CertificateDraft {
         let bundle = EvidenceBundle::build(&e, context.observations, context.execution_records)?;
         let manifest =
             EvidenceManifest::build_with_bundle(&e, context.observations, Some(&bundle))?;
+        let manifest = if let Some(ironcrest) = ironcrest {
+            let binding = ironcrest.binding();
+            if binding.pin.project != context.source.project()
+                || binding.pin.repository != *context.source.repository()
+                || binding.pin.source != *context.source.identity()
+                || binding.plan_sha256 != e.plan_sha256
+                || binding.pin.policy.id != e.policy.id
+                || binding.pin.policy.version != e.policy.version
+                || binding.pin.policy.sha256 != e.policy.sha256
+            {
+                return Err(CertificateError::EvidenceBindingMismatch);
+            }
+            manifest.with_ironcrest(binding)?
+        } else {
+            manifest
+        };
         let mut findings: Vec<_> = e
             .findings
             .iter()

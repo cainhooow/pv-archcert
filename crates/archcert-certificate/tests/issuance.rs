@@ -1006,3 +1006,124 @@ fn forged_eligibility_cannot_issue_for_incomplete_external_source() -> R {
     ));
     Ok(())
 }
+
+#[test]
+fn ironcrest_manifest_extension_preserves_schema_one_and_binds_exact_roles() -> R {
+    use archcert_application::{ironcrest::*, jobs::ArtifactReference};
+    use archcert_domain::{
+        ingress::{GitActorId, SourceSubmissionId},
+        jobs::{JobId, PolicyPin},
+    };
+    let f = fixture()?;
+    let evaluation = f.evaluation()?;
+    let legacy = EvidenceManifest::build(&evaluation, &f.observations)?;
+    let retained = legacy.canonical_bytes().to_vec();
+    let roles = [
+        IroncrestEvidenceRole::AuthorityProfile,
+        IroncrestEvidenceRole::Knowledge,
+        IroncrestEvidenceRole::Impact,
+        IroncrestEvidenceRole::Request,
+        IroncrestEvidenceRole::Review,
+        IroncrestEvidenceRole::Gate,
+        IroncrestEvidenceRole::ChallengePlan,
+        IroncrestEvidenceRole::ChallengeResult,
+    ];
+    let references: Vec<_> = roles
+        .into_iter()
+        .map(|role| {
+            (
+                role,
+                ArtifactReference {
+                    sha256: digest_bytes(role.as_str().as_bytes()),
+                    size: role.as_str().len() as u64,
+                    schema: if matches!(
+                        role,
+                        IroncrestEvidenceRole::Gate | IroncrestEvidenceRole::ChallengePlan
+                    ) {
+                        2
+                    } else {
+                        1
+                    },
+                    producer: "archcert-ironcrest-v1/0.1.0".into(),
+                },
+            )
+        })
+        .collect();
+    // Synthetic manifest conformance identities, not accepted execution/issuance.
+    let binding = IroncrestEvidenceBinding {
+        session: JobId::new(),
+        plan_sha256: evaluation.plan_sha256.clone(),
+        roles: references,
+        pin: IroncrestSessionPin {
+            project: f.source.project(),
+            repository: f.source.repository().clone(),
+            actor: GitActorId::parse(JobId::new().to_string())?,
+            submission: SourceSubmissionId::new(),
+            source: f.source.identity().clone(),
+            baseline: None,
+            policy: PolicyPin {
+                id: evaluation.policy.id.clone(),
+                version: evaluation.policy.version.clone(),
+                sha256: evaluation.policy.sha256.clone(),
+            },
+            base_plan_sha256: digest_bytes(b"base"),
+            authority_profile_sha256: digest_bytes(b"AUTHORITY_PROFILE"),
+            extractor_registry_sha256: digest_bytes(b"extractors"),
+            challenge_registry_sha256: digest_bytes(b"registry"),
+            authority_bundles: vec![],
+        },
+    };
+    let extended = legacy.with_ironcrest(&binding)?;
+    let parsed: Value = serde_json::from_slice(extended.canonical_bytes())?;
+    assert_eq!(parsed["schema"], 2);
+    assert_eq!(
+        parsed["deterministic_manifest_sha256"],
+        legacy.digest().as_str()
+    );
+    assert_eq!(
+        canonical_bytes(&parsed["deterministic_manifest"])?,
+        retained
+    );
+    assert_eq!(legacy.canonical_bytes(), retained);
+    assert_ne!(legacy.digest(), extended.digest());
+    for role in 0..8 {
+        let mut changed = binding.clone();
+        changed.roles[role].1.sha256 = digest_bytes(b"substitution");
+        if role == 0 {
+            assert!(legacy.with_ironcrest(&changed).is_err());
+        } else {
+            assert_ne!(legacy.with_ironcrest(&changed)?.digest(), extended.digest());
+        }
+    }
+    for field in 0..5 {
+        let mut changed = binding.clone();
+        match field {
+            0 => changed.roles.pop().map(|_| ()).ok_or("role")?,
+            1 => changed.roles.swap(1, 2),
+            2 => changed.pin.source.snapshot_sha256 = digest_bytes(b"other-source"),
+            3 => changed.pin.policy.sha256 = digest_bytes(b"other-policy"),
+            _ => changed.plan_sha256 = digest_bytes(b"other-plan"),
+        }
+        assert!(legacy.with_ironcrest(&changed).is_err());
+    }
+    assert!(extended.with_ironcrest(&binding).is_err());
+    Ok(())
+}
+#[test]
+fn ironcrest_policy_cannot_use_legacy_preparation_without_review_evidence() -> R {
+    let mut f = fixture()?;
+    f.bundle = ironcrest_controlled_bundle()?;
+    let mut forged = f.evaluation()?;
+    assert_ne!(
+        forged.eligibility,
+        CertificationEligibility::EligibleForCertification
+    );
+    forged.eligibility = CertificationEligibility::EligibleForCertification;
+    let signer = CountingSigner::new(47);
+    assert!(matches!(
+        f.draft(Some(forged), signer.public()?),
+        Err(CertificateError::EvidenceBindingMismatch)
+    ));
+    assert_eq!(signer.count.get(), 0);
+    Ok(())
+}
