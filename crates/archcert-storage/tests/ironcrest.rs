@@ -100,6 +100,7 @@ async fn ironcrest_response_publication_recovery_reuses_accepted_provider_work()
                 policy: &policy,
                 policy_bytes,
                 authority_profile_sha256: pin.authority_profile_sha256.clone(),
+                authority_profile_bytes: Some(profile.bytes()),
                 observations: &[],
                 claims: &[],
             },
@@ -556,6 +557,7 @@ impl AdmissionFixture {
                 policy: &self.inputs.policy,
                 policy_bytes: br#"{"kind":"controlled-admission-policy"}"#,
                 authority_profile_sha256: self.profile.artifact().digest().clone(),
+                authority_profile_bytes: None,
                 observations: &[],
                 claims: &[],
             },
@@ -832,6 +834,7 @@ async fn ironcrest_admission_freezes_exact_plan_transactionally_and_rejects_repl
                 } else {
                     f.pin.authority_profile_sha256.clone()
                 },
+                authority_profile_bytes: None,
                 observations: &[],
                 claims: &[],
             },

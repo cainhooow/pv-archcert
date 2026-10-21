@@ -73,6 +73,7 @@ async fn approved_authority_replay_challenge_passes_good_fixture_and_rejects_dup
                 policy: &policy,
                 policy_bytes,
                 authority_profile_sha256: digest_bytes(b"controlled-authority-test"),
+                authority_profile_bytes: None,
                 observations: &[],
                 claims: &[],
             },

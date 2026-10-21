@@ -161,6 +161,9 @@ pub struct ReviewContext<'a> {
     pub policy_bytes: &'a [u8],
     /// Versioned Ironcrest authority requirements.
     pub authority_profile_sha256: Sha256Digest,
+    /// Complete authority profile required by bounded packaging; absent only for
+    /// historical direct-embedding requests. Checked against the exact digest.
+    pub authority_profile_bytes: Option<&'a [u8]>,
     /// Controller observations, never implementing-agent reasoning.
     pub observations: &'a [ValidationObservation],
     /// Optional explicitly untrusted claims.

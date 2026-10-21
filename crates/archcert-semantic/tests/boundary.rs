@@ -80,6 +80,7 @@ fn request_with(
             policy: &policy,
             policy_bytes: POLICY,
             authority_profile_sha256: digest_bytes(b"controlled-profile-v1"),
+            authority_profile_bytes: None,
             observations,
             claims,
         },
@@ -395,6 +396,7 @@ fn request_refuses_wrong_source_knowledge_policy_or_foreign_bundle() -> R {
             policy: &policy,
             policy_bytes: bytes,
             authority_profile_sha256: digest_bytes(b"profile"),
+            authority_profile_bytes: None,
             observations: &[],
             claims: &[],
         };
@@ -680,6 +682,7 @@ fn same_source_review_cannot_replay_across_knowledge_policy_or_authority_profile
                 policy: &policy,
                 policy_bytes: POLICY,
                 authority_profile_sha256: digest_bytes(profile),
+                authority_profile_bytes: None,
                 observations: &[],
                 claims: &[],
             },

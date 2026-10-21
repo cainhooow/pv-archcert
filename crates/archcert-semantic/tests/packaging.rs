@@ -49,6 +49,9 @@ fn prepare(
         version: "1".into(),
         sha256: digest_bytes(POLICY),
     };
+    let profile_bytes = canonical_bytes(
+        &serde_json::json!({"kind":"CONTROLLED_TEST_AUTHORITY_PROFILE","identity":profile,"semantic_required":true,"gate":"fail-closed"}),
+    )?;
     Ok(SemanticReviewRequest::prepare_bounded(
         ReviewContext {
             job,
@@ -58,7 +61,8 @@ fn prepare(
             bundles: &[],
             policy: &policy,
             policy_bytes: POLICY,
-            authority_profile_sha256: digest_bytes(profile),
+            authority_profile_sha256: digest_bytes(&profile_bytes),
+            authority_profile_bytes: Some(&profile_bytes),
             observations: &[],
             claims: &[],
         },
@@ -359,6 +363,9 @@ async fn bounded_review_rejects_every_immutable_scope_and_packaging_substitution
         } else {
             1024 * 1024
         };
+        let profile_bytes = canonical_bytes(
+            &serde_json::json!({"kind":"CONTROLLED_TEST_AUTHORITY_PROFILE","identity":if variant==9 {"profile-b"}else{"profile-a"},"semantic_required":true}),
+        )?;
         Ok(SemanticReviewRequest::prepare_bounded(
             ReviewContext {
                 job,
@@ -368,11 +375,8 @@ async fn bounded_review_rejects_every_immutable_scope_and_packaging_substitution
                 bundles: &bundles,
                 policy: &policy,
                 policy_bytes: POLICY,
-                authority_profile_sha256: digest_bytes(if variant == 9 {
-                    b"profile-b"
-                } else {
-                    b"profile-a"
-                }),
+                authority_profile_sha256: digest_bytes(&profile_bytes),
+                authority_profile_bytes: Some(&profile_bytes),
                 observations: &[],
                 claims: &[],
             },
@@ -456,5 +460,39 @@ async fn exact_limit_minus_one_equal_plus_one_gate_precedes_provider_invocation(
         Err(SemanticReviewError::Oversized)
     ));
     assert_eq!(provider.0.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+#[test]
+fn mandatory_profile_contents_cannot_be_missing_or_substituted() -> R {
+    let s = snapshot(ProjectId::new(), 1)?;
+    let k = engine()?.extract(&s, &[], None)?;
+    let i = analyze_impact(&k, None)?;
+    let policy = PolicyPin {
+        id: "mandatory-profile-test".into(),
+        version: "1".into(),
+        sha256: digest_bytes(POLICY),
+    };
+    for profile_bytes in [None, Some(br#"{"gate":"weakened"}"#.as_slice())] {
+        let result = SemanticReviewRequest::prepare_bounded(
+            ReviewContext {
+                job: JobId::new(),
+                source: &s,
+                knowledge: &k,
+                impact: &i,
+                bundles: &[],
+                policy: &policy,
+                policy_bytes: POLICY,
+                authority_profile_sha256: digest_bytes(b"expected immutable authority profile"),
+                authority_profile_bytes: profile_bytes,
+                observations: &[],
+                claims: &[],
+            },
+            ReviewerSelection::replay(),
+            SemanticLimits::default(),
+            SemanticPackagingPolicy::rust_controlled(),
+        );
+        assert!(matches!(result, Err(KnowledgeError::BindingMismatch)));
+    }
     Ok(())
 }

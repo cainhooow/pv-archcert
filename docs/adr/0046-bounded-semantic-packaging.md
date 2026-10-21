@@ -24,8 +24,9 @@ priority order and fallback behavior. It has no target deserializer. Mandatory
 source/baseline/project/job, knowledge/impact, bundle, policy and authority profile
 identities, complete policy requirements and authority assertions precede optional
 repository data. All active approved findings and invariants are retained in full
-bundles or packaging fails. Profile and policy bytes remain separate evidence;
-profile identity is mandatory in every package. Target prose cannot assign priority.
+bundles or packaging fails. Complete digest-checked profile and policy bytes are
+mandatory reviewer context and also remain separate immutable evidence. Profile
+contents include the exact semantic gate and challenge requirements. Target prose cannot assign priority.
 
 Selection uses authority predicates (changed paths, mechanically impacted syntax,
 unresolved edges, tests and entry/migration syntax) and canonical input ties. It
@@ -74,3 +75,9 @@ information; explicit omissions permit honest engineering review without claimin
 whole-source reasoning. A profile requiring complete relevant context must remain
 inconclusive on such packages. New authority profiles must pin this policy rather
 than silently changing historical profile bytes.
+
+Packager/policy version 1.1.0 explicitly requires complete digest-checked authority
+profile context. Earlier development version 1.0.0 digest-only profile requests
+are not reconstructed with these semantics; exact profile/request pin checks reject
+them. The final provider boundary independently checks actual serialized bytes;
+limit-1/limit/limit+1 regression cases count provider invocations.

@@ -4,7 +4,7 @@ use archcert_domain::knowledge::{AuthorityEntryKind, NodeKind};
 use serde_json::{Value, json};
 
 /// New algorithm identity. Historical direct-embedding requests remain schema 1.
-pub const PACKAGER_VERSION: &str = "archcert-semantic-packager-v1/1.0.0";
+pub const PACKAGER_VERSION: &str = "archcert-semantic-packager-v1/1.1.0";
 
 /// Authority capability, deliberately without a target parser or Deserialize.
 #[derive(Debug, Clone, Serialize)]
@@ -28,7 +28,7 @@ impl SemanticPackagingPolicy {
     /// Explicit bounded engineering review. Partial review proves no completeness.
     pub fn rust_controlled() -> Self {
         Self {
-            version: "rust-bounded-context-v1/1.0.0",
+            version: "rust-bounded-context-v1/1.1.0",
             maximum_request_bytes: 1024 * 1024,
             maximum_excerpt_bytes: 65536,
             maximum_file_excerpt_bytes: 4096,
@@ -152,6 +152,19 @@ impl SemanticReviewRequest {
         {
             return Err(KnowledgeError::BindingMismatch);
         }
+        let profile_bytes = context
+            .authority_profile_bytes
+            .ok_or(KnowledgeError::BindingMismatch)?;
+        if profile_bytes.len() > 65536
+            || digest_bytes(profile_bytes) != binding.authority_profile_sha256
+        {
+            return Err(KnowledgeError::BindingMismatch);
+        }
+        let profile_body: Value =
+            serde_json::from_slice(profile_bytes).map_err(|_| KnowledgeError::Invalid)?;
+        if canonical_bytes(&profile_body)? != profile_bytes {
+            return Err(KnowledgeError::Invalid);
+        }
         let k = context.knowledge.body();
         let i = context.impact.body();
         let findings = context
@@ -204,7 +217,7 @@ impl SemanticReviewRequest {
         let mut body = json!({"schema":1,"kind":"ARCHCERT_SEMANTIC_PACKAGE",
             "binding":binding,"packager_version":PACKAGER_VERSION,"packaging_policy":policy,
             "packaging_policy_sha256":policy_sha256,
-            "authority_context":{"policy":policy_body,"knowledge_bundles":authority},
+            "authority_context":{"policy":policy_body,"knowledge_bundles":authority,"profile":profile_body},
             "coverage_dimensions":k.coverage,
             "impact_summary":{"full_review":i.full_review,"baseline_knowledge_sha256":i.baseline_knowledge_sha256,
                 "changed_files":i.changed_files.len(),"added_files":i.added_files.len(),"deleted_files":i.deleted_files.len(),

@@ -292,6 +292,7 @@ impl ControlPlane {
             policy: &base_inputs.policy,
             policy_bytes: bundle.canonical_bytes(),
             authority_profile_sha256: profile.artifact().digest().clone(),
+            authority_profile_bytes: Some(profile.artifact().bytes()),
             observations: &[],
             claims: &[],
         };
