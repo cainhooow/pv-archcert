@@ -411,8 +411,8 @@ fn request_refuses_wrong_source_knowledge_policy_or_foreign_bundle() -> R {
     }
     Ok(())
 }
-#[test]
-fn context_truncation_partial_response_and_explicit_blind_spot_never_continue() -> R {
+#[tokio::test]
+async fn context_truncation_partial_response_and_explicit_blind_spot_never_continue() -> R {
     let limits = SemanticLimits {
         file_excerpt_bytes: 4,
         ..SemanticLimits::default()
@@ -426,6 +426,22 @@ fn context_truncation_partial_response_and_explicit_blind_spot_never_continue() 
         &[],
     )?;
     assert!(!truncated.context_complete());
+    // Historical schema-1 requests retain their accepted-review/recovery behavior.
+    // Their gate still blocks incomplete context, regardless of provider CLEAR.
+    let replay = ReplayReviewer::new(
+        truncated.artifact().digest().clone(),
+        serde_json::to_vec(&response(&truncated))?,
+    )?;
+    let reviewed = SemanticReviewArtifact::accept(
+        &truncated,
+        review_with_byte_bound(&truncated, &replay, truncated.limits().request_bytes).await,
+        1700000001,
+    )?;
+    assert!(reviewed.error().is_none());
+    assert_eq!(
+        semantic_gate(&truncated, Some(&reviewed)),
+        SemanticGateDecision::RequireMoreEvidence
+    );
     assert_eq!(
         semantic_gate(&truncated, Some(&accept(&truncated, response(&truncated))?)),
         SemanticGateDecision::RequireMoreEvidence

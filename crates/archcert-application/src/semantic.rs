@@ -536,7 +536,7 @@ pub async fn review_with_byte_bound(
     {
         return Err(SemanticReviewError::Oversized);
     }
-    if !request.context_sufficient() {
+    if request.package().is_some() && !request.context_sufficient() {
         return Err(SemanticReviewError::Truncated);
     }
     reviewer.review(request).await

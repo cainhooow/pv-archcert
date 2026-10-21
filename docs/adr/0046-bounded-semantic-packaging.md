@@ -81,3 +81,8 @@ profile context. Earlier development version 1.0.0 digest-only profile requests
 are not reconstructed with these semantics; exact profile/request pin checks reject
 them. The final provider boundary independently checks actual serialized bytes;
 limit-1/limit/limit+1 regression cases count provider invocations.
+
+Authority bundle arrays use canonical digest order, independently of provisioning
+iteration order. Schema-1 incomplete-context review acceptance/restoration remains
+available with its original REQUIRE_MORE_EVIDENCE gate; the new insufficient-package
+pre-invocation rejection does not reinterpret historical review artifacts.

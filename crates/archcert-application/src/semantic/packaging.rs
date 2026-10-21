@@ -187,9 +187,15 @@ impl SemanticReviewRequest {
             return Err(KnowledgeError::LimitExceeded);
         }
         let policy_sha256 = policy.digest()?;
-        let authority: Vec<Value> = context
-            .bundles
-            .iter()
+        let mut bundles: Vec<_> = context.bundles.iter().collect();
+        bundles.sort_by(|a, b| {
+            a.artifact()
+                .digest()
+                .as_str()
+                .cmp(b.artifact().digest().as_str())
+        });
+        let authority: Vec<Value> = bundles
+            .into_iter()
             .map(|b| {
                 serde_json::from_slice(b.artifact().bytes()).map_err(|_| KnowledgeError::Invalid)
             })

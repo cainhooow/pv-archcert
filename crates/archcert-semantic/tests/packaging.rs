@@ -496,3 +496,62 @@ fn mandatory_profile_contents_cannot_be_missing_or_substituted() -> R {
     }
     Ok(())
 }
+
+#[test]
+fn authority_bundle_input_permutations_produce_one_canonical_package() -> R {
+    use archcert_domain::knowledge::KnowledgeScope;
+    let project = ProjectId::new();
+    let job = JobId::new();
+    let s = snapshot(project, 1)?;
+    let profile_bytes = canonical_bytes(
+        &serde_json::json!({"kind":"CONTROLLED_CANONICAL_PROFILE","semantic_required":true}),
+    )?;
+    let policy = PolicyPin {
+        id: "canonical-policy".into(),
+        version: "1".into(),
+        sha256: digest_bytes(POLICY),
+    };
+    let make = |reverse: bool| -> R<SemanticReviewRequest> {
+        let mut bundles = vec![];
+        for id in ["authority-a", "authority-b"] {
+            bundles.push(AuthorityKnowledgeBundle::approve(
+                id.into(),
+                "1".into(),
+                KnowledgeScope::Project(project),
+                vec![],
+            )?);
+        }
+        if reverse {
+            bundles.reverse();
+        }
+        let k = engine()?.extract(&s, &bundles, None)?;
+        let i = analyze_impact(&k, None)?;
+        Ok(SemanticReviewRequest::prepare_bounded(
+            ReviewContext {
+                job,
+                source: &s,
+                knowledge: &k,
+                impact: &i,
+                bundles: &bundles,
+                policy: &policy,
+                policy_bytes: POLICY,
+                authority_profile_sha256: digest_bytes(&profile_bytes),
+                authority_profile_bytes: Some(&profile_bytes),
+                observations: &[],
+                claims: &[],
+            },
+            ReviewerSelection::replay(),
+            SemanticLimits::default(),
+            SemanticPackagingPolicy::rust_controlled(),
+        )?)
+    };
+    let a = make(false)?;
+    let b = make(true)?;
+    assert_eq!(a.binding(), b.binding());
+    assert_eq!(
+        a.package().ok_or("package a")?.artifact().bytes(),
+        b.package().ok_or("package b")?.artifact().bytes()
+    );
+    assert_eq!(a.artifact().bytes(), b.artifact().bytes());
+    Ok(())
+}
