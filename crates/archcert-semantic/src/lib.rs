@@ -1,5 +1,6 @@
 //! Local deterministic replay only. No provider SDK, process launcher, network,
 //! credential, signer, runtime or database capability is present.
+
 use archcert_application::semantic::*;
 use archcert_domain::Sha256Digest;
 use async_trait::async_trait;
@@ -9,6 +10,7 @@ pub struct ReplayReviewer {
     request_sha256: Sha256Digest,
     response: Vec<u8>,
 }
+
 impl ReplayReviewer {
     /// Pins one bounded response to one exact request. Raw bytes remain private
     /// and are not Debug/Display output. Structured acceptance occurs in application.
@@ -19,12 +21,14 @@ impl ReplayReviewer {
         if response.len() > SemanticLimits::default().response_bytes {
             return Err(SemanticReviewError::Oversized);
         }
+
         Ok(Self {
             request_sha256,
             response,
         })
     }
 }
+
 #[async_trait]
 impl SemanticReviewer for ReplayReviewer {
     async fn review(
@@ -34,12 +38,15 @@ impl SemanticReviewer for ReplayReviewer {
         if request.artifact().digest() != &self.request_sha256 {
             return Err(SemanticReviewError::BindingMismatch);
         }
+
         if request.selection() != &ReviewerSelection::replay() {
             return Err(SemanticReviewError::UnsupportedMetadata);
         }
+
         if self.response.len() > request.limits().response_bytes {
             return Err(SemanticReviewError::Oversized);
         }
+
         Ok(ReviewerOutput {
             reported: ReviewerSelection::replay(),
             bytes: self.response.clone(),
@@ -47,8 +54,10 @@ impl SemanticReviewer for ReplayReviewer {
         })
     }
 }
+
 /// Default absence of an authorized provider. It never falls back to a network.
 pub struct UnavailableReviewer;
+
 #[async_trait]
 impl SemanticReviewer for UnavailableReviewer {
     async fn review(

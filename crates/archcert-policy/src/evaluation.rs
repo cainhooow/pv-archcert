@@ -1,4 +1,5 @@
 //! Pure evaluation with explicit audit time and independently supplied execution bindings.
+
 use crate::{
     Applicability, PolicyBundle, PolicyBundleRef, PolicyError, Property, PropertyId, Rule, Severity,
 };
@@ -23,6 +24,7 @@ pub struct ExpectedExecution {
     /// Exact expected execution identity for this evaluation/job.
     pub execution: ExecutionId,
 }
+
 /// Trusted process-local input boundary; no deserialization API or output text.
 pub struct EvaluationInput<'a> {
     /// Accepted immutable source, including existing completeness evidence.
@@ -36,6 +38,7 @@ pub struct EvaluationInput<'a> {
     /// Explicit audit timestamp in Unix seconds. Never enters a decision or ID.
     pub evaluated_at: u64,
 }
+
 /// Pre-signing disposition; this enum cannot issue CERTIFIED.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -47,6 +50,7 @@ pub enum CertificationEligibility {
     /// No definite blocker, but at least one blocking conclusion is unreliable.
     Inconclusive,
 }
+
 /// Stable explanation codes, independent of prose or observation order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -76,6 +80,7 @@ pub enum ReasonCode {
     /// Explicit authority applicability excludes this plan's profiles.
     PolicyNotApplicable,
 }
+
 /// Explicit applicability decision; never inferred from absent evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -85,6 +90,7 @@ pub enum PropertyApplicability {
     /// Authority conditions explicitly exclude this plan.
     NotApplicable,
 }
+
 /// Selector of required evidence, kept separate from actual payload references.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE")]
@@ -103,6 +109,7 @@ pub enum RequiredEvidenceRef {
     /// The all-planned-executions rule requires at least one step.
     NonemptyPlan,
 }
+
 /// Stable content-bound reference; detailed evidence remains outside policy results.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE")]
@@ -120,6 +127,7 @@ pub enum EvidenceRef {
         sha256: Sha256Digest,
     },
 }
+
 /// One authority interpretation; never a copy of entire execution evidence.
 #[derive(Debug, Clone, Serialize)]
 pub struct PropertyEvaluation {
@@ -142,6 +150,7 @@ pub struct PropertyEvaluation {
     /// Stable explanation for this conclusion.
     pub reason: ReasonCode,
 }
+
 /// Structured authority finding for an unsatisfied property.
 #[derive(Debug, Clone, Serialize)]
 pub struct Finding {
@@ -160,6 +169,7 @@ pub struct Finding {
     /// References to evidence, without payload copies.
     pub observations: Vec<EvidenceRef>,
 }
+
 /// Unsigned deterministic evaluation, expressly not a certificate.
 #[derive(Debug, Clone, Serialize)]
 pub struct PolicyEvaluation {
@@ -184,8 +194,10 @@ pub struct PolicyEvaluation {
     /// Audit metadata only, Unix seconds.
     pub evaluated_at: u64,
 }
+
 #[derive(Clone, Copy)]
 struct Conclusion(PropertyVerdict, ReasonCode);
+
 fn combine(items: &[Conclusion]) -> Conclusion {
     // Reliability uncertainty dominates a target failure within a property. Eligibility
     // separately prefers definite blockers across properties. Both orders are explicit.
@@ -198,6 +210,7 @@ fn combine(items: &[Conclusion]) -> Conclusion {
             PropertyVerdict::Proven => 4,
         }
     }
+
     items
         .iter()
         .min_by_key(|c| (rank(c.0), c.1))
@@ -207,6 +220,7 @@ fn combine(items: &[Conclusion]) -> Conclusion {
             ReasonCode::RequiredEvidenceMissing,
         ))
 }
+
 fn fact_kind(f: &ObservationFact) -> ObservationKind {
     match f {
         ObservationFact::ExecutionFinished { .. } => ObservationKind::ExecutionFinished,
@@ -215,6 +229,7 @@ fn fact_kind(f: &ObservationFact) -> ObservationKind {
         ObservationFact::EnvironmentEstablished { .. } => ObservationKind::EnvironmentEstablished,
     }
 }
+
 fn fact_conclusion(f: &ObservationFact) -> Conclusion {
     use PropertyVerdict::*;
     use ReasonCode::*;
@@ -233,11 +248,13 @@ fn fact_conclusion(f: &ObservationFact) -> Conclusion {
         _ => Conclusion(Proven, EvidenceEstablished),
     }
 }
+
 struct EvaluationContext<'a> {
     input: &'a EvaluationInput<'a>,
     bundle: &'a PolicyBundle,
     plan_digest: Sha256Digest,
 }
+
 impl EvaluationContext<'_> {
     fn slot(
         &self,
@@ -249,6 +266,7 @@ impl EvaluationContext<'_> {
         let execution = self.input.executions.iter().find(|e| e.step == step_id);
         let mut facts = BTreeMap::new();
         let mut errors = Vec::new();
+
         for o in self
             .input
             .observations
@@ -264,6 +282,7 @@ impl EvaluationContext<'_> {
                     sha256: digest,
                 },
             );
+
             if o.schema != 1
                 || !self.bundle.supports_producer(&o.producer)
                 || (o.producer == "archcert-controller-v1/0.1.0"
@@ -282,6 +301,7 @@ impl EvaluationContext<'_> {
                 ));
                 continue;
             }
+
             if o.source != *self.input.source.identity()
                 || o.plan_sha256 != self.plan_digest
                 || execution.is_none_or(|e| e.execution != o.id.execution)
@@ -296,17 +316,21 @@ impl EvaluationContext<'_> {
                 ));
                 continue;
             }
+
             facts.insert(crate::model::canonical_json(&o.fact)?, &o.fact);
         }
+
         if facts.len() > 1 {
             errors.push(Conclusion(
                 PropertyVerdict::Inconclusive,
                 ReasonCode::ContradictoryEvidence,
             ));
         }
+
         if !errors.is_empty() {
             return Ok(combine(&errors));
         }
+
         Ok(facts.values().next().map_or(
             Conclusion(
                 PropertyVerdict::NotProven,
@@ -315,6 +339,7 @@ impl EvaluationContext<'_> {
             |f| fact_conclusion(f),
         ))
     }
+
     fn property(&self, p: &Property) -> Result<PropertyEvaluation, PolicyError> {
         let applicable = match &p.applicability {
             Applicability::Always {} => true,
@@ -337,6 +362,7 @@ impl EvaluationContext<'_> {
                     sha256: self.input.source.identity().snapshot_sha256.clone(),
                 },
             );
+
             if self.input.source.status() == SourceStatus::Complete {
                 Conclusion(PropertyVerdict::Proven, ReasonCode::EvidenceEstablished)
             } else {
@@ -377,9 +403,11 @@ impl EvaluationContext<'_> {
             let mut steps = steps;
             steps.sort();
             let mut results = Vec::new();
+
             if steps.is_empty() {
                 required.push(RequiredEvidenceRef::NonemptyPlan);
             }
+
             for id in steps {
                 required.push(RequiredEvidenceRef::Observation {
                     step: id.clone(),
@@ -391,6 +419,7 @@ impl EvaluationContext<'_> {
                         .find(|e| e.step == id)
                         .map(|e| e.execution),
                 });
+
                 if let Rule::Command { category, .. } = &p.rule
                     && !self.input.plan.steps().iter().any(|s| {
                         s.id() == id
@@ -404,12 +433,16 @@ impl EvaluationContext<'_> {
                     ));
                     continue;
                 }
+
                 results.push(self.slot(&id, kind, &mut refs)?);
             }
+
             combine(&results)
         };
+
         let satisfied = conclusion.0 == PropertyVerdict::Proven
             || (conclusion.0 == PropertyVerdict::NotApplicable && p.allow_not_applicable);
+
         Ok(PropertyEvaluation {
             property: p.id,
             description: p.description.clone(),
@@ -428,6 +461,7 @@ impl EvaluationContext<'_> {
         })
     }
 }
+
 /// Evaluates an immutable authority bundle against exact process-local inputs.
 /// Input errors return no evaluation/eligibility. No ambient time or random value is read.
 pub fn evaluate(
@@ -438,11 +472,14 @@ pub fn evaluate(
     if selected != bundle.identity() {
         return Err(PolicyError::SelectionMismatch);
     }
+
     if input.executions.len() > 160 || input.observations.len() > 4096 {
         return Err(PolicyError::InvalidInputs);
     }
+
     let mut steps = BTreeSet::new();
     let mut executions = BTreeSet::new();
+
     for e in input.executions {
         if !input.plan.steps().iter().any(|s| s.id() == e.step)
             || !steps.insert(e.step.clone())
@@ -451,6 +488,7 @@ pub fn evaluate(
             return Err(PolicyError::InvalidInputs);
         }
     }
+
     // Bound mutable public observation strings before any canonicalization or repeated scan.
     if input
         .observations
@@ -459,27 +497,36 @@ pub fn evaluate(
     {
         return Err(PolicyError::InvalidInputs);
     }
+
     let plan_digest = input.plan.digest()?;
     let context = EvaluationContext {
         input: &input,
         bundle,
         plan_digest: plan_digest.clone(),
     };
+
     let properties = bundle
         .properties()
         .iter()
         .map(|p| context.property(p))
         .collect::<Result<Vec<_>, _>>()?;
     let mut findings = Vec::new();
+
     for p in &properties {
         if p.verdict == PropertyVerdict::Proven
             || (p.verdict == PropertyVerdict::NotApplicable && !p.blocking)
         {
             continue;
         }
+
         let id = digest_bytes(&crate::model::canonical_json(&serde_json::json!({
-            "schema":1,"source":input.source.identity(),"plan":plan_digest,"policy":selected,
-            "property":p.property,"verdict":p.verdict,"reason":p.reason,
+            "schema": 1,
+            "source": input.source.identity(),
+            "plan": plan_digest,
+            "policy": selected,
+            "property": p.property,
+            "verdict": p.verdict,
+            "reason": p.reason,
         }))?);
         findings.push(Finding {
             id,
@@ -491,6 +538,7 @@ pub fn evaluate(
             observations: p.actual_evidence.clone(),
         });
     }
+
     let blockers: Vec<_> = properties.iter().filter(|p| p.blocking).collect();
     // Source completeness is an ingress safety floor, independent of an
     // authority profile omitting or excluding a source-completeness property.
@@ -506,6 +554,7 @@ pub fn evaluate(
     } else {
         CertificationEligibility::Inconclusive
     };
+
     Ok(PolicyEvaluation {
         schema: 1,
         source: input.source.identity().clone(),

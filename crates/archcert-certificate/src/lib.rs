@@ -2,6 +2,7 @@
 //!
 //! Eligibility is not certification. Only successful construction, signing and
 //! strict verification can create an IssuedCertificate. No target execution lives here.
+
 use archcert_application::validation::{ValidationObservation, ValidationPlan};
 use archcert_crypto::{CertificateSigner, DetachedSignature, PublicKey, SigningFailure};
 use archcert_domain::{
@@ -21,6 +22,7 @@ use thiserror::Error;
 
 /// Maximum envelope bytes before decoding, including one sentinel byte on reads.
 pub const MAX_CERTIFICATE_BYTES: usize = 65_536;
+
 /// Explicit fail-closed construction/signing/verification failures.
 #[derive(Debug, Error)]
 pub enum CertificateError {
@@ -76,6 +78,7 @@ pub enum CertificateError {
     #[error("signature verification failed")]
     VerificationFailed,
 }
+
 impl From<EvidenceError> for CertificateError {
     fn from(e: EvidenceError) -> Self {
         match e {
@@ -84,6 +87,7 @@ impl From<EvidenceError> for CertificateError {
         }
     }
 }
+
 /// Signed development issuance metadata. No expiration or revocation semantics.
 pub struct IssuanceMetadata {
     /// Positive Unix seconds, signed audit metadata; not evaluation/source identity.
@@ -91,6 +95,7 @@ pub struct IssuanceMetadata {
     /// Authority-controlled certifier identity, never obtained from target config.
     pub certifier: String,
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PolicyIdentity {
@@ -98,6 +103,7 @@ struct PolicyIdentity {
     version: String,
     sha256: String,
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SourceIdentity {
@@ -105,6 +111,7 @@ struct SourceIdentity {
     tree: String,
     snapshot_sha256: String,
 }
+
 /// Every field in this payload is signed. The envelope digest and signature are
 /// derived verification data, not additional authority claims.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,27 +140,32 @@ struct Payload {
     signature_algorithm: String,
     signing_key_id: String,
 }
+
 fn identifier(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 128
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"-._/".contains(&b))
 }
+
 fn lower_hex(s: &str, len: usize) -> bool {
     s.len() == len
         && s.bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
+
 impl Payload {
     fn validate(&self) -> Result<(), CertificateError> {
         if self.schema != 1 {
             return Err(CertificateError::UnsupportedCertificateSchema);
         }
+
         let project: archcert_domain::ProjectId =
             serde_json::from_value(serde_json::Value::String(self.project.clone()))
                 .map_err(|_| CertificateError::CertificateConstructionFailed)?;
         let repository = archcert_domain::source::RepositoryId::parse(self.repository.clone())
             .map_err(|_| CertificateError::CertificateConstructionFailed)?;
+
         if self.kind != "ARCHCERT_CERTIFICATE"
             || self.authority != "DEVELOPMENT ONLY / NOT PRODUCTION AUTHORITY"
             || self.scope != "EXACT_SOURCE"
@@ -192,9 +204,11 @@ impl Payload {
         {
             return Err(CertificateError::CertificateConstructionFailed);
         }
+
         Ok(())
     }
 }
+
 /// Frozen owned signable payload and its computed identity. No mutable access.
 #[derive(Debug)]
 pub struct CanonicalCertificate {
@@ -202,26 +216,32 @@ pub struct CanonicalCertificate {
     bytes: Vec<u8>,
     digest: Sha256Digest,
 }
+
 impl CanonicalCertificate {
     fn new(payload: Payload) -> Result<Self, CertificateError> {
         payload.validate()?;
+
         let bytes = canonical_bytes(&payload)?;
         let digest = digest_bytes(&bytes);
+
         Ok(Self {
             payload,
             bytes,
             digest,
         })
     }
+
     /// Exactly these bytes, rather than JSON presentation or the digest, are signed.
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
+
     /// Certificate instance identity: SHA-256 of all signed payload fields.
     pub fn digest(&self) -> &Sha256Digest {
         &self.digest
     }
 }
+
 /// Trusted original inputs; neither project configuration nor deserialized reports
 /// can construct source snapshots or authority plans. Borrowing ends at preparation.
 pub struct IssuanceContext<'a> {
@@ -240,6 +260,7 @@ pub struct IssuanceContext<'a> {
     /// Separately selected authority identity.
     pub selected: &'a PolicyBundleRef,
 }
+
 /// Owned immutable pre-signing result. No source, runner, or mutable references
 /// survive preparation. Mutating the caller's originals cannot change these bytes.
 #[derive(Debug)]
@@ -249,6 +270,7 @@ pub struct CertificateDraft {
     bundle: EvidenceBundle,
     key: PublicKey,
 }
+
 impl CertificateDraft {
     /// Rejects ineligibility and mismatches before any signer call. Recomputes the
     /// exact evaluation to detect stale/edited findings, eligibility and references.
@@ -260,6 +282,7 @@ impl CertificateDraft {
     ) -> Result<Self, CertificateError> {
         Self::prepare_inner(context, evaluation, metadata, key, None)
     }
+
     /// Ironcrest preparation requires the accepted review/challenge evidence in
     /// addition to independently recomputing all deterministic requirements.
     pub fn prepare_ironcrest(
@@ -271,6 +294,7 @@ impl CertificateDraft {
     ) -> Result<Self, CertificateError> {
         Self::prepare_inner(context, evaluation, metadata, key, Some(ironcrest))
     }
+
     fn prepare_inner(
         context: IssuanceContext<'_>,
         evaluation: Option<PolicyEvaluation>,
@@ -283,20 +307,26 @@ impl CertificateDraft {
         {
             return Err(CertificateError::EvidenceBindingMismatch);
         }
+
         let e = evaluation.ok_or(CertificateError::MissingEvaluation)?;
+
         if e.schema != 1 || e.evaluator_version != "archcert-policy-evaluator-v1/0.1.0" {
             return Err(CertificateError::UnsupportedEvaluationSchema);
         }
+
         if e.eligibility != CertificationEligibility::EligibleForCertification {
             return Err(CertificateError::EvaluationNotEligible);
         }
+
         context
             .source
             .require_complete()
             .map_err(|_| CertificateError::IncompleteSource)?;
+
         if e.source != *context.source.identity() {
             return Err(CertificateError::SourceIdentityMismatch);
         }
+
         if e.plan_sha256
             != context
                 .plan
@@ -305,9 +335,11 @@ impl CertificateDraft {
         {
             return Err(CertificateError::PlanIdentityMismatch);
         }
+
         if &e.policy != context.bundle.identity() || context.selected != context.bundle.identity() {
             return Err(CertificateError::PolicyIdentityMismatch);
         }
+
         // Resolve references before re-evaluation; no large execution payload is
         // duplicated in the signable certificate.
         EvidenceManifest::build(&e, context.observations)?;
@@ -323,9 +355,11 @@ impl CertificateDraft {
             },
         )
         .map_err(|_| CertificateError::InternalIntegrityFailure)?;
+
         if canonical_bytes(&e)? != canonical_bytes(&recomputed)? {
             return Err(CertificateError::InternalIntegrityFailure);
         }
+
         // This schema may claim ROOTLESS_OCI_SHARED_KERNEL only with an actual
         // nonempty, completely bound controller execution set and established
         // environment facts, even if a future authority policy omits that rule.
@@ -334,6 +368,7 @@ impl CertificateDraft {
         {
             return Err(CertificateError::EvidenceBindingMismatch);
         }
+
         for o in context.observations {
             let step = context
                 .plan
@@ -351,9 +386,11 @@ impl CertificateDraft {
                     if *category != step.evidence_category() {
                         return Err(CertificateError::EvidenceBindingMismatch);
                     }
+
                     ObservationKind::ExecutionFinished
                 }
             };
+
             if o.producer != "archcert-docker-cli-v1/0.1.0"
                 || o.profile != step.profile().name()
                 || kind != o.id.kind
@@ -365,6 +402,7 @@ impl CertificateDraft {
                 return Err(CertificateError::EvidenceBindingMismatch);
             }
         }
+
         for step in context.plan.steps() {
             if !context.observations.iter().any(|o| {
                 o.id.step == step.id()
@@ -373,16 +411,20 @@ impl CertificateDraft {
                 return Err(CertificateError::EvidenceBindingMismatch);
             }
         }
+
         if context.execution_records.len() != context.executions.len() {
             return Err(CertificateError::EvidenceBindingMismatch);
         }
+
         let mut record_executions = std::collections::BTreeSet::new();
         let mut record_observations = std::collections::BTreeSet::new();
+
         for record in context.execution_records {
             if !record_executions.insert(record.execution.to_string()) || record.source != e.source
             {
                 return Err(CertificateError::EvidenceBindingMismatch);
             }
+
             let expected = context
                 .executions
                 .iter()
@@ -394,25 +436,30 @@ impl CertificateDraft {
                 .iter()
                 .find(|s| s.id() == expected.step)
                 .ok_or(CertificateError::EvidenceBindingMismatch)?;
+
             for o in ValidationObservation::from_execution(context.plan, step, record)
                 .map_err(|_| CertificateError::EvidenceBindingMismatch)?
             {
                 record_observations.insert(canonical_bytes(&o)?);
             }
         }
+
         let supplied_observations = context
             .observations
             .iter()
             .map(canonical_bytes)
             .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+
         if record_observations != supplied_observations {
             return Err(CertificateError::EvidenceBindingMismatch);
         }
+
         let bundle = EvidenceBundle::build(&e, context.observations, context.execution_records)?;
         let manifest =
             EvidenceManifest::build_with_bundle(&e, context.observations, Some(&bundle))?;
         let manifest = if let Some(ironcrest) = ironcrest {
             let binding = ironcrest.binding();
+
             if binding.pin.project != context.source.project()
                 || binding.pin.repository != *context.source.repository()
                 || binding.pin.source != *context.source.identity()
@@ -423,16 +470,19 @@ impl CertificateDraft {
             {
                 return Err(CertificateError::EvidenceBindingMismatch);
             }
+
             manifest.with_ironcrest(binding)?
         } else {
             manifest
         };
+
         let mut findings: Vec<_> = e
             .findings
             .iter()
             .map(|f| f.id.as_str().to_owned())
             .collect();
         findings.sort();
+
         let payload = Payload {
             schema: 1,
             kind: "ARCHCERT_CERTIFICATE".into(),
@@ -465,6 +515,7 @@ impl CertificateDraft {
             signature_algorithm: "Ed25519".into(),
             signing_key_id: key.key_id().as_str().into(),
         };
+
         Ok(Self {
             certificate: CanonicalCertificate::new(payload)?,
             manifest,
@@ -472,18 +523,22 @@ impl CertificateDraft {
             key,
         })
     }
+
     /// Immutable canonical payload for inspection/retention before authority use.
     pub fn certificate(&self) -> &CanonicalCertificate {
         &self.certificate
     }
+
     /// Separate manifest; detailed observations/logs remain in the evidence bundle.
     pub fn manifest(&self) -> &EvidenceManifest {
         &self.manifest
     }
+
     /// Detailed immutable bundle; the manifest binds its digest.
     pub fn evidence_bundle(&self) -> &EvidenceBundle {
         &self.bundle
     }
+
     /// Signs only the frozen canonical payload and independently verifies the result
     /// under the selected public key before constructing a CERTIFIED capability.
     pub fn issue(
@@ -493,17 +548,22 @@ impl CertificateDraft {
         if signer.key_id() != self.key.key_id() {
             return Err(CertificateError::SigningKeyMismatch);
         }
+
         let signature = signer.sign(self.certificate.bytes())?;
+
         let envelope = CertificateEnvelope {
             payload: self.certificate.payload,
             certificate_sha256: self.certificate.digest.as_str().into(),
             signature: signature.to_hex(),
             public_key: self.key.to_hex(),
         };
+
         let verified = envelope.verify(&self.key)?;
+
         Ok(IssuedCertificate { envelope, verified })
     }
 }
+
 /// Strict signed envelope. Parsing creates no certification state. Embedded public
 /// material is convenience data; callers must provide an independently trusted key.
 #[derive(Debug, Serialize)]
@@ -513,6 +573,7 @@ pub struct CertificateEnvelope {
     signature: String,
     public_key: String,
 }
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ParsedEnvelope {
@@ -521,6 +582,7 @@ struct ParsedEnvelope {
     signature: String,
     public_key: String,
 }
+
 impl CertificateEnvelope {
     /// Reads bounded strict JSON directly into typed structs: duplicate known fields
     /// and unknown fields at every object depth reject before canonicalization.
@@ -530,9 +592,11 @@ impl CertificateEnvelope {
             .take((MAX_CERTIFICATE_BYTES + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|_| CertificateError::InvalidCertificateEncoding)?;
+
         if bytes.len() > MAX_CERTIFICATE_BYTES {
             return Err(CertificateError::InvalidCertificateEncoding);
         }
+
         let parsed: ParsedEnvelope = serde_json::from_slice(&bytes)
             .map_err(|_| CertificateError::InvalidCertificateEncoding)?;
         let envelope = Self {
@@ -542,31 +606,38 @@ impl CertificateEnvelope {
             public_key: parsed.public_key,
         };
         envelope.payload.validate()?;
+
         if !lower_hex(&envelope.certificate_sha256, 64)
             || DetachedSignature::from_hex(&envelope.signature).is_err()
             || PublicKey::from_hex(&envelope.public_key).is_err()
         {
             return Err(CertificateError::InvalidCertificateEncoding);
         }
+
         Ok(envelope)
     }
+
     /// Offline verification needs no Git, Docker, workspace, network, database or
     /// private key. No embedded-key trust fallback is provided.
     pub fn verify(&self, trusted_key: &PublicKey) -> Result<VerifiedCertificate, CertificateError> {
         let certificate = CanonicalCertificate::new(self.payload.clone())?;
+
         if certificate.digest.as_str() != self.certificate_sha256 {
             return Err(CertificateError::CertificateDigestMismatch);
         }
+
         if self.public_key != trusted_key.to_hex()
             || self.payload.signing_key_id != trusted_key.key_id().as_str()
         {
             return Err(CertificateError::SigningKeyMismatch);
         }
+
         let signature = DetachedSignature::from_hex(&self.signature)
             .map_err(|_| CertificateError::VerificationFailed)?;
         trusted_key
             .verify(certificate.bytes(), &signature)
             .map_err(|_| CertificateError::VerificationFailed)?;
+
         Ok(VerifiedCertificate {
             certificate_sha256: self.certificate_sha256.clone(),
             source: self.payload.source.clone(),
@@ -575,11 +646,13 @@ impl CertificateEnvelope {
             signing_key_id: self.payload.signing_key_id.clone(),
         })
     }
+
     /// Small reviewable JSON presentation; this representation is never signed.
     pub fn to_json(&self) -> Result<Vec<u8>, CertificateError> {
         serde_json::to_vec_pretty(self).map_err(|_| CertificateError::CanonicalizationFailed)
     }
 }
+
 /// Successful verification proof. Private construction prevents parsing or signer
 /// attempts from manufacturing CERTIFIED. This authenticates claims, not universal security.
 #[derive(Debug, Serialize)]
@@ -590,27 +663,41 @@ pub struct VerifiedCertificate {
     certifier: String,
     signing_key_id: String,
 }
+
 impl VerifiedCertificate {
     /// Structured public verification output with explicit governance limitations.
     pub fn report(&self) -> serde_json::Value {
-        serde_json::json!({"status":"CERTIFIED","signature":"SIGNATURE VALID","structure":"CERTIFICATE STRUCTURE VALID",
-            "certificate_sha256":self.certificate_sha256,"source":self.source,"policy":self.policy,
-            "certifier":self.certifier,"signing_key_id":self.signing_key_id,"scope":"EXACT_SOURCE",
-            "notice":"DEVELOPMENT CERTIFICATE / NOT PRODUCTION AUTHORITY", "revocation":"NOT IMPLEMENTED",
-            "expiration":"NO EXPIRATION SEMANTICS YET", "meaning":"Signed ArchCert claims are authentic under the selected trusted key."})
+        serde_json::json!({
+            "status": "CERTIFIED",
+            "signature": "SIGNATURE VALID",
+            "structure": "CERTIFICATE STRUCTURE VALID",
+            "certificate_sha256": self.certificate_sha256,
+            "source": self.source,
+            "policy": self.policy,
+            "certifier": self.certifier,
+            "signing_key_id": self.signing_key_id,
+            "scope": "EXACT_SOURCE",
+            "notice": "DEVELOPMENT CERTIFICATE / NOT PRODUCTION AUTHORITY",
+            "revocation": "NOT IMPLEMENTED",
+            "expiration": "NO EXPIRATION SEMANTICS YET",
+            "meaning": "Signed ArchCert claims are authentic under the selected trusted key."
+        })
     }
 }
+
 /// Only construction + signing + verification creates this real certification result.
 #[derive(Debug)]
 pub struct IssuedCertificate {
     envelope: CertificateEnvelope,
     verified: VerifiedCertificate,
 }
+
 impl IssuedCertificate {
     /// Verified certificate suitable for offline retention.
     pub fn envelope(&self) -> &CertificateEnvelope {
         &self.envelope
     }
+
     /// Proof-backed certification report.
     pub fn verification(&self) -> &VerifiedCertificate {
         &self.verified

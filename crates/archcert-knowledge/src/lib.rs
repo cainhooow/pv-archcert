@@ -1,5 +1,6 @@
 //! Passive Rust syntax adapter. No compiler, macro expansion, build script,
 //! checkout access, network or target execution is involved.
+
 use archcert_application::knowledge::{KnowledgeError, KnowledgeExtractor, StructuralSink};
 use archcert_domain::{
     knowledge::{NodeKind, RelationKind},
@@ -9,13 +10,16 @@ use quote::ToTokens;
 
 /// Versioned bounded syntactic extractor; deliberately not a resolved call graph.
 pub struct RustSyntaxExtractor;
+
 impl KnowledgeExtractor for RustSyntaxExtractor {
     fn identity(&self) -> &'static str {
         "archcert-rust-syntax-v1/1.0.1"
     }
+
     fn supports(&self, file: &SourceFile) -> bool {
         file.path().as_str().ends_with(".rs")
     }
+
     fn extract(
         &self,
         file: &SourceFile,
@@ -27,6 +31,7 @@ impl KnowledgeExtractor for RustSyntaxExtractor {
                 "Rust parser byte budget exceeded; inventory retained, structure incomplete",
             );
         }
+
         let Ok(text) = std::str::from_utf8(file.bytes()) else {
             return sink.blind_spot(
                 "RUST_INVALID_ENCODING",
@@ -39,19 +44,23 @@ impl KnowledgeExtractor for RustSyntaxExtractor {
         let mut nesting = [0usize; 4];
         let mut punctuation = 0usize;
         let mut run = 0usize;
+
         for b in text.bytes() {
             if let Some(i) = b"([{<".iter().position(|v| *v == b) {
                 nesting[i] += 1;
             }
+
             if let Some(i) = b")]}>".iter().position(|v| *v == b) {
                 nesting[i] = nesting[i].saturating_sub(1);
             }
+
             if b.is_ascii_punctuation() {
                 punctuation += 1;
                 run += 1;
             } else if !b.is_ascii_whitespace() {
                 run = 0;
             }
+
             if nesting.iter().any(|d| *d > 48) || punctuation > 8192 || run > 64 {
                 return sink.blind_spot(
                     "RUST_COMPLEXITY_LIMIT",
@@ -59,6 +68,7 @@ impl KnowledgeExtractor for RustSyntaxExtractor {
                 );
             }
         }
+
         let Ok(parsed) = syn::parse_file(text) else {
             return sink.blind_spot(
                 "RUST_PARSE_UNSUPPORTED",
@@ -70,14 +80,17 @@ impl KnowledgeExtractor for RustSyntaxExtractor {
             "Syntax only: names, calls, dynamic dispatch, cfg activation, generated code, macros, function-local declarations and intended test coverage are unresolved")
     }
 }
+
 fn tokens(value: &impl ToTokens) -> String {
     value.to_token_stream().to_string()
 }
+
 fn is_test(attrs: &[syn::Attribute]) -> bool {
     attrs
         .iter()
         .any(|a| a.path().segments.last().is_some_and(|s| s.ident == "test"))
 }
+
 fn items(
     declarations: &[syn::Item],
     prefix: &str,
@@ -90,6 +103,7 @@ fn items(
             "Inline module traversal depth exhausted; full review required",
         );
     }
+
     for (ordinal, item) in declarations.iter().enumerate() {
         let (kind, name) = match item {
             syn::Item::Struct(i) => (NodeKind::Symbol, format!("struct {}", i.ident)),
@@ -117,6 +131,7 @@ fn items(
                 continue;
             }
         };
+
         if name.len() > 4096 {
             sink.blind_spot(
                 "RUST_LABEL_LIMIT",
@@ -124,12 +139,15 @@ fn items(
             )?;
             continue;
         }
+
         let key = format!("{prefix}/{ordinal}/{name}");
         let syntax = tokens(item);
         let id = sink.node(&key, kind, name, syntax.as_bytes())?;
+
         if matches!(item, syn::Item::Use(_)) {
             sink.edge(sink.file_node(), id.clone(), RelationKind::Imports, true)?;
         }
+
         if let syn::Item::Mod(i) = item {
             if let Some((_, nested)) = &i.content {
                 items(nested, &key, depth + 1, sink)?;
@@ -140,6 +158,7 @@ fn items(
                 )?;
             }
         }
+
         if let syn::Item::Impl(i) = item {
             for (index, method) in i.items.iter().enumerate() {
                 if let syn::ImplItem::Fn(f) = method {
@@ -157,6 +176,7 @@ fn items(
                     sink.edge(id.clone(), child, RelationKind::Defines, false)?;
                 }
             }
+
             if let Some((_, path, _)) = &i.trait_ {
                 let text = tokens(path);
                 let dependency = sink.node(
@@ -169,5 +189,6 @@ fn items(
             }
         }
     }
+
     Ok(())
 }
