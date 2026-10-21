@@ -3,7 +3,14 @@
 import os
 import sys
 
-os.environ.update(CARGO_HOME='/opt/archcert/cargo', RUSTUP_HOME='/usr/local/rustup',
+cargo_home = '/home/archcert/.cargo'
+os.makedirs(cargo_home, exist_ok=True)
+for directory in ['registry', 'advisory-dbs']:
+    link = cargo_home + '/' + directory
+    if not os.path.lexists(link):
+        os.symlink('/opt/archcert/cargo/' + directory, link)
+
+os.environ.update(CARGO_HOME=cargo_home, RUSTUP_HOME='/usr/local/rustup',
                   CARGO_TARGET_DIR='/work/target', CARGO_NET_OFFLINE='true',
                   RUSTDOCFLAGS='-D warnings', CARGO_BUILD_JOBS='2',
                   CARGO_PROFILE_DEV_DEBUG='0', CARGO_PROFILE_TEST_DEBUG='0',

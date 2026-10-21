@@ -1,4 +1,4 @@
-# Pre-Genesis source self-validation
+# Pre-Genesis engineering self-validation
 
 A validator build may consume one exact ArchCert commit as ordinary untrusted
 source. This is engineering self-validation by the same implementation/authority,
@@ -60,7 +60,7 @@ not invent digests for unreached stages. A runtime doctor result or a fixture ru
 is not execution of the self-test target. All runtime observations must identify
 their actual scope.
 
-## Current support boundary
+## First probe boundary (historical)
 
 The first reconciled-source experiment accepted and materialized the full ArchCert
 repository but normal durable preparation failed before publishing review roles.
@@ -72,14 +72,13 @@ artifacts and has a hard 1,048,576-byte ceiling, so preparation rejects with
 controller composition. These diagnostic artifacts are not accepted durable review
 evidence. The source was not modified and bounds were not raised.
 
-The excerpt budgets also require honest completeness handling for large full
-reviews. Even after request packaging is addressed, the only integrated challenge
-registry/profile remains settlement-specific, and no general Rust authority
-challenge or live semantic provider is provisioned. Increasing a byte limit or
-manufacturing a fixture replay would not demonstrate self-hosted certification.
-A future separately reviewed change should design bounded large-source review and
-appropriate project-independent authority composition while preserving these gates.
-It is not part of this experiment.
+The first probe also exposed excerpt completeness limits for large full reviews.
+At that time, the integrated challenge registry/profile was settlement-specific;
+no general Rust authority challenge or live semantic provider was provisioned.
+Increasing a byte limit or manufacturing a fixture replay would not demonstrate self-hosted certification.
+ADRs 0046–0047 now define the separate bounded Rust path below. The historical
+probe and its artifacts retain the original interpretation; they do not acquire
+new coverage or eligibility from later implementation.
 
 ## Self-reference sanity checks
 
@@ -111,3 +110,77 @@ only its reached stages and fail-closed limitation. Neither establishes absence 
 defects, independent implementation/policy/signing authority, first trusted root
 establishment or N-1 continuity. Genesis / Firstwarden retains responsibility for
 high-assurance bootstrap and independent trust establishment; it is not started.
+
+## Second self-test: bounded Rust path
+
+[ADR 0046](../adr/0046-bounded-semantic-packaging.md) separates immutable canonical
+knowledge/impact from reviewer context. [ADR 0047](../adr/0047-rust-controlled-authority.md)
+defines a new authority Rust profile/policy/challenge. Historical Python settlement
+and direct-embedding requests keep their identities and meaning. This is pre-Genesis
+enablement, not canonical M6, Genesis or independent certification.
+
+Provision the [controlled offline image](rust-image/README.md) independently and
+retain its exact repository@sha256 reference, tool versions, public cache inventory
+and advisory revision. Build the authority workspace and apply existing migrations
+in a dedicated development database. Copy the reviewed
+[mandatory Rust recipe](../policy/RUST_CONTROLLED_AUTHORITY.toml) into private
+operator configuration outside target source. Rootless daemon provisioning and its
+socket are operator decisions; no repository field selects either.
+
+Commit all implementation/documentation before choosing the final exact source.
+Use an unchanged tracked tree. The harness requires explicit authority inputs:
+
+```sh
+ARCHCERT_DATABASE_URL=postgres://postgres@127.0.0.1:55432/DEDICATED_DATABASE \
+  ./scripts/test-self-rust \
+  --source-repo /absolute/archcert \
+  --commit FULL_FINAL_COMMIT_SHA \
+  --authority-recipe /private/authority/rust.toml \
+  --image 'AUTHORITY_REGISTRY/approved-rust@sha256:EXACT_DIGEST' \
+  --docker /absolute/docker \
+  --endpoint unix:///authority/rootless.sock \
+  --output /absolute/archcert/target/pre-genesis-2/NEW_RUN
+```
+
+The real ArchCert source enters authenticated SSH ingress and is independently
+materialized, rehashed and destroyed. Complete knowledge and impact remain separate
+immutable artifacts; a schema-2 request binds the bounded package and explicit
+PARTIAL_ACCEPTABLE engineering coverage. This does not assert complete source
+review. The automated reviewer is an externally provisioned exact deterministic
+non-veto replay, as permitted for this controlled test; no live model or paid
+provider is required, and no model-quality evidence is implied.
+
+The harness first exercises mandatory overflow on that exact source with a private
+lower-only 1 KiB authority budget. It verifies no provider claim, request/review,
+execution job or certificate. Separate semantic blocker and foreign-response paths
+also admit no job. A documented path-only Rust fixture introduces a real forbidden
+application-to-signing-package edge; the fixed OCI authority guard must fail and
+semantic CLEAR must leave NOT_ELIGIBLE without any signer access. The fixture has
+no downloaded dependencies and is constructed deterministically by the harness;
+its execution outputs remain ordinary ignored runtime evidence.
+
+For the real-source run, the harness kills the controller after package/request
+publication, restarts and verifies the same request/package digests. It then kills
+after review publication, removes the replay input and restores the accepted review
+with only the unavailable adapter. It freezes the registry-owned Rust plan before
+admission, executes through the existing rootless worker, evaluates deterministic
+policy and issues a development certificate only if every requirement is eligible.
+An incomplete or failed run retains the exact boundary and exits nonzero; it never
+changes policy or limits to manufacture a certificate.
+
+The schema-2 manifest binds the package through its exact schema-2 REQUEST reference,
+alongside full knowledge/impact, review, gate and frozen challenge/result identities.
+Successful runs retain the certificate, manifest and public key under target/.
+The private key and temporary authority configuration are destroyed before the
+cleared-environment offline verification. Controller and worker are one-shot
+processes. Where practical, also stop database and runtime and repeat `archcert
+verify` with only certificate/public key; neither knowledge nor semantic services
+are verifier dependencies.
+
+`result.json`, command logs, artifact references and timing observations are
+engineering evidence, not reproducible build/artifact-binding guarantees. Record
+actual file/knowledge/impact/package sizes, included/excluded counts, extraction,
+impact, packaging and total duration in the intentionally untracked
+`docs/PRE_GENESIS_SELF_TEST_2_REPORT.md`. A successful run may be described only as
+**PRE-GENESIS ENGINEERING SELF-VALIDATION: PASSED**. It remains shared implementation/
+authority validation and does not replace independent Genesis / Firstwarden work.

@@ -7,7 +7,7 @@ name = "example-project"
 
 # Optional execution request. Without it, no project steps are requested.
 [execution]
-# Authority catalog ID. Development IDs: python, rust, node (no version assertion).
+# Authority catalog ID. Development IDs: python, rust, node, rust-workspace-v1 (no version assertion).
 # run additionally requires the operator to provision this profile's approved image.
 profile = "rust"
 

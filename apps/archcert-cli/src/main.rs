@@ -104,7 +104,7 @@ struct RunArgs {
     /// Existing private mode-0700 materialization root.
     #[arg(long)]
     workspace_root: PathBuf,
-    /// Operator-approved profile to provision: python, rust or node (no version assertion).
+    /// Operator-approved family: python, rust, node or rust-workspace-v1; tools require an approved image.
     #[arg(long)]
     profile: String,
     /// Authority-provisioned immutable repository@sha256 image; no automatic pull.

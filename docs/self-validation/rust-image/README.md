@@ -7,8 +7,12 @@ reviewed public Cargo registry/cache/index and RustSec advisory data into a fres
 private context under ignored target/, together with this Dockerfile and launcher.
 Fetch Linux dependencies with `cargo fetch --locked --target x86_64-unknown-linux-gnu`
 before copying the public cache. Do not copy credentials/configuration from Cargo
-home. Advisory data must be readable without fetching under denied runtime network.
-Retain its exact Git revision and cache inventory in the run evidence.
+home. Pack only those `registry/` and `advisory-dbs/` trees into
+`public-cargo-cache.tar.gz` at the context root. This avoids expensive per-file
+Docker context imports. Advisory data must be readable without fetching under
+denied runtime network. Retain its exact Git revision, archive SHA-256 and cache
+inventory in the run evidence. The launcher keeps locks/global-cache state in
+writable sandbox Cargo home and links the read-only public registry/advisory trees.
 
 Build with an independently provisioned rootless Docker daemon, publish to an
 explicit development registry and resolve the resulting repository@sha256 digest.
