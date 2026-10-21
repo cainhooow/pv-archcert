@@ -1,4 +1,5 @@
 //! Durable control-plane ports. Database, wire and runtime capabilities stay outside.
+
 use archcert_domain::{Sha256Digest, jobs::*};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -23,6 +24,7 @@ pub enum JobStoreError {
     #[error("state or ownership precondition failed")]
     Precondition,
 }
+
 impl From<JobError> for JobStoreError {
     fn from(_: JobError) -> Self {
         Self::Invalid
@@ -37,6 +39,7 @@ pub struct CreateJob {
     /// Scoped client retry key.
     pub idempotency: IdempotencyKey,
 }
+
 /// Lease proof; never serialize into target input or status responses.
 #[derive(Clone)]
 pub struct Lease {
@@ -61,6 +64,7 @@ pub struct RuntimeBinding {
     /// Canonical private local authority gate directory.
     pub gate_root: String,
 }
+
 impl RuntimeBinding {
     /// Checks bounded opaque authority identity fields without granting execution.
     pub fn validate(&self) -> Result<(), JobStoreError> {
@@ -70,6 +74,7 @@ impl RuntimeBinding {
         {
             return Err(JobStoreError::Invalid);
         }
+
         Ok(())
     }
 }
@@ -102,6 +107,7 @@ pub struct AttemptRuntime {
     /// Separate bounded cleanup result.
     pub cleanup: RuntimeCleanupState,
 }
+
 /// Immutable metadata for an exact artifact. Availability requires verified stored bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -115,6 +121,7 @@ pub struct ArtifactReference {
     /// Authority producer implementation.
     pub producer: String,
 }
+
 /// Attempt status view; deliberately omits its fencing capability.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CertificationAttempt {
@@ -139,6 +146,7 @@ pub struct CertificationAttempt {
     /// Operational runtime authority and cleanup, separate from target outcomes.
     pub runtime: Option<AttemptRuntime>,
 }
+
 /// Frozen issuance binding, created before calling the signer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreparedIssuance {
@@ -149,6 +157,7 @@ pub struct PreparedIssuance {
     /// Frozen certificate instance time.
     pub issued_at: u64,
 }
+
 /// Durable verified certificate metadata; storage must retain the cryptographic envelope.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersistedCertificate {
@@ -161,6 +170,7 @@ pub struct PersistedCertificate {
     /// True only after independent verification; never sufficient on its own.
     pub verified: bool,
 }
+
 /// Transport-independent durable read model. Does not construct a certification capability.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CertificationJob {
@@ -185,6 +195,7 @@ pub struct CertificationJob {
     /// Verified certificate metadata on completion.
     pub certificate: Option<PersistedCertificate>,
 }
+
 /// Claimed work, consumed by a trusted execution adapter.
 pub struct Assignment {
     /// Durable pinned job.
@@ -192,6 +203,7 @@ pub struct Assignment {
     /// Current ownership proof.
     pub lease: Lease,
 }
+
 /// Authority evaluation disposition, independent of transport/policy adapter types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvaluationDecision {
@@ -202,31 +214,39 @@ pub enum EvaluationDecision {
     /// Infrastructure or evidence uncertainty; no positive authority claim.
     Inconclusive,
 }
+
 /// Transactional application port. Implementations must lock and fence all mutations.
 #[async_trait]
 pub trait JobRepository: Send + Sync {
     /// Atomically admit an authorized request or return its identical prior job.
     async fn create(&self, request: CreateJob) -> Result<CertificationJob, JobStoreError>;
+
     /// Internal authority read; HTTP must separately check authenticated scope.
     async fn get(&self, id: JobId) -> Result<CertificationJob, JobStoreError>;
+
     /// Atomically select/claim one queued job and create a new attempt.
     async fn claim(
         &self,
         worker: &str,
         lease_seconds: u32,
     ) -> Result<Option<Assignment>, JobStoreError>;
+
     /// Begin target execution only under a valid current lease.
     async fn start(&self, lease: &Lease) -> Result<(), JobStoreError>;
+
     /// Renew an unexpired lease under bounded lifetime.
     async fn renew(&self, lease: &Lease, lease_seconds: u32) -> Result<(), JobStoreError>;
+
     /// Recover only the exact expired attempt after durable fencing/cleanup if started.
     async fn recover(&self, id: JobId, expected: AttemptId) -> Result<(), JobStoreError>;
+
     /// Accept only a validated AVAILABLE bound evidence reference under the current lease.
     async fn accept_evidence(
         &self,
         lease: &Lease,
         artifact: &ArtifactReference,
     ) -> Result<(), JobStoreError>;
+
     /// Persist evaluation once. Eligibility alone does not create a certificate.
     async fn record_evaluation(
         &self,
@@ -234,12 +254,14 @@ pub trait JobRepository: Send + Sync {
         artifact: &ArtifactReference,
         decision: EvaluationDecision,
     ) -> Result<(), JobStoreError>;
+
     /// Bind a single payload/key/time after durable eligibility, before sign().
     async fn prepare_issuance(
         &self,
         id: JobId,
         issuance: &PreparedIssuance,
     ) -> Result<PreparedIssuance, JobStoreError>;
+
     /// Atomically complete an exact prepared issuance backed by AVAILABLE verified bytes.
     async fn complete(
         &self,

@@ -42,6 +42,7 @@ pub trait GitGateway {
     fn validation_version(&self) -> &'static str {
         "archcert-loose-v1"
     }
+
     /// Opens a quarantined source without interpreting target configuration or refs.
     fn quarantine(
         &self,
@@ -63,6 +64,7 @@ pub trait SourceQuarantine {
 pub trait SourceStore {
     /// Retains an immutable snapshot and rechecks its independent identity.
     fn retain(&mut self, snapshot: SourceSnapshot) -> Result<Arc<SourceSnapshot>, SourceError>;
+
     /// Retrieves only an exact authority-scoped accepted source; no transport lookup occurs.
     fn load(
         &self,
@@ -133,6 +135,7 @@ impl std::fmt::Display for SourceRejection {
         self.error.fmt(f)
     }
 }
+
 impl std::error::Error for SourceRejection {}
 
 /// Successful immutable source result; incomplete source is never runner-ready.
@@ -157,10 +160,13 @@ pub fn ingest_source(
         let mut quarantine = gateway.quarantine(&submission.repository)?;
         events.push(SourceEvent::Quarantined);
         events.push(SourceEvent::ValidationStarted);
+
         let validated = quarantine.validate(&submission.requested_commit, limits)?;
+
         if validated.commit != submission.requested_commit {
             return Err(SourceError::InternalIntegrityFailure);
         }
+
         let created_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| SourceError::InternalIntegrityFailure)?
@@ -174,17 +180,23 @@ pub fn ingest_source(
             validated.object_count,
             created_at,
         )?;
+
         let expected_identity = snapshot.identity().clone();
+
         let snapshot = store.retain(snapshot)?;
+
         snapshot.verify(&expected_identity.snapshot_sha256)?;
+
         if snapshot.identity() != &expected_identity
             || snapshot.project() != submission.project
             || snapshot.repository() != &submission.repository
         {
             return Err(SourceError::InternalIntegrityFailure);
         }
+
         events.push(SourceEvent::Accepted(snapshot.status()));
         events.push(SourceEvent::SnapshotCreated(snapshot.identity().clone()));
+
         let evidence = SourceEvidence {
             submission,
             identity: snapshot.identity().clone(),
@@ -199,8 +211,10 @@ pub fn ingest_source(
             created_at: snapshot.created_at(),
             limits,
         };
+
         Ok((snapshot, evidence))
     })();
+
     match result {
         Ok((snapshot, evidence)) => Ok(SourceIngestion {
             snapshot,
@@ -222,9 +236,11 @@ mod tests {
     struct Gateway {
         wrong_commit: bool,
     }
+
     struct Quarantine {
         wrong_commit: bool,
     }
+
     impl GitGateway for Gateway {
         fn quarantine(&self, _: &RepositoryId) -> Result<Box<dyn SourceQuarantine>, SourceError> {
             Ok(Box::new(Quarantine {
@@ -232,6 +248,7 @@ mod tests {
             }))
         }
     }
+
     impl SourceQuarantine for Quarantine {
         fn validate(
             &mut self,
@@ -254,6 +271,7 @@ mod tests {
     struct SubstitutingStore {
         change_bytes: bool,
     }
+
     impl SourceStore for SubstitutingStore {
         fn load(
             &self,
@@ -261,6 +279,7 @@ mod tests {
         ) -> Result<Arc<SourceSnapshot>, SourceError> {
             Err(SourceError::SnapshotUnavailable)
         }
+
         fn retain(&mut self, snapshot: SourceSnapshot) -> Result<Arc<SourceSnapshot>, SourceError> {
             Ok(Arc::new(SourceSnapshot::seal(
                 snapshot.project(),
@@ -281,10 +300,12 @@ mod tests {
             )?))
         }
     }
+
     fn oid(c: char) -> Result<GitObjectId, SourceError> {
         GitObjectId::parse(c.to_string().repeat(40))
             .map_err(|_| SourceError::InternalIntegrityFailure)
     }
+
     fn file(bytes: &[u8]) -> Result<SourceFile, SourceError> {
         Ok(SourceFile::new(
             SourcePath::from_bytes(b"a")?,
@@ -292,6 +313,7 @@ mod tests {
             bytes.to_vec(),
         ))
     }
+
     fn submission() -> Result<SourceSubmission, SourceError> {
         Ok(SourceSubmission {
             project: ProjectId::new(),
@@ -314,6 +336,7 @@ mod tests {
             let Err(rejection) = result else {
                 return Err(SourceError::InternalIntegrityFailure);
             };
+
             assert_eq!(
                 rejection.error,
                 if change_bytes {
@@ -331,6 +354,7 @@ mod tests {
                 SourceEvent::Accepted(_) | SourceEvent::SnapshotCreated(_)
             )));
         }
+
         Ok(())
     }
 
@@ -347,8 +371,10 @@ mod tests {
         let Err(rejection) = result else {
             return Err(SourceError::InternalIntegrityFailure);
         };
+
         assert_eq!(rejection.error, SourceError::InternalIntegrityFailure);
         assert_eq!(rejection.events.len(), 4);
+
         Ok(())
     }
 }

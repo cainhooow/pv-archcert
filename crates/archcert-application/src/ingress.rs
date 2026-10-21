@@ -41,6 +41,7 @@ pub enum GitObjectAlgorithm {
     /// Git SHA-256 objects.
     Sha256,
 }
+
 impl GitObjectAlgorithm {
     fn matches(self, oid: &GitObjectId) -> bool {
         oid.as_str().len()
@@ -89,12 +90,14 @@ impl SourceState {
     /// A consistent summary is still not proof of retained source bytes.
     pub fn validate(&self) -> Result<(), SourceError> {
         let invalid = SourceError::InternalIntegrityFailure;
+
         if self.identity.commit.as_str().len() != self.identity.tree.as_str().len()
             || (self.completeness == SourceStatus::IncompleteExternalSource)
                 != (self.lfs_unresolved != 0 || self.submodules_unresolved != 0)
         {
             return Err(invalid);
         }
+
         match (self.schema_version, &self.resolution) {
             (1, None) => Ok(()),
             (2, Some(resolution))
@@ -151,6 +154,7 @@ impl SourceSubmissionState {
             self.status,
             SubmissionStatus::Accepted | SubmissionStatus::IncompleteExternalSource
         );
+
         if self.submitted_refs.len() > 1
             || self.submitted_refs.iter().any(|r| !valid_ref(r))
             || self
@@ -163,8 +167,10 @@ impl SourceSubmissionState {
         {
             return Err(invalid);
         }
+
         if let Some(source) = &self.source {
             source.validate()?;
+
             if self.submitted_refs.len() != 1
                 || self.requested_commit.as_ref() != Some(&source.identity.commit)
                 || !self.object_algorithm.matches(&source.identity.tree)
@@ -173,6 +179,7 @@ impl SourceSubmissionState {
             {
                 return Err(invalid);
             }
+
             match (source.schema_version, &source.resolution, self.transport) {
                 (1, None, SourceTransport::SshPublicKey) => {}
                 (2, Some(resolution), SourceTransport::AuthorityPrivateSourceResolution)
@@ -180,6 +187,7 @@ impl SourceSubmissionState {
                 _ => return Err(invalid),
             }
         }
+
         Ok(())
     }
 }

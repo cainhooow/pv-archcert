@@ -1,4 +1,5 @@
 //! Bounded authority challenge selection. Model proposals never become commands.
+
 use crate::{knowledge::*, semantic::*, validation::*};
 use archcert_domain::{Sha256Digest, execution::ExecutionCommand, source::digest_bytes};
 use serde::Serialize;
@@ -6,14 +7,19 @@ use serde::Serialize;
 /// Authority-owned controlled fixture test. Target code may observe or interfere
 /// with same-process test state; this does not promise test-source confidentiality.
 const IDEMPOTENCY_TEST: &str = include_str!("challenges/idempotency.py");
+
 /// Stable registry template, independent of project or reviewer spelling.
 pub const IDEMPOTENCY_TEMPLATE: &str = "idempotency-replay-v1";
+
 /// Fixed appended authority step; collision with a target/base step rejects.
 pub const IDEMPOTENCY_STEP: &str = "ironcrest-idempotency";
+
 /// Separate generic Rust trust regression, never the settlement template.
 pub const RUST_ARCHITECTURE_TEMPLATE: &str = "rust-inward-architecture-v1";
+
 /// Fixed authority-only appended Rust step.
 pub const RUST_ARCHITECTURE_STEP: &str = "rust-trust-architecture";
+
 /// Exact authority test bytes, passed as literal argv inside OCI.
 const RUST_ARCHITECTURE_TEST: &str = include_str!("challenges/rust_architecture.py");
 
@@ -36,6 +42,7 @@ pub enum ChallengeKind {
     /// Migration invariant; requires supported domain/database knowledge.
     MigrationInvariant,
 }
+
 /// A genuine bounded command selected exclusively by the authority registry.
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeChallenge {
@@ -48,6 +55,7 @@ pub struct RuntimeChallenge {
     image: String,
     command: ExecutionCommand,
 }
+
 impl RuntimeChallenge {
     /// New mandatory authority step, constrained by the existing execution profile.
     pub fn required_step(&self) -> AuthorityRequiredStep {
@@ -63,11 +71,13 @@ impl RuntimeChallenge {
             evidence: EvidenceCategory::Test,
         }
     }
+
     /// Exact authority test identity, included in plan identity/evidence.
     pub fn private_test_digest(&self) -> &Sha256Digest {
         &self.private_test_sha256
     }
 }
+
 /// Explicit initial registry. Only idempotency replay against the controlled
 /// settlement.py API is implemented; other categories remain unsupported.
 #[derive(Debug)]
@@ -75,39 +85,72 @@ pub struct AuthorityChallengeRegistry {
     artifact: CanonicalArtifact,
     rust: bool,
 }
+
 impl AuthorityChallengeRegistry {
     /// Operator-selected versioned registry; not loaded from a target filename.
     pub fn controlled() -> Result<Self, KnowledgeError> {
         let artifact = CanonicalArtifact::freeze(
-            &serde_json::json!({"schema":1,"kind":"ARCHCERT_CHALLENGE_REGISTRY",
-            "id":"ironcrest-controlled-v1","version":"1.0.0","templates":[{"id":IDEMPOTENCY_TEMPLATE,"version":"1.0.0",
-                "kind":ChallengeKind::IdempotencyReplay,"profile":"python","program":"python3","private_test_sha256":digest_bytes(IDEMPOTENCY_TEST.as_bytes()),
-                "minimum_repetitions":2,"maximum_repetitions":8,"default_required_repetitions":3,
-                "contract":"/source/settlement.py: settle(database_path, idempotency_key, amount); ledger(key TEXT, amount INTEGER)"}]}),
+            &serde_json::json!({
+                "schema": 1,
+                "kind": "ARCHCERT_CHALLENGE_REGISTRY",
+                "id": "ironcrest-controlled-v1",
+                "version": "1.0.0",
+                "templates": [
+                    {
+                        "id": IDEMPOTENCY_TEMPLATE,
+                        "version": "1.0.0",
+                        "kind": ChallengeKind::IdempotencyReplay,
+                        "profile": "python",
+                        "program": "python3",
+                        "private_test_sha256": digest_bytes(IDEMPOTENCY_TEST.as_bytes()),
+                        "minimum_repetitions": 2,
+                        "maximum_repetitions": 8,
+                        "default_required_repetitions": 3,
+                        "contract": "/source/settlement.py: settle(database_path, idempotency_key, amount); ledger(key TEXT, amount INTEGER)"
+                    }
+                ]
+            }),
             65536,
         )?;
+
         Ok(Self {
             artifact,
             rust: false,
         })
     }
+
     /// Explicit authority Rust registry; no target discovery or shell proposals.
     pub fn rust_workspace() -> Result<Self, KnowledgeError> {
         let artifact = CanonicalArtifact::freeze(
             &serde_json::json!({
-                "schema":1,"kind":"ARCHCERT_CHALLENGE_REGISTRY","id":"rust-workspace-challenges-v1","version":"1.0.0",
-                "templates":[{"id":RUST_ARCHITECTURE_TEMPLATE,"version":"1.0.0","kind":ChallengeKind::ArchitectureGuard,
-                    "profile":"rust-workspace-v1","program":"python3","private_test_sha256":digest_bytes(RUST_ARCHITECTURE_TEST.as_bytes()),
-                    "minimum_repetitions":1,"maximum_repetitions":1,"default_required_repetitions":1,
-                    "contract":"bounded offline Cargo closure; named *-domain/*-application exclude transport/provider/signing; *-semantic excludes signing; read-only /source"}]
+                "schema": 1,
+                "kind": "ARCHCERT_CHALLENGE_REGISTRY",
+                "id": "rust-workspace-challenges-v1",
+                "version": "1.0.0",
+                "templates": [
+                    {
+                        "id": RUST_ARCHITECTURE_TEMPLATE,
+                        "version": "1.0.0",
+                        "kind": ChallengeKind::ArchitectureGuard,
+                        "profile": "rust-workspace-v1",
+                        "program": "python3",
+                        "private_test_sha256": digest_bytes(RUST_ARCHITECTURE_TEST.as_bytes()),
+                        "minimum_repetitions": 1,
+                        "maximum_repetitions": 1,
+                        "default_required_repetitions": 1,
+                        "contract": "bounded offline Cargo closure; named *-domain/*-application exclude transport/provider/signing; *-semantic excludes signing; read-only /source"
+                    }
+                ]
             }),
             65536,
         )?;
+
         Ok(Self {
             artifact,
             rust: true,
         })
     }
+
     /// Reconstruct only a supported exact authority registry identity.
     pub fn from_digest(digest: &Sha256Digest) -> Result<Self, KnowledgeError> {
         for registry in [Self::controlled()?, Self::rust_workspace()?] {
@@ -115,8 +158,10 @@ impl AuthorityChallengeRegistry {
                 return Ok(registry);
             }
         }
+
         Err(KnowledgeError::BindingMismatch)
     }
+
     /// Required template and bounded parameters are authority-owned.
     pub fn requirement(
         &self,
@@ -127,6 +172,7 @@ impl AuthorityChallengeRegistry {
         } else {
             (IDEMPOTENCY_TEMPLATE, 2, 8, 3)
         };
+
         for proposal in &review
             .response()
             .ok_or(KnowledgeError::Invalid)?
@@ -137,10 +183,13 @@ impl AuthorityChallengeRegistry {
             {
                 return Err(KnowledgeError::Invalid);
             }
+
             repetitions = repetitions.max(proposal.parameters.repetitions);
         }
+
         Ok((template, repetitions))
     }
+
     /// Required execution step for this exact registry.
     pub fn required_step_id(&self) -> &'static str {
         if self.rust {
@@ -149,10 +198,12 @@ impl AuthorityChallengeRegistry {
             IDEMPOTENCY_STEP
         }
     }
+
     /// Canonical authority registry identity, never an AI-selected runtime identity.
     pub fn artifact(&self) -> &CanonicalArtifact {
         &self.artifact
     }
+
     /// Resolve non-executable proposals after a valid semantic gate. At least one
     /// authority-required replay runs even if the reviewer proposes no challenge.
     pub fn plan(
@@ -171,6 +222,7 @@ impl AuthorityChallengeRegistry {
         {
             return Err(KnowledgeError::Invalid);
         }
+
         let (template, repetitions) = self.requirement(review)?;
         let test = if self.rust {
             RUST_ARCHITECTURE_TEST
@@ -203,32 +255,43 @@ impl AuthorityChallengeRegistry {
             command,
         };
         let artifact = CanonicalArtifact::freeze(
-            &serde_json::json!({"schema":1,"kind":"ARCHCERT_CHALLENGE_PLAN",
-            "binding":request.binding(),"request_sha256":request.artifact().digest(),"review_sha256":review.artifact().digest(),
-            "registry_sha256":self.artifact.digest(),"challenges":[challenge]}),
+            &serde_json::json!({
+                "schema": 1,
+                "kind": "ARCHCERT_CHALLENGE_PLAN",
+                "binding": request.binding(),
+                "request_sha256": request.artifact().digest(),
+                "review_sha256": review.artifact().digest(),
+                "registry_sha256": self.artifact.digest(),
+                "challenges": [challenge]
+            }),
             65536,
         )?;
+
         Ok(ChallengePlan {
             challenges: vec![challenge],
             artifact,
         })
     }
 }
+
 /// Immutable challenge plan, bound to exact semantic and source inputs.
 #[derive(Debug)]
 pub struct ChallengePlan {
     challenges: Vec<RuntimeChallenge>,
     artifact: CanonicalArtifact,
 }
+
 impl ChallengePlan {
     /// Canonical evidence of authority selection and private-test identities.
     pub fn artifact(&self) -> &CanonicalArtifact {
         &self.artifact
     }
+
     /// Read-only validated challenges.
     pub fn challenges(&self) -> &[RuntimeChallenge] {
         &self.challenges
     }
+
     /// Add checks without dropping or reclassifying any existing mandatory step.
     /// Project-requested base steps reject rather than acquiring authority provenance.
     /// This creates a NEW plan identity; an admitted pinned job cannot be mutated.
@@ -244,8 +307,10 @@ impl ChallengePlan {
         {
             return Err(KnowledgeError::Invalid);
         }
+
         let mut profiles = std::collections::BTreeMap::new();
         let mut steps = Vec::new();
+
         for s in base.steps() {
             if let Some(existing) = profiles.get(s.profile().name()) {
                 if canonical_bytes(existing)? != canonical_bytes(s.profile())? {
@@ -254,6 +319,7 @@ impl ChallengePlan {
             } else {
                 profiles.insert(s.profile().name().to_owned(), s.profile().clone());
             }
+
             steps.push(AuthorityRequiredStep {
                 id: s.id().into(),
                 profile: s.profile().name().into(),
@@ -261,6 +327,7 @@ impl ChallengePlan {
                 evidence: s.evidence_category(),
             });
         }
+
         for c in &self.challenges {
             if profiles
                 .get(&c.profile)
@@ -268,8 +335,10 @@ impl ChallengePlan {
             {
                 return Err(KnowledgeError::BindingMismatch);
             }
+
             steps.push(c.required_step());
         }
+
         let profiles = profiles
             .into_values()
             .map(|p| {

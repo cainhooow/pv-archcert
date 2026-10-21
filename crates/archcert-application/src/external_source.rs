@@ -1,5 +1,6 @@
 //! Controlled external-source resolution. Authority maps identities; candidate
 //! URLs, .gitmodules and credentials never enter this port or execution inputs.
+
 use archcert_domain::{
     Sha256Digest,
     materialization::SnapshotReference,
@@ -21,6 +22,7 @@ pub trait ExternalSourceAuthority {
         path: &SourcePath,
         digest: &Sha256Digest,
     ) -> Result<Box<dyn Read + '_>, SourceError>;
+
     /// Maps a top-level repository/path/gitlink to an exact allowed repository snapshot.
     /// Missing mappings deny acquisition, including all arbitrary candidate URLs.
     fn submodule(
@@ -38,36 +40,44 @@ pub struct ResolvedSourceRepresentation {
     snapshot: SourceSnapshot,
     canonical: Vec<u8>,
 }
+
 impl ResolvedSourceRepresentation {
     /// Original accepted pointer/gitlink representation and immutable Git provenance.
     pub fn original(&self) -> &SourceSnapshot {
         &self.original
     }
+
     /// Exact resolved source bytes; never acquisition credentials.
     pub fn files(&self) -> &[SourceFile] {
         self.snapshot.files()
     }
+
     /// Canonical resolved content manifest.
     pub fn manifest(&self) -> &SourceManifest {
         self.snapshot.manifest()
     }
+
     /// Independently hashed schema-2 identity, separate from original schema 1.
     pub fn digest(&self) -> &Sha256Digest {
         &self.snapshot.identity().snapshot_sha256
     }
+
     /// Verified complete immutable snapshot, ready for separate source acceptance.
     pub fn snapshot(&self) -> &SourceSnapshot {
         &self.snapshot
     }
+
     /// Transfers the new snapshot without any acquisition authority.
     pub fn into_snapshot(self) -> SourceSnapshot {
         self.snapshot
     }
+
     /// Versioned binary provenance/manifest preimage; no audit time participates.
     pub fn canonical_bytes(&self) -> &[u8] {
         &self.canonical
     }
 }
+
 /// Verifies controlled external acquisitions and constructs a new representation.
 /// Resolution is one level; nested incomplete submodules reject. No mutable
 /// snapshot, URL discovery, network credential, policy or execution handle escapes.
@@ -80,6 +90,7 @@ pub fn resolve_external_source(
     check_files(original.files(), limits)?;
     let mut files = original.files().to_vec();
     let mut bindings = Vec::new();
+
     for external in original.external() {
         match external {
             ExternalSource::Lfs {
@@ -91,11 +102,13 @@ pub fn resolve_external_source(
                 {
                     return Err(SourceError::IncompleteExternalSource);
                 }
+
                 let existing = files
                     .iter()
                     .find(|f| f.path() == path)
                     .ok_or(SourceError::InternalIntegrityFailure)?;
                 let retained: u64 = files.iter().map(|f| f.bytes().len() as u64).sum();
+
                 if retained
                     .saturating_sub(existing.bytes().len() as u64)
                     .saturating_add(*expected_size)
@@ -103,6 +116,7 @@ pub fn resolve_external_source(
                 {
                     return Err(SourceError::IncompleteExternalSource);
                 }
+
                 let mut reader = authority.lfs_object(&original, path, expected_sha256)?;
                 let mut bytes = Vec::new();
                 reader
@@ -110,10 +124,12 @@ pub fn resolve_external_source(
                     .take(expected_size.saturating_add(1))
                     .read_to_end(&mut bytes)
                     .map_err(|_| SourceError::IncompleteExternalSource)?;
+
                 if bytes.len() as u64 != *expected_size || digest_bytes(&bytes) != *expected_sha256
                 {
                     return Err(SourceError::SnapshotDigestMismatch);
                 }
+
                 let index = files
                     .iter()
                     .position(|f| f.path() == path)
@@ -128,6 +144,7 @@ pub fn resolve_external_source(
             }
             ExternalSource::Submodule { path, commit } => {
                 let (reference, snapshot) = authority.submodule(&original, path)?;
+
                 if &reference.identity.commit != commit
                     || snapshot.project() != reference.project
                     || snapshot.repository() != &reference.repository
@@ -135,6 +152,7 @@ pub fn resolve_external_source(
                 {
                     return Err(SourceError::SnapshotDigestMismatch);
                 }
+
                 snapshot.verify(&reference.identity.snapshot_sha256)?;
                 snapshot.require_complete()?;
                 check_files(snapshot.files(), limits)?;
@@ -143,6 +161,7 @@ pub fn resolve_external_source(
                     .filter(|f| f.path() != path)
                     .map(|f| f.bytes().len() as u64)
                     .sum();
+
                 if retained_bytes.saturating_add(snapshot.total_bytes()) > limits.max_total_bytes
                     || (files.len() as u64)
                         .saturating_sub(1)
@@ -151,11 +170,14 @@ pub fn resolve_external_source(
                 {
                     return Err(SourceError::IncompleteExternalSource);
                 }
+
                 files.retain(|f| f.path() != path);
+
                 for file in snapshot.files() {
                     if file.mode() == SourceMode::Submodule {
                         return Err(SourceError::IncompleteExternalSource);
                     }
+
                     files.push(SourceFile::new(
                         SourcePath::from_bytes(
                             format!("{}/{}", path.as_str(), file.path().as_str()).as_bytes(),
@@ -164,6 +186,7 @@ pub fn resolve_external_source(
                         file.bytes().to_vec(),
                     ));
                 }
+
                 bindings.push(ResolvedDependency::Submodule {
                     path: path.clone(),
                     project: reference.project,
@@ -173,30 +196,37 @@ pub fn resolve_external_source(
                 });
             }
         }
+
         // Bound partial expansion before acquiring the next dependency.
         check_files(&files, limits)?;
     }
+
     check_files(&files, limits)?;
     files.sort_by(|a, b| a.path().cmp(b.path()));
     let snapshot =
         SourceSnapshot::seal_resolved(&original, files, bindings, original.created_at())?;
     snapshot.require_complete()?;
     let canonical = snapshot.binding().canonical_bytes(snapshot.manifest())?;
+
     Ok(ResolvedSourceRepresentation {
         original,
         snapshot,
         canonical,
     })
 }
+
 fn check_files(files: &[SourceFile], limits: SourceLimits) -> Result<(), SourceError> {
     let mut total = 0u64;
+
     if files.len() as u64 > limits.max_files {
         return Err(SourceError::IncompleteExternalSource);
     }
+
     for file in files {
         total = total
             .checked_add(file.bytes().len() as u64)
             .ok_or(SourceError::IncompleteExternalSource)?;
+
         if total > limits.max_total_bytes
             || file.bytes().len() as u64 > limits.max_blob_bytes
             || file.path().as_str().split('/').count() > limits.max_tree_depth as usize + 1
@@ -204,5 +234,6 @@ fn check_files(files: &[SourceFile], limits: SourceLimits) -> Result<(), SourceE
             return Err(SourceError::IncompleteExternalSource);
         }
     }
+
     Ok(())
 }

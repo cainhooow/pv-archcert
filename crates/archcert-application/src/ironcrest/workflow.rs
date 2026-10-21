@@ -1,4 +1,5 @@
 //! Immutable object publication and provider-free accepted-review recovery.
+
 use super::*;
 use crate::{
     artifacts::ImmutableArtifactStore,
@@ -20,6 +21,7 @@ pub fn ironcrest_reference(artifact: &CanonicalArtifact) -> ArtifactReference {
         producer: "archcert-ironcrest-v1/0.1.0".into(),
     }
 }
+
 /// Journal + existing immutable byte store composition. It holds no runtime,
 /// source mutation, signer, transport or provider credential capability.
 pub struct IroncrestWorkflow<'a> {
@@ -28,6 +30,7 @@ pub struct IroncrestWorkflow<'a> {
     /// Project-scoped immutable object store.
     pub artifacts: &'a dyn ImmutableArtifactStore,
 }
+
 impl IroncrestWorkflow<'_> {
     /// Freeze the exact knowledge/impact/request chain before provider invocation.
     /// Repeating after any completed publication reuses identical immutable bytes.
@@ -41,6 +44,7 @@ impl IroncrestWorkflow<'_> {
         self.prepare_with_checkpoints(request, knowledge, impact, profile, &|_| Ok(()))
             .await
     }
+
     /// The same immutable preparation with authority-owned interruption hooks after
     /// each AVAILABLE stage. Hooks grant no execution or provider capability.
     pub async fn prepare_with_checkpoints(
@@ -56,6 +60,7 @@ impl IroncrestWorkflow<'_> {
             .repository
             .review_session(binding.project, binding.job)
             .await?;
+
         if !session.pin.matches_review(binding.job, binding)
             || binding.knowledge_sha256 != *knowledge.artifact().digest()
             || binding.impact_sha256 != *impact.artifact().digest()
@@ -68,6 +73,7 @@ impl IroncrestWorkflow<'_> {
         {
             return Err(JobStoreError::Precondition);
         }
+
         for (role, artifact) in [
             (IroncrestEvidenceRole::AuthorityProfile, profile),
             (IroncrestEvidenceRole::Knowledge, knowledge.artifact()),
@@ -78,8 +84,10 @@ impl IroncrestWorkflow<'_> {
                 .await?;
             checkpoint(role)?;
         }
+
         Ok(())
     }
+
     /// Reuse accepted/staged response bytes first. A claimed invocation without
     /// recoverable response metadata/bytes blocks; it never silently calls again.
     pub async fn review_or_restore(
@@ -92,14 +100,17 @@ impl IroncrestWorkflow<'_> {
         {
             return Err(JobStoreError::Precondition);
         }
+
         let binding = request.binding();
         let session = self
             .repository
             .review_session(binding.project, binding.job)
             .await?;
+
         if !session.pin.matches_review(binding.job, binding) {
             return Err(JobStoreError::Precondition);
         }
+
         if let Some(e) = session
             .evidence
             .iter()
@@ -107,6 +118,7 @@ impl IroncrestWorkflow<'_> {
         {
             return self.restore(request, e, session.review_timestamp).await;
         }
+
         let Some(invocation) = self
             .repository
             .claim_review(
@@ -132,10 +144,12 @@ impl IroncrestWorkflow<'_> {
                 .restore(request, evidence, session.review_timestamp)
                 .await;
         };
+
         let output =
             review_with_byte_bound(request, reviewer, request.limits().request_bytes).await;
         let artifact = SemanticReviewArtifact::accept(request, output, invocation.timestamp)
             .map_err(|_| JobStoreError::Invalid)?;
+
         self.persist(
             binding.project,
             binding.job,
@@ -144,8 +158,10 @@ impl IroncrestWorkflow<'_> {
             Some(&invocation),
         )
         .await?;
+
         Ok(artifact)
     }
+
     async fn restore(
         &self,
         request: &SemanticReviewRequest,
@@ -157,11 +173,14 @@ impl IroncrestWorkflow<'_> {
             .artifacts
             .get(binding.project, &evidence.artifact)
             .await?;
+
         let artifact = SemanticReviewArtifact::restore(request, &bytes, &evidence.artifact.sha256)
             .map_err(|_| JobStoreError::Invalid)?;
+
         if timestamp != Some(artifact.timestamp()) {
             return Err(JobStoreError::Precondition);
         }
+
         if !evidence.available {
             self.repository
                 .review_evidence_available(
@@ -172,8 +191,10 @@ impl IroncrestWorkflow<'_> {
                 )
                 .await?;
         }
+
         Ok(artifact)
     }
+
     /// Stage, publish, independently verify and mark AVAILABLE. A crash after
     /// metadata/upload is recoverable with exact bytes; replacement always rejects.
     pub async fn persist(
@@ -185,24 +206,31 @@ impl IroncrestWorkflow<'_> {
         invocation: Option<&ReviewInvocation>,
     ) -> Result<ArtifactReference, JobStoreError> {
         let reference = ironcrest_reference(artifact);
+
         self.repository
             .stage_review_evidence(project, id, role, &reference, invocation)
             .await?;
+
         self.artifacts
             .put(project, &reference, artifact.bytes())
             .await?;
+
         let bytes = self.artifacts.get(project, &reference).await?;
+
         if bytes != artifact.bytes()
             || digest_bytes(&bytes) != reference.sha256
             || bytes.len() as u64 != reference.size
         {
             return Err(JobStoreError::Invalid);
         }
+
         self.repository
             .review_evidence_available(project, id, role, &reference)
             .await?;
+
         Ok(reference)
     }
+
     /// Persist the deterministic semantic gate without adding policy facts.
     pub async fn persist_gate(
         &self,
@@ -214,6 +242,7 @@ impl IroncrestWorkflow<'_> {
             .repository
             .review_session(binding.project, binding.job)
             .await?;
+
         if !session.pin.matches_review(binding.job, binding)
             || !session.evidence.iter().any(|e| {
                 e.role == IroncrestEvidenceRole::Request
@@ -229,8 +258,10 @@ impl IroncrestWorkflow<'_> {
         {
             return Err(JobStoreError::Precondition);
         }
+
         let decision = semantic_gate(request, Some(review));
         let mut required_challenges = Vec::new();
+
         if decision == SemanticGateDecision::Continue {
             let registry = crate::challenges::AuthorityChallengeRegistry::from_digest(
                 &session.pin.challenge_registry_sha256,
@@ -240,14 +271,19 @@ impl IroncrestWorkflow<'_> {
                 .requirement(review)
                 .map_err(|_| JobStoreError::Precondition)?;
             let identity = serde_json::json!({
-                "registry_sha256":session.pin.challenge_registry_sha256,
-                "template_id":template,"version":"1.0.0","parameters":{"repetitions":repetitions}
+                "registry_sha256": session.pin.challenge_registry_sha256,
+                "template_id": template,
+                "version": "1.0.0",
+                "parameters": {
+                    "repetitions": repetitions
+                }
             });
             required_challenges.push(serde_json::json!({
-                "identity":identity,
-                "sha256":digest_bytes(&canonical_bytes(&identity).map_err(|_|JobStoreError::Invalid)?)
+                "identity": identity,
+                "sha256": digest_bytes(&canonical_bytes(&identity).map_err(|_| JobStoreError::Invalid)?)
             }));
         }
+
         let review_decision = decision;
         let decision = if review_decision == SemanticGateDecision::Continue
             && !required_challenges.is_empty()
@@ -256,13 +292,24 @@ impl IroncrestWorkflow<'_> {
         } else {
             review_decision
         };
-        let artifact = CanonicalArtifact::freeze(&serde_json::json!({
-            "schema":2,"kind":"ARCHCERT_SEMANTIC_GATE","binding":request.binding(),
-            "algorithm":IRONCREST_GATE_ALGORITHM,
-            "authority_profile_sha256":session.pin.authority_profile_sha256,
-            "request_sha256":request.artifact().digest(),"review_sha256":review.artifact().digest(),
-            "review_decision":review_decision,"decision":decision,"required_challenges":required_challenges
-        }),65536).map_err(|_|JobStoreError::Invalid)?;
+
+        let artifact = CanonicalArtifact::freeze(
+            &serde_json::json!({
+                "schema": 2,
+                "kind": "ARCHCERT_SEMANTIC_GATE",
+                "binding": request.binding(),
+                "algorithm": IRONCREST_GATE_ALGORITHM,
+                "authority_profile_sha256": session.pin.authority_profile_sha256,
+                "request_sha256": request.artifact().digest(),
+                "review_sha256": review.artifact().digest(),
+                "review_decision": review_decision,
+                "decision": decision,
+                "required_challenges": required_challenges
+            }),
+            65536,
+        )
+        .map_err(|_| JobStoreError::Invalid)?;
+
         self.persist(
             request.binding().project,
             request.binding().job,
@@ -271,6 +318,7 @@ impl IroncrestWorkflow<'_> {
             None,
         )
         .await?;
+
         Ok(decision)
     }
 }

@@ -4,17 +4,29 @@ use archcert_domain::GitObjectId;
 use thiserror::Error;
 
 pub mod artifacts;
+
 pub mod challenges;
+
 pub mod configuration;
+
 pub mod execution;
+
 pub mod ingress;
+
 pub mod ironcrest;
+
 pub mod jobs;
+
 pub mod knowledge;
+
 pub mod materialization;
+
 pub mod semantic;
+
 pub mod source;
+
 pub mod validation;
+
 pub mod worker;
 
 /// Transport-independent certification submission request; no HTTP semantics.
@@ -54,6 +66,7 @@ pub trait SubmitCertification: Send + Sync {
 
 /// Disabled bootstrap submission; no job identity, persistence or scheduler.
 pub struct BootstrapSubmitCertification;
+
 impl SubmitCertification for BootstrapSubmitCertification {
     fn submit(
         &self,
@@ -64,6 +77,7 @@ impl SubmitCertification for BootstrapSubmitCertification {
                 "project_id and profile cannot be empty".into(),
             ));
         }
+
         Ok(SubmitCertificationResult::Unavailable)
     }
 }

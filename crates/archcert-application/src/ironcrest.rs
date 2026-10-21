@@ -1,4 +1,5 @@
 //! Durable pre-admission review metadata. A session grants no execution or signing.
+
 use crate::{
     jobs::{ArtifactReference, JobStoreError},
     semantic::ReviewBinding,
@@ -13,13 +14,19 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 mod admission;
+
 pub use admission::*;
 
 mod issuance;
+
 pub use issuance::*;
+
 mod profile;
+
 mod workflow;
+
 pub use profile::*;
+
 pub use workflow::*;
 
 /// An authority-selected accepted baseline, never a target-selected revision.
@@ -31,6 +38,7 @@ pub struct BaselinePin {
     /// Full immutable identity.
     pub source: SourceIdentity,
 }
+
 /// Frozen inputs before knowledge packaging and provider invocation. Decoding
 /// this data is not acceptance: the repository must authorize/recheck accepted source.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +69,7 @@ pub struct IroncrestSessionPin {
     /// Canonical sorted authority bundles.
     pub authority_bundles: Vec<Sha256Digest>,
 }
+
 impl IroncrestSessionPin {
     /// Bound trusted inputs; source/grant acceptance is separately checked in storage.
     pub fn validate(&self) -> Result<(), JobStoreError> {
@@ -76,8 +85,10 @@ impl IroncrestSessionPin {
         {
             return Err(JobStoreError::Invalid);
         }
+
         Ok(())
     }
+
     /// A request must reproduce all pinned source/authority identities and the
     /// reserved job identity. Knowledge/impact digests are checked against roles.
     pub fn matches_review(&self, id: JobId, binding: &ReviewBinding) -> bool {
@@ -90,6 +101,7 @@ impl IroncrestSessionPin {
             && binding.authority_bundles == self.authority_bundles
     }
 }
+
 /// Immutable stage identities. These cannot be selected through target configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -111,6 +123,7 @@ pub enum IroncrestEvidenceRole {
     /// Actual accepted deterministic challenge execution evidence.
     ChallengeResult,
 }
+
 impl IroncrestEvidenceRole {
     /// Fixed database spelling, never arbitrary SQL text.
     pub fn as_str(self) -> &'static str {
@@ -126,6 +139,7 @@ impl IroncrestEvidenceRole {
         }
     }
 }
+
 /// Create-only staged/available role reference. Bytes live in the existing scoped store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IroncrestEvidenceReference {
@@ -136,6 +150,7 @@ pub struct IroncrestEvidenceReference {
     /// Only verified readback can make this true.
     pub available: bool,
 }
+
 /// Non-executing durable read model. It carries no provider invocation capability.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IroncrestSession {
@@ -152,6 +167,7 @@ pub struct IroncrestSession {
     /// Immutable role metadata, including interrupted staging.
     pub evidence: Vec<IroncrestEvidenceReference>,
 }
+
 /// Explicit operational recovery state; none of these values authorizes inference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -166,6 +182,7 @@ pub enum IroncrestReviewRecovery {
     /// An available accepted result can be reused without provider invocation.
     AcceptedResponseAvailable,
 }
+
 impl IroncrestSession {
     /// Distinguishes uncertain in-flight outcome from safely reusable acceptance.
     pub fn review_recovery(&self) -> IroncrestReviewRecovery {
@@ -180,6 +197,7 @@ impl IroncrestSession {
                 IroncrestReviewRecovery::RestoreAcceptedResponse
             };
         }
+
         if self.review_claimed {
             IroncrestReviewRecovery::OperatorRecoveryRequired
         } else {
@@ -187,6 +205,7 @@ impl IroncrestSession {
         }
     }
 }
+
 /// Private authority capability for the first provider invocation. No Debug,
 /// Serialize or target transport is provided. Expiry never reissues this token.
 #[derive(Clone)]
@@ -196,6 +215,7 @@ pub struct ReviewInvocation {
     /// Stable database audit time, preserved across response publication recovery.
     pub timestamp: u64,
 }
+
 /// Durable project-scoped journal port, independent of PostgreSQL and object adapters.
 #[async_trait]
 pub trait IroncrestRepository: Send + Sync {
@@ -220,12 +240,14 @@ pub trait IroncrestRepository: Send + Sync {
         id: JobId,
         pin: &IroncrestSessionPin,
     ) -> Result<IroncrestSession, JobStoreError>;
+
     /// Scope must be checked before returning private metadata.
     async fn review_session(
         &self,
         project: ProjectId,
         id: JobId,
     ) -> Result<IroncrestSession, JobStoreError>;
+
     /// Register one exact role before uploading bytes. Review publication requires
     /// the original claim token; a second provider response cannot replace it.
     async fn stage_review_evidence(
@@ -236,6 +258,7 @@ pub trait IroncrestRepository: Send + Sync {
         reference: &ArtifactReference,
         invocation: Option<&ReviewInvocation>,
     ) -> Result<(), JobStoreError>;
+
     /// Mark exact staged metadata available only after caller verified scoped readback.
     async fn review_evidence_available(
         &self,
@@ -244,6 +267,7 @@ pub trait IroncrestRepository: Send + Sync {
         role: IroncrestEvidenceRole,
         reference: &ArtifactReference,
     ) -> Result<(), JobStoreError>;
+
     /// Atomically grant at most one invocation after exact knowledge/impact/request
     /// availability. None means already claimed: read accepted evidence or remain
     /// inconclusive; it never authorizes a retry.

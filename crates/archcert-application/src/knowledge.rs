@@ -1,4 +1,5 @@
 //! Bounded knowledge composition over accepted snapshots, never a mutable checkout.
+
 use archcert_domain::{
     ProjectId, Sha256Digest, SourceIdentity,
     knowledge::*,
@@ -10,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 mod impact;
+
 pub use impact::*;
 
 /// Fixed upper bounds; authority may lower them, never select an unlimited mode.
@@ -30,6 +32,7 @@ pub struct KnowledgeLimits {
     /// Maximum relation closure depth.
     pub impact_depth: usize,
 }
+
 impl Default for KnowledgeLimits {
     fn default() -> Self {
         Self {
@@ -43,9 +46,11 @@ impl Default for KnowledgeLimits {
         }
     }
 }
+
 impl KnowledgeLimits {
     fn validate(self) -> Result<(), KnowledgeError> {
         let max = Self::default();
+
         for (value, ceiling) in [
             (self.files, max.files),
             (self.source_bytes, max.source_bytes),
@@ -59,9 +64,11 @@ impl KnowledgeLimits {
                 return Err(KnowledgeError::LimitExceeded);
             }
         }
+
         Ok(())
     }
 }
+
 /// Fixed failures contain no hostile source or provider diagnostics.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum KnowledgeError {
@@ -75,6 +82,7 @@ pub enum KnowledgeError {
     #[error("knowledge scope or immutable binding mismatch")]
     BindingMismatch,
 }
+
 /// Restricted canonical JSON from ADR 0041. No arbitrary map keys, floats or
 /// unsafe integer ranges. This does not redefine existing source/certificate bytes.
 pub fn canonical_bytes(value: &impl Serialize) -> Result<Vec<u8>, KnowledgeError> {
@@ -91,19 +99,24 @@ pub fn canonical_bytes(value: &impl Serialize) -> Result<Vec<u8>, KnowledgeError
             _ => true,
         }
     }
+
     let mut value = serde_json::to_value(value).map_err(|_| KnowledgeError::Invalid)?;
+
     if !valid(&value) {
         return Err(KnowledgeError::Invalid);
     }
+
     value.sort_all_objects();
     serde_json::to_vec(&value).map_err(|_| KnowledgeError::Invalid)
 }
+
 /// Immutable canonical bytes with an independently calculated identity.
 /// Debug deliberately omits payload bytes which may contain private source.
 pub struct CanonicalArtifact {
     bytes: Vec<u8>,
     digest: Sha256Digest,
 }
+
 impl std::fmt::Debug for CanonicalArtifact {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CanonicalArtifact")
@@ -112,33 +125,40 @@ impl std::fmt::Debug for CanonicalArtifact {
             .finish()
     }
 }
+
 impl CanonicalArtifact {
     /// Freeze an already validated model under a finite serialized artifact bound.
     pub fn freeze(value: &impl Serialize, maximum: usize) -> Result<Self, KnowledgeError> {
         let bytes = canonical_bytes(value)?;
+
         if bytes.len() > maximum {
             return Err(KnowledgeError::LimitExceeded);
         }
+
         Ok(Self {
             digest: digest_bytes(&bytes),
             bytes,
         })
     }
+
     /// Exact canonical bytes for immutable persistence.
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
+
     /// Exact canonical SHA-256, never a signature or proof.
     pub fn digest(&self) -> &Sha256Digest {
         &self.digest
     }
 }
+
 fn identifier(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 128
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"._-/".contains(&b))
 }
+
 /// Frozen authority data, never parsed from target source/configuration.
 #[derive(Debug)]
 pub struct AuthorityKnowledgeBundle {
@@ -148,6 +168,7 @@ pub struct AuthorityKnowledgeBundle {
     entries: Vec<AuthorityKnowledgeEntry>,
     artifact: CanonicalArtifact,
 }
+
 impl AuthorityKnowledgeBundle {
     /// Trusted provisioning only. Versions and supersession are immutable content;
     /// this API provides no target-controlled approval/downgrade operation.
@@ -160,8 +181,10 @@ impl AuthorityKnowledgeBundle {
         if !identifier(&id) || !identifier(&version) || entries.len() > 128 {
             return Err(KnowledgeError::Invalid);
         }
+
         entries.sort_by(|a, b| a.id.cmp(&b.id));
         let mut ids = BTreeSet::new();
+
         for e in &mut entries {
             if !identifier(&e.id)
                 || !identifier(&e.version)
@@ -182,16 +205,25 @@ impl AuthorityKnowledgeBundle {
             {
                 return Err(KnowledgeError::Invalid);
             }
+
             e.paths.sort();
             e.paths.dedup();
             e.policy_sha256.sort_by(|a, b| a.as_str().cmp(b.as_str()));
             e.policy_sha256.dedup();
         }
+
         let artifact = CanonicalArtifact::freeze(
-            &serde_json::json!({"schema":1,
-            "kind":"ARCHCERT_AUTHORITY_KNOWLEDGE","id":id,"version":version,"scope":scope,"entries":entries}),
+            &serde_json::json!({
+                "schema": 1,
+                "kind": "ARCHCERT_AUTHORITY_KNOWLEDGE",
+                "id": id,
+                "version": version,
+                "scope": scope,
+                "entries": entries
+            }),
             1024 * 1024,
         )?;
+
         Ok(Self {
             id,
             version,
@@ -200,27 +232,33 @@ impl AuthorityKnowledgeBundle {
             artifact,
         })
     }
+
     /// Canonical immutable bundle identity and bytes.
     pub fn artifact(&self) -> &CanonicalArtifact {
         &self.artifact
     }
+
     /// Stable authority bundle label.
     pub fn id(&self) -> &str {
         &self.id
     }
+
     /// Immutable authority version.
     pub fn version(&self) -> &str {
         &self.version
     }
+
     /// Explicit project/global visibility.
     pub fn scope(&self) -> &KnowledgeScope {
         &self.scope
     }
+
     /// Read-only assertions including approval and supersession history.
     pub fn entries(&self) -> &[AuthorityKnowledgeEntry] {
         &self.entries
     }
 }
+
 /// Exact authority baseline selection. No target wire/configuration constructor.
 #[derive(Debug, Clone, Serialize)]
 pub struct SelectedBaseline {
@@ -229,6 +267,7 @@ pub struct SelectedBaseline {
     source: SourceIdentity,
     reason: String,
 }
+
 impl SelectedBaseline {
     /// Trusted operator/application selection from an already accepted snapshot.
     pub fn accepted(snapshot: &SourceSnapshot, reason: String) -> Result<Self, KnowledgeError> {
@@ -238,9 +277,11 @@ impl SelectedBaseline {
         snapshot
             .require_complete()
             .map_err(|_| KnowledgeError::Invalid)?;
+
         if reason.is_empty() || reason.len() > 512 {
             return Err(KnowledgeError::Invalid);
         }
+
         Ok(Self {
             project: snapshot.project(),
             repository: snapshot.repository().clone(),
@@ -248,11 +289,13 @@ impl SelectedBaseline {
             reason,
         })
     }
+
     /// Exact selected source; cannot be replaced with a target-requested revision.
     pub fn source(&self) -> &SourceIdentity {
         &self.source
     }
 }
+
 /// Complete file inventory, including non-executable and unsupported data.
 #[derive(Debug, Clone, Serialize)]
 pub struct InventoryFile {
@@ -267,6 +310,7 @@ pub struct InventoryFile {
     /// Bounded observational classification, not language correctness proof.
     pub classification: String,
 }
+
 /// An immutable read model. Only KnowledgeEngine can construct an accepted artifact.
 #[derive(Debug, Serialize)]
 pub struct KnowledgeBody {
@@ -297,29 +341,35 @@ pub struct KnowledgeBody {
     /// Bounds are part of identity.
     pub limits: KnowledgeLimits,
 }
+
 /// Digest-bound knowledge; no mutation or Deserialize acceptance capability.
 #[derive(Debug)]
 pub struct KnowledgeArtifact {
     body: KnowledgeBody,
     artifact: CanonicalArtifact,
 }
+
 impl KnowledgeArtifact {
     /// Immutable structured context.
     pub fn body(&self) -> &KnowledgeBody {
         &self.body
     }
+
     /// Canonical persistent bytes and digest.
     pub fn artifact(&self) -> &CanonicalArtifact {
         &self.artifact
     }
 }
+
 /// Structural extractor port: no path to a checkout, source mutation, execution,
 /// network, credentials or authority bundle editor is available.
 pub trait KnowledgeExtractor: Send + Sync {
     /// Authority-selected semantic version, never read from target configuration.
     fn identity(&self) -> &'static str;
+
     /// Bounded classification match; symlink payloads are never parsed as files.
     fn supports(&self, file: &SourceFile) -> bool;
+
     /// Emits only structural facts through the restricted bounded sink.
     fn extract(
         &self,
@@ -327,11 +377,13 @@ pub trait KnowledgeExtractor: Send + Sync {
         sink: &mut StructuralSink<'_>,
     ) -> Result<(), KnowledgeError>;
 }
+
 /// A restricted graph writer. Extractors cannot insert authority facts or proofs.
 pub struct StructuralSink<'a> {
     path: &'a SourcePath,
     graph: &'a mut Graph,
 }
+
 impl StructuralSink<'_> {
     /// Adds observed syntax under a stable extractor-local key.
     pub fn node(
@@ -356,6 +408,7 @@ impl StructuralSink<'_> {
         {
             return Err(KnowledgeError::Invalid);
         }
+
         let id = format!(
             "syntax:{}",
             digest_bytes(&canonical_bytes(&(self.path, key))?).as_str()
@@ -375,8 +428,10 @@ impl StructuralSink<'_> {
             unresolved: false,
             provenance: Provenance::DirectlyObserved,
         })?;
+
         Ok(id)
     }
+
     /// Relates syntax only. Unresolved imports/references never become resolved calls.
     pub fn edge(
         &mut self,
@@ -396,6 +451,7 @@ impl StructuralSink<'_> {
         {
             return Err(KnowledgeError::Invalid);
         }
+
         self.graph.edge(KnowledgeEdge {
             from,
             to,
@@ -404,10 +460,12 @@ impl StructuralSink<'_> {
             provenance: Provenance::DirectlyObserved,
         })
     }
+
     /// The exact containing source node, for syntactic import relationships.
     pub fn file_node(&self) -> String {
         file_id(self.path)
     }
+
     /// Retains a bounded omission instead of fabricating a fact.
     pub fn blind_spot(&mut self, code: &str, reason: &str) -> Result<(), KnowledgeError> {
         self.graph.blind(BlindSpot {
@@ -416,56 +474,72 @@ impl StructuralSink<'_> {
             reason: reason.into(),
         })
     }
+
     /// Maximum parser input bytes; exceeding it must retain an explicit omission.
     pub fn file_byte_limit(&self) -> usize {
         self.graph.limits.structural_file_bytes
     }
 }
+
 fn file_id(path: &SourcePath) -> String {
     format!("file:{}", path.as_str())
 }
+
 struct Graph {
     nodes: BTreeMap<String, KnowledgeNode>,
     edges: BTreeMap<Vec<u8>, KnowledgeEdge>,
     blind_spots: BTreeMap<Vec<u8>, BlindSpot>,
     limits: KnowledgeLimits,
 }
+
 impl Graph {
     fn node(&mut self, n: KnowledgeNode) -> Result<(), KnowledgeError> {
         if self.nodes.len() >= self.limits.nodes {
             return Err(KnowledgeError::LimitExceeded);
         }
+
         if self.nodes.insert(n.id.clone(), n).is_some() {
             return Err(KnowledgeError::Invalid);
         }
+
         Ok(())
     }
+
     fn edge(&mut self, e: KnowledgeEdge) -> Result<(), KnowledgeError> {
         if self.edges.len() >= self.limits.edges {
             return Err(KnowledgeError::LimitExceeded);
         }
+
         if !self.nodes.contains_key(&e.from) || !self.nodes.contains_key(&e.to) {
             return Err(KnowledgeError::Invalid);
         }
+
         self.edges.insert(canonical_bytes(&e)?, e);
+
         Ok(())
     }
+
     fn blind(&mut self, b: BlindSpot) -> Result<(), KnowledgeError> {
         if !identifier(&b.code) || b.reason.is_empty() || b.reason.len() > 2048 {
             return Err(KnowledgeError::Invalid);
         }
+
         if self.blind_spots.len() >= self.limits.blind_spots {
             return Err(KnowledgeError::LimitExceeded);
         }
+
         self.blind_spots.insert(canonical_bytes(&b)?, b);
+
         Ok(())
     }
 }
+
 /// Explicit extractor registry; no source-controlled discovery or dynamic plugins.
 pub struct KnowledgeEngine {
     extractors: Vec<Box<dyn KnowledgeExtractor>>,
     limits: KnowledgeLimits,
 }
+
 impl KnowledgeEngine {
     /// Authority constructs a bounded versioned registry.
     pub fn new(
@@ -473,18 +547,23 @@ impl KnowledgeEngine {
         limits: KnowledgeLimits,
     ) -> Result<Self, KnowledgeError> {
         limits.validate()?;
+
         if extractors.len() > 16 {
             return Err(KnowledgeError::LimitExceeded);
         }
+
         extractors.sort_by_key(|e| e.identity());
         let mut ids = BTreeSet::new();
+
         for e in &extractors {
             if !identifier(e.identity()) || !ids.insert(e.identity()) {
                 return Err(KnowledgeError::Invalid);
             }
         }
+
         Ok(Self { extractors, limits })
     }
+
     /// Digest of the complete authority-selected inventory/extractor registry,
     /// available before source or private knowledge is read.
     pub fn registry_digest(&self) -> Result<Sha256Digest, KnowledgeError> {
@@ -492,11 +571,13 @@ impl KnowledgeEngine {
             &self.extractor_identities(),
         )?))
     }
+
     fn extractor_identities(&self) -> Vec<String> {
         std::iter::once("archcert-inventory-v1/1.0.0".into())
             .chain(self.extractors.iter().map(|e| e.identity().into()))
             .collect()
     }
+
     /// Rehashes exact accepted bytes. Caller supplies authority-owned bundles and
     /// baseline; repository files are never interpreted as either capability.
     pub fn extract(
@@ -511,12 +592,14 @@ impl KnowledgeEngine {
         {
             return Err(KnowledgeError::LimitExceeded);
         }
+
         source
             .verify(&source.identity().snapshot_sha256)
             .map_err(|_| KnowledgeError::Invalid)?;
         source
             .require_complete()
             .map_err(|_| KnowledgeError::Invalid)?;
+
         if bundles.iter().any(|b| !b.scope.permits(source.project()))
             || baseline.is_some_and(|b| {
                 b.project != source.project() || b.repository != *source.repository()
@@ -524,6 +607,7 @@ impl KnowledgeEngine {
         {
             return Err(KnowledgeError::BindingMismatch);
         }
+
         let mut graph = Graph {
             nodes: BTreeMap::new(),
             edges: BTreeMap::new(),
@@ -531,6 +615,7 @@ impl KnowledgeEngine {
             limits: self.limits,
         };
         let mut files = Vec::new();
+
         for f in source.files() {
             let entry = f.manifest_entry();
             let regular = matches!(f.mode(), SourceMode::File | SourceMode::Executable);
@@ -561,6 +646,7 @@ impl KnowledgeEngine {
                 provenance: Provenance::DirectlyObserved,
             })?;
             let mut supported = false;
+
             if regular {
                 for e in &self.extractors {
                     if e.supports(f) {
@@ -575,6 +661,7 @@ impl KnowledgeEngine {
                     }
                 }
             }
+
             if classification == "SQL" {
                 let mut sink = StructuralSink {
                     path: f.path(),
@@ -600,13 +687,17 @@ impl KnowledgeEngine {
                 })?;
             }
         }
+
         let mut authority_digests = Vec::new();
         let mut bundle_names = BTreeSet::new();
+
         for b in bundles {
             if !bundle_names.insert(b.id()) {
                 return Err(KnowledgeError::Invalid);
             }
+
             authority_digests.push(b.artifact.digest().clone());
+
             for e in &b.entries {
                 if e.approval != ApprovalState::Approved {
                     graph.blind(BlindSpot {
@@ -616,6 +707,7 @@ impl KnowledgeEngine {
                     })?;
                     continue;
                 }
+
                 let id = format!("authority:{}:{}", b.artifact.digest().as_str(), e.id);
                 let (kind, relation) = match e.kind {
                     AuthorityEntryKind::Invariant => {
@@ -636,6 +728,7 @@ impl KnowledgeEngine {
                     content_sha256: digest_bytes(&canonical_bytes(e)?),
                     provenance: Provenance::AuthorityAsserted,
                 })?;
+
                 for f in &files {
                     if e.paths.is_empty() || e.paths.contains(&f.path) {
                         graph.edge(KnowledgeEdge {
@@ -649,10 +742,15 @@ impl KnowledgeEngine {
                 }
             }
         }
+
         if bundles.is_empty() {
-            graph.blind(BlindSpot {code:"AUTHORITY_KNOWLEDGE_UNAVAILABLE".into(),path:None,
-            reason:"No authority invariant/finding bundle was selected; domain knowledge is incomplete".into()})?;
+            graph.blind(BlindSpot {
+                code: "AUTHORITY_KNOWLEDGE_UNAVAILABLE".into(),
+                path: None,
+                reason: "No authority invariant/finding bundle was selected; domain knowledge is incomplete".into()
+            })?;
         }
+
         if baseline.is_none() {
             graph.blind(BlindSpot {
                 code: "MISSING_TRUSTED_BASELINE".into(),
@@ -660,8 +758,10 @@ impl KnowledgeEngine {
                 reason: "No authority-selected trusted baseline; full review is required".into(),
             })?;
         }
+
         authority_digests.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         authority_digests.dedup();
+
         let coverage = vec![
             coverage(
                 CoverageDimension::SourceInventory,
@@ -710,6 +810,7 @@ impl KnowledgeEngine {
                 "Structural extraction does not perform semantic review",
             ),
         ];
+
         let body = KnowledgeBody {
             schema: 1,
             kind: "ARCHCERT_KNOWLEDGE",
@@ -726,10 +827,13 @@ impl KnowledgeEngine {
             coverage,
             limits: self.limits,
         };
+
         let artifact = CanonicalArtifact::freeze(&body, 32 * 1024 * 1024)?;
+
         Ok(KnowledgeArtifact { body, artifact })
     }
 }
+
 fn coverage(dimension: CoverageDimension, state: CoverageState, reason: &str) -> KnowledgeCoverage {
     KnowledgeCoverage {
         dimension,

@@ -1,4 +1,5 @@
 //! Conservative immutable manifest/graph impact, with explicit review expansion.
+
 use super::*;
 
 /// Immutable impact summary. Relation uncertainty can only expand review.
@@ -43,22 +44,26 @@ pub struct ImpactBody {
     /// Persistent omissions from both source states and impact traversal.
     pub blind_spots: Vec<BlindSpot>,
 }
+
 /// Frozen impact evidence; callers cannot mutate a selected baseline or result.
 #[derive(Debug)]
 pub struct ImpactArtifact {
     body: ImpactBody,
     artifact: CanonicalArtifact,
 }
+
 impl ImpactArtifact {
     /// Read-only impact scope and uncertainty.
     pub fn body(&self) -> &ImpactBody {
         &self.body
     }
+
     /// Canonical evidence bytes/digest.
     pub fn artifact(&self) -> &CanonicalArtifact {
         &self.artifact
     }
 }
+
 /// Compare immutable source manifests and supported graph relations. A baseline
 /// artifact must reproduce the authority-selected exact project/repository/source.
 pub fn analyze_impact(
@@ -66,6 +71,7 @@ pub fn analyze_impact(
     baseline: Option<&KnowledgeArtifact>,
 ) -> Result<ImpactArtifact, KnowledgeError> {
     let t = target.body();
+
     match (&t.baseline, baseline) {
         (Some(selected), Some(b))
             if selected.project == b.body.project
@@ -76,6 +82,7 @@ pub fn analyze_impact(
         (None, None) => {}
         _ => return Err(KnowledgeError::BindingMismatch),
     }
+
     let old: BTreeMap<_, _> = baseline
         .into_iter()
         .flat_map(|b| &b.body.files)
@@ -100,6 +107,7 @@ pub fn analyze_impact(
         .filter(|p| !new.contains_key(*p))
         .map(|p| (*p).clone())
         .collect();
+
     let old_nodes: BTreeMap<_, _> = baseline
         .into_iter()
         .flat_map(|b| &b.body.nodes)
@@ -107,16 +115,19 @@ pub fn analyze_impact(
         .collect();
     let new_nodes: BTreeMap<_, _> = t.nodes.iter().map(|n| (&n.id, n)).collect();
     let mut changed_nodes = BTreeSet::new();
+
     for (id, n) in &new_nodes {
         if old_nodes.get(id).is_none_or(|old| *old != *n) {
             changed_nodes.insert((*id).clone());
         }
     }
+
     for id in old_nodes.keys() {
         if !new_nodes.contains_key(id) {
             changed_nodes.insert((*id).clone());
         }
     }
+
     let mut blind_spots: BTreeMap<_, _> = t
         .blind_spots
         .iter()
@@ -128,6 +139,7 @@ pub fn analyze_impact(
         || baseline.is_some_and(|b| {
             b.body.extractors != t.extractors || b.body.authority_bundles != t.authority_bundles
         });
+
     let all_edges: Vec<_> = t
         .edges
         .iter()
@@ -138,10 +150,13 @@ pub fn analyze_impact(
         .filter(|e| e.unresolved)
         .map(|e| (*e).clone())
         .collect();
+
     if !unresolved_impact_edges.is_empty() {
         full_review = true;
     }
+
     let mut affected: BTreeSet<String> = changed_nodes.clone();
+
     for p in changed_files
         .iter()
         .chain(&added_files)
@@ -149,17 +164,21 @@ pub fn analyze_impact(
     {
         affected.insert(file_id(p));
     }
+
     for depth in 0..=t.limits.impact_depth {
         let mut next = affected.clone();
+
         for e in &all_edges {
             if affected.contains(&e.from) || affected.contains(&e.to) {
                 next.insert(e.from.clone());
                 next.insert(e.to.clone());
             }
         }
+
         if next == affected {
             break;
         }
+
         if depth == t.limits.impact_depth {
             full_review = true;
             let b = BlindSpot {
@@ -171,12 +190,15 @@ pub fn analyze_impact(
             blind_spots.insert(canonical_bytes(&b)?, b);
             break;
         }
+
         affected = next;
     }
+
     if full_review {
         affected.extend(new_nodes.keys().map(|s| (*s).clone()));
         affected.extend(old_nodes.keys().map(|s| (*s).clone()));
     }
+
     let related = |kind| {
         new_nodes
             .values()
@@ -187,6 +209,7 @@ pub fn analyze_impact(
             .into_iter()
             .collect()
     };
+
     let body = ImpactBody {
         schema: 1,
         kind: "ARCHCERT_IMPACT",
@@ -214,6 +237,8 @@ pub fn analyze_impact(
         unresolved_impact_edges,
         blind_spots: blind_spots.into_values().collect(),
     };
+
     let artifact = CanonicalArtifact::freeze(&body, 32 * 1024 * 1024)?;
+
     Ok(ImpactArtifact { body, artifact })
 }

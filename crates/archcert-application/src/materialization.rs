@@ -26,6 +26,7 @@ pub enum VerificationStatus {
     /// Actual filesystem bytes independently matched the expected digest.
     Verified,
 }
+
 /// Strength of the filesystem seal, not a cryptographic immutability claim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum SealStatus {
@@ -106,6 +107,7 @@ pub struct MaterializationFailure {
     /// Whether an ephemeral workspace could be deleted.
     pub cleanup: CleanupStatus,
 }
+
 impl MaterializationFailure {
     /// Records a rejection before any destination exists.
     pub fn before_creation(error: MaterializationError) -> Self {
@@ -116,11 +118,13 @@ impl MaterializationFailure {
         }
     }
 }
+
 impl std::fmt::Display for MaterializationFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.error.fmt(f)
     }
 }
+
 impl std::error::Error for MaterializationFailure {}
 
 /// Narrow input for a trusted sandbox setup adapter, never a source-store handle.
@@ -133,12 +137,14 @@ pub struct RunnerInput<S: MaterializedSource> {
     expected_source_identity: SourceIdentity,
     workspace: WorkspaceId,
 }
+
 /// Platform-specific source-only capability implemented by trusted filesystem adapters.
 /// Implementations must contain neither acquisition credentials nor cleanup/store authority.
 /// Constructors remain private to the platform adapter that verifies and seals the source.
 pub trait MaterializedSource {
     /// Fresh authority identity bound to this actual source handle.
     fn workspace(&self) -> WorkspaceId;
+
     /// Accepted source identity bound to the independently verified handle.
     fn identity(&self) -> &SourceIdentity;
 }
@@ -153,6 +159,7 @@ pub trait VerifiedSourceExport: MaterializedSource {
     fn source_binding(&self) -> archcert_domain::source::SourceBinding {
         archcert_domain::source::SourceBinding::default()
     }
+
     /// Performs final integrity verification and returns bounded owned source bytes.
     fn verified_files(
         &self,
@@ -175,20 +182,24 @@ impl<S: MaterializedSource> RunnerInput<S> {
         {
             return Err(MaterializationError::MaterializationIntegrityMismatch);
         }
+
         Ok(Self {
             source,
             expected_source_identity: evidence.snapshot.identity.clone(),
             workspace: evidence.workspace,
         })
     }
+
     /// Materialized source capability; no cleanup parent, store, Git or API access.
     pub fn source(&self) -> &S {
         &self.source
     }
+
     /// Previously accepted Git and ArchCert identities.
     pub fn expected_source_identity(&self) -> &SourceIdentity {
         &self.expected_source_identity
     }
+
     /// Opaque authority workspace identity.
     pub fn workspace(&self) -> WorkspaceId {
         self.workspace
@@ -211,8 +222,10 @@ pub struct MaterializationResult<S: MaterializedSource, C> {
 pub trait SourceMaterializer {
     /// Platform source handle containing no acquisition/cleanup authority.
     type Source: MaterializedSource;
+
     /// Authority-owned ephemeral workspace cleanup handle.
     type Cleanup;
+
     /// Creates a fresh workspace, verifies actual contents, seals, then verifies again at handoff.
     fn prepare(
         &self,
@@ -236,6 +249,7 @@ pub fn materialize_source<M: SourceMaterializer>(
             other => MaterializationError::SnapshotInvalid(other),
         })
     })?;
+
     if snapshot.project() != request.snapshot.project
         || snapshot.repository() != &request.snapshot.repository
         || snapshot.identity() != &request.snapshot.identity
@@ -244,6 +258,7 @@ pub fn materialize_source<M: SourceMaterializer>(
             MaterializationError::InternalMaterializationFailure,
         ));
     }
+
     snapshot
         .verify(&request.snapshot.identity.snapshot_sha256)
         .map_err(|e| {
@@ -252,6 +267,7 @@ pub fn materialize_source<M: SourceMaterializer>(
     snapshot.require_complete().map_err(|_| {
         MaterializationFailure::before_creation(MaterializationError::SnapshotNotComplete)
     })?;
+
     materializer.prepare(&snapshot, request)
 }
 
@@ -262,20 +278,25 @@ mod tests {
         GitObjectId, ProjectId,
         source::{RepositoryId, digest_bytes},
     };
+
     struct TestSource {
         workspace: WorkspaceId,
         identity: SourceIdentity,
     }
+
     impl MaterializedSource for TestSource {
         fn workspace(&self) -> WorkspaceId {
             self.workspace
         }
+
         fn identity(&self) -> &SourceIdentity {
             &self.identity
         }
     }
+
     fn evidence() -> Result<MaterializationEvidence, Box<dyn std::error::Error>> {
         let digest = digest_bytes(b"test fixture");
+
         Ok(MaterializationEvidence {
             snapshot: SnapshotReference {
                 project: ProjectId::new(),
@@ -302,6 +323,7 @@ mod tests {
             limits: MaterializationLimits::default(),
         })
     }
+
     #[test]
     fn runner_input_requires_matching_sealed_identity_and_workspace()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -311,10 +333,13 @@ mod tests {
             identity: valid.snapshot.identity.clone(),
         };
         let ready = RunnerInput::from_sealed(capability(), &valid)?;
+
         assert_eq!(ready.workspace(), valid.workspace);
         assert_eq!(ready.expected_source_identity(), &valid.snapshot.identity);
+
         for mutation in 0..5 {
             let mut invalid = valid.clone();
+
             match mutation {
                 0 => invalid.status = MaterializationState::Verified,
                 1 => invalid.observed_digest = digest_bytes(b"wrong"),
@@ -322,13 +347,16 @@ mod tests {
                 3 => invalid.snapshot.identity.commit = GitObjectId::parse("c".repeat(40))?,
                 _ => invalid.handed_off_at = Some(4),
             }
+
             assert!(matches!(
                 RunnerInput::from_sealed(capability(), &invalid),
                 Err(MaterializationError::MaterializationIntegrityMismatch)
             ));
         }
+
         Ok(())
     }
+
     #[test]
     fn evidence_timestamps_do_not_participate_in_identity_validation()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -341,10 +369,12 @@ mod tests {
             identity: proof.snapshot.identity.clone(),
         };
         let ready = RunnerInput::from_sealed(source, &proof)?;
+
         assert_eq!(
             ready.expected_source_identity().snapshot_sha256,
             proof.observed_digest
         );
+
         Ok(())
     }
 }

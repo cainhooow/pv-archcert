@@ -1,4 +1,5 @@
 //! Immutable scoped bulk storage and future envelope encryption boundaries.
+
 use crate::jobs::{ArtifactReference, JobStoreError};
 use archcert_domain::ProjectId;
 use async_trait::async_trait;
@@ -14,6 +15,7 @@ pub trait ImmutableArtifactStore: Send + Sync {
         reference: &ArtifactReference,
         bytes: &[u8],
     ) -> Result<(), JobStoreError>;
+
     /// Bounded read which independently verifies exact digest and size before return.
     async fn get(
         &self,
@@ -21,6 +23,7 @@ pub trait ImmutableArtifactStore: Send + Sync {
         reference: &ArtifactReference,
     ) -> Result<Vec<u8>, JobStoreError>;
 }
+
 /// Future provider-owned envelope, opaque to domain and target execution.
 pub struct SealedArtifact {
     /// Authenticated encrypted object bytes produced by a maintained crypto provider.
@@ -28,6 +31,7 @@ pub struct SealedArtifact {
     /// Provider-defined wrapped DEK and algorithm/version metadata; never a plaintext key.
     pub key_envelope: Vec<u8>,
 }
+
 /// Narrow future encryption boundary. No custom encryption algorithm is implemented.
 /// Intended hierarchy: root KEK -> organization/project KEK -> per-artifact DEK.
 #[async_trait]
@@ -39,6 +43,7 @@ pub trait ArtifactCipher: Send + Sync {
         reference: &ArtifactReference,
         plaintext: &[u8],
     ) -> Result<SealedArtifact, JobStoreError>;
+
     /// Decrypt/authenticate, then reverify plaintext digest/size before returning.
     async fn open(
         &self,

@@ -1,4 +1,5 @@
 //! Credential-free worker process models; decoding never grants a lease or trust.
+
 use crate::{
     jobs::JobStoreError,
     validation::{AuthorityConfiguration, AuthorityRequiredStep, ValidationPlan},
@@ -11,8 +12,10 @@ use archcert_domain::{
 use serde::{Deserialize, Serialize};
 /// Maximum assignment including a bounded Northgate source artifact.
 pub const MAX_ASSIGNMENT_BYTES: usize = 80 * 1024 * 1024;
+
 /// Maximum result including bounded captured stream prefixes.
 pub const MAX_RESULT_BYTES: usize = 16 * 1024 * 1024;
+
 /// One process assignment, authenticated by the authority-owned private stdio channel.
 #[derive(Clone)]
 pub struct WorkerAssignment {
@@ -25,6 +28,7 @@ pub struct WorkerAssignment {
     /// Independently verified Northgate snapshot artifact; worker must rehash/recheck it.
     pub source_artifact: Vec<u8>,
 }
+
 /// One observed execution, including independently confirmed cleanup outcomes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -40,6 +44,7 @@ pub struct StepResult {
     /// Runtime target/job-image destruction confirmed.
     pub sandbox_cleaned: bool,
 }
+
 /// Result from one actual worker process, before policy interpretation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -59,15 +64,20 @@ pub struct WorkerResult {
     /// Full plan step results, in plan order.
     pub steps: Vec<StepResult>,
 }
+
 /// Reconstructs only the pinned bounded authority configuration, then checks its digest.
 pub fn pinned_plan(inputs: &JobInputs) -> Result<ValidationPlan, JobStoreError> {
     inputs.validate()?;
+
     let plan = resolve_authority_plan(&inputs.profile, &inputs.image, &inputs.authority_toml)?;
+
     if plan.digest().map_err(|_| JobStoreError::Invalid)? != inputs.plan_sha256 {
         return Err(JobStoreError::Invalid);
     }
+
     Ok(plan)
 }
+
 /// Resolves a bounded operator-owned mandatory command recipe before job admission.
 /// Candidate request data must never call this as an authority provisioning path.
 pub fn resolve_authority_plan(
@@ -78,12 +88,15 @@ pub fn resolve_authority_plan(
     if authority_toml.len() > 65536 {
         return Err(JobStoreError::Invalid);
     }
+
     let config = crate::configuration::ProjectConfiguration::parse(authority_toml)
         .map_err(|_| JobStoreError::Invalid)?;
     let requested = config.execution_request().ok_or(JobStoreError::Invalid)?;
+
     if requested.profile() != profile {
         return Err(JobStoreError::Invalid);
     }
+
     let authority =
         AuthorityConfiguration::development(vec![(profile.to_owned(), image.to_owned())])
             .map_err(|_| JobStoreError::Invalid)?
@@ -100,12 +113,15 @@ pub fn resolve_authority_plan(
                     .collect(),
             )
             .map_err(|_| JobStoreError::Invalid)?;
+
     let plan = authority
         .resolve(None)
         .map_err(|_| JobStoreError::Invalid)?;
+
     if plan.steps().is_empty() {
         return Err(JobStoreError::Invalid);
     }
+
     Ok(plan)
 }
 
@@ -119,6 +135,7 @@ impl WorkerResult {
         inputs: &JobInputs,
     ) -> Result<(), JobStoreError> {
         let plan = pinned_plan(inputs)?;
+
         if self.schema != 1
             || self.job != job
             || self.attempt != attempt
@@ -129,11 +146,14 @@ impl WorkerResult {
         {
             return Err(JobStoreError::Invalid);
         }
+
         let mut executions = std::collections::BTreeSet::new();
+
         for (record, step) in self.steps.iter().zip(plan.steps()) {
             if record.step != step.id() || !executions.insert(record.execution.to_string()) {
                 return Err(JobStoreError::Invalid);
             }
+
             if let Some(e) = &record.evidence {
                 if e.execution != record.execution
                     || e.source != inputs.source
@@ -148,7 +168,9 @@ impl WorkerResult {
                 {
                     return Err(JobStoreError::Invalid);
                 }
+
                 e.limits.validate().map_err(|_| JobStoreError::Invalid)?;
+
                 for stream in [&e.stdout, &e.stderr] {
                     if stream.excerpt.len() as u64 > e.limits.excerpt_bytes
                         || stream.excerpt.len() as u64 > stream.observed_bytes
@@ -161,10 +183,12 @@ impl WorkerResult {
                         return Err(JobStoreError::Invalid);
                     }
                 }
+
                 crate::validation::ValidationObservation::from_execution(&plan, step, e)
                     .map_err(|_| JobStoreError::Invalid)?;
             }
         }
+
         Ok(())
     }
 }

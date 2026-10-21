@@ -12,6 +12,7 @@ pub struct ExecutionRequest<S: MaterializedSource> {
     profile: ExecutionProfile,
     command: ExecutionCommand,
 }
+
 impl<S: MaterializedSource> ExecutionRequest<S> {
     /// Checks authority policy before allocating a sandbox.
     pub fn new(
@@ -21,25 +22,30 @@ impl<S: MaterializedSource> ExecutionRequest<S> {
     ) -> Result<Self, ExecutionError> {
         profile.limits().validate()?;
         profile.authorize(&command)?;
+
         if input.source().workspace() != input.workspace()
             || input.source().identity() != input.expected_source_identity()
         {
             return Err(ExecutionError::SourceIntegrity);
         }
+
         Ok(Self {
             input,
             profile,
             command,
         })
     }
+
     /// Narrow source-only input; no source store or parent/cleanup capability.
     pub fn input(&self) -> &RunnerInput<S> {
         &self.input
     }
+
     /// Authority-approved policy; project input cannot replace its settings.
     pub fn profile(&self) -> &ExecutionProfile {
         &self.profile
     }
+
     /// Literal target argv and sandbox working directory.
     pub fn command(&self) -> &ExecutionCommand {
         &self.command
@@ -56,6 +62,7 @@ pub struct ExecutionResult {
     /// Ordered lifecycle events; not durable audit storage.
     pub events: Vec<ExecutionEvent>,
 }
+
 /// Setup, evidence or cleanup failure; target nonzero exit is not this error.
 #[derive(Debug, Serialize)]
 pub struct ExecutionFailure {
@@ -68,11 +75,13 @@ pub struct ExecutionFailure {
     /// Ordered audit events through failure and cleanup.
     pub events: Vec<ExecutionEvent>,
 }
+
 impl std::fmt::Display for ExecutionFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.error.fmt(f)
     }
 }
+
 impl std::error::Error for ExecutionFailure {}
 
 /// Blocking worker port, matching the existing synchronous source preparation ports.
@@ -95,18 +104,22 @@ mod tests {
         },
         source::{RepositoryId, digest_bytes},
     };
+
     struct Source {
         workspace: WorkspaceId,
         identity: SourceIdentity,
     }
+
     impl MaterializedSource for Source {
         fn workspace(&self) -> WorkspaceId {
             self.workspace
         }
+
         fn identity(&self) -> &SourceIdentity {
             &self.identity
         }
     }
+
     fn input() -> Result<RunnerInput<Source>, Box<dyn std::error::Error>> {
         let digest = digest_bytes(b"accepted");
         let identity = SourceIdentity {
@@ -136,6 +149,7 @@ mod tests {
             handed_off_at: None,
             limits: MaterializationLimits::default(),
         };
+
         Ok(RunnerInput::from_sealed(
             Source {
                 workspace,
@@ -144,7 +158,9 @@ mod tests {
             &evidence,
         )?)
     }
+
     struct MockRunner;
+
     impl SandboxRunner<Source> for MockRunner {
         fn execute(
             &self,
@@ -158,6 +174,7 @@ mod tests {
             })
         }
     }
+
     #[test]
     fn request_policy_is_enforced_before_any_backend_and_mock_needs_no_runtime()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -172,7 +189,9 @@ mod tests {
             profile.clone(),
             ExecutionCommand::new("sh".into(), vec![], "/source".into())?,
         );
+
         assert!(matches!(rejected, Err(ExecutionError::CommandNotAllowed)));
+
         let request = ExecutionRequest::new(
             input()?,
             profile,
@@ -182,17 +201,21 @@ mod tests {
                 "/source".into(),
             )?,
         )?;
+
         assert_eq!(
             request.input().source().workspace(),
             request.input().workspace()
         );
+
         let failure = MockRunner
             .execute(request)
             .err()
             .ok_or("mock should reject")?;
+
         assert_eq!(failure.error, ExecutionError::EnvironmentNotProven);
         assert_eq!(failure.cleanup, CleanupStatus::NotCreated);
         assert!(failure.evidence.is_none());
+
         Ok(())
     }
 }

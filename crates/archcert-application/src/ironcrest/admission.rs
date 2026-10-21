@@ -1,4 +1,5 @@
 //! Exact reviewed inputs become one new immutable execution admission.
+
 use super::*;
 use crate::{
     challenges::AuthorityChallengeRegistry,
@@ -30,6 +31,7 @@ pub struct IroncrestAdmissionContext<'a> {
     /// Authority-controlled challenge registry.
     pub registry: &'a AuthorityChallengeRegistry,
 }
+
 /// Admission capability. Only successful application validation/publication can
 /// construct it. Decoding database or repository bytes cannot grant admission.
 #[derive(Debug, Serialize)]
@@ -39,19 +41,23 @@ pub struct ReviewedIroncrestAdmission {
     inputs: JobInputs,
     evidence: Vec<(IroncrestEvidenceRole, ArtifactReference)>,
 }
+
 impl ReviewedIroncrestAdmission {
     /// Reserved session and job ID, unchanged by admission.
     pub fn id(&self) -> JobId {
         self.id
     }
+
     /// Full authority/source/baseline inputs for transactional comparison.
     pub fn pin(&self) -> &IroncrestSessionPin {
         &self.pin
     }
+
     /// Exact final immutable execution inputs.
     pub fn inputs(&self) -> &JobInputs {
         &self.inputs
     }
+
     /// Complete reviewed role identities. Order is fixed by this producer.
     pub fn evidence(&self) -> &[(IroncrestEvidenceRole, ArtifactReference)] {
         &self.evidence
@@ -67,23 +73,34 @@ fn inputs_match(pin: &IroncrestSessionPin, base: &JobInputs) -> bool {
         && pin.policy == base.policy
         && pin.base_plan_sha256 == base.plan_sha256
 }
+
 fn retained_recipe(plan: &ValidationPlan, profile: &str) -> Result<String, JobStoreError> {
     let commands: Vec<_> = plan
         .steps()
         .iter()
         .map(|s| {
             serde_json::json!({
-                "name":s.id(),"program":s.command().program(),"args":s.command().args(),
-                "working_directory":s.command().working_directory(),"evidence":s.evidence_category()
+                "name": s.id(),
+                "program": s.command().program(),
+                "args": s.command().args(),
+                "working_directory": s.command().working_directory(),
+                "evidence": s.evidence_category()
             })
         })
         .collect();
-    toml::to_string(&serde_json::json!({"schema":1,
-        "project":{"name":"Ironcrest frozen authority plan"},
-        "execution":{"profile":profile,"commands":commands}
+    toml::to_string(&serde_json::json!({
+        "schema": 1,
+        "project": {
+            "name": "Ironcrest frozen authority plan"
+        },
+        "execution": {
+            "profile": profile,
+            "commands": commands
+        }
     }))
     .map_err(|_| JobStoreError::Invalid)
 }
+
 impl IroncrestWorkflow<'_> {
     /// Revalidate every accepted identity and freeze all additive challenges BEFORE
     /// admission. Repetition can only recover identical create-only role bytes.
@@ -98,23 +115,30 @@ impl IroncrestWorkflow<'_> {
             .review_session(c.base_inputs.project, c.id)
             .await?
             .pin;
+
         c.profile.validate_pin(&pin)?;
         c.profile.validate_request(c.request)?;
+
         if !inputs_match(&pin, c.base_inputs)
             || !pin.matches_review(c.id, c.request.binding())
             || pin.challenge_registry_sha256 != *c.registry.artifact().digest()
         {
             return Err(JobStoreError::Precondition);
         }
+
         let base = pinned_plan(c.base_inputs)?;
+
         self.prepare(c.request, c.knowledge, c.impact, c.profile.artifact())
             .await?;
+
         let decision = self.persist_gate(c.request, c.review).await?;
+
         if decision == SemanticGateDecision::Block
             || semantic_gate(c.request, Some(c.review)) != SemanticGateDecision::Continue
         {
             return Err(JobStoreError::Precondition);
         }
+
         let profiles = AuthorityConfiguration::development(vec![(
             c.base_inputs.profile.clone(),
             c.base_inputs.image.clone(),
@@ -123,6 +147,7 @@ impl IroncrestWorkflow<'_> {
         let execution_profile = profiles
             .profile(&c.base_inputs.profile)
             .map_err(|_| JobStoreError::Invalid)?;
+
         let selection = c
             .registry
             .plan(c.request, c.review, execution_profile)
@@ -130,33 +155,45 @@ impl IroncrestWorkflow<'_> {
         let final_plan = selection
             .extend_authority_plan(&base)
             .map_err(|_| JobStoreError::Invalid)?;
+
         let mut inputs = c.base_inputs.clone();
         inputs.authority_toml = retained_recipe(&final_plan, &inputs.profile)?;
         inputs.plan_sha256 = final_plan.digest().map_err(|_| JobStoreError::Invalid)?;
+
         // Worker reconstruction must produce the identical authority plan.
         let reconstructed =
             resolve_authority_plan(&inputs.profile, &inputs.image, &inputs.authority_toml)?;
+
         if reconstructed.digest().map_err(|_| JobStoreError::Invalid)? != inputs.plan_sha256 {
             return Err(JobStoreError::Precondition);
         }
+
         let session = self.repository.review_session(pin.project, c.id).await?;
         let gate = session
             .evidence
             .iter()
             .find(|e| e.role == IroncrestEvidenceRole::Gate && e.available)
             .ok_or(JobStoreError::Precondition)?;
+
         let frozen = CanonicalArtifact::freeze(
             &serde_json::json!({
-                "schema":2,"kind":"ARCHCERT_CHALLENGE_PLAN","session":c.id,"pin":pin,
-                "binding":c.request.binding(),"request_sha256":c.request.artifact().digest(),
-                "review_sha256":c.review.artifact().digest(),"gate_sha256":gate.artifact.sha256,
-                "registry_sha256":c.registry.artifact().digest(),
-                "base_plan_sha256":pin.base_plan_sha256,"final_plan_sha256":inputs.plan_sha256,
-                "challenges":selection.challenges()
+                "schema": 2,
+                "kind": "ARCHCERT_CHALLENGE_PLAN",
+                "session": c.id,
+                "pin": pin,
+                "binding": c.request.binding(),
+                "request_sha256": c.request.artifact().digest(),
+                "review_sha256": c.review.artifact().digest(),
+                "gate_sha256": gate.artifact.sha256,
+                "registry_sha256": c.registry.artifact().digest(),
+                "base_plan_sha256": pin.base_plan_sha256,
+                "final_plan_sha256": inputs.plan_sha256,
+                "challenges": selection.challenges()
             }),
             65536,
         )
         .map_err(|_| JobStoreError::Invalid)?;
+
         self.persist(
             pin.project,
             c.id,
@@ -165,8 +202,10 @@ impl IroncrestWorkflow<'_> {
             None,
         )
         .await?;
+
         let session = self.repository.review_session(pin.project, c.id).await?;
         let mut evidence = Vec::new();
+
         for role in [
             IroncrestEvidenceRole::AuthorityProfile,
             IroncrestEvidenceRole::Knowledge,
@@ -183,17 +222,21 @@ impl IroncrestWorkflow<'_> {
                 .ok_or(JobStoreError::Precondition)?;
             // AVAILABLE metadata alone never establishes artifact availability.
             let bytes = self.artifacts.get(pin.project, &e.artifact).await?;
+
             if bytes.len() as u64 != e.artifact.size || digest_bytes(&bytes) != e.artifact.sha256 {
                 return Err(JobStoreError::Precondition);
             }
+
             evidence.push((role, e.artifact.clone()));
         }
+
         // Bind immutable knowledge limits as well as extractor/authority identities.
         if canonical_bytes(&c.knowledge.body().limits).map_err(|_| JobStoreError::Invalid)?
             != canonical_bytes(&c.profile.knowledge_limits()).map_err(|_| JobStoreError::Invalid)?
         {
             return Err(JobStoreError::Precondition);
         }
+
         Ok(ReviewedIroncrestAdmission {
             id: c.id,
             pin,
@@ -216,7 +259,9 @@ mod tests {
         )?;
         let text = retained_recipe(&original, "python")?;
         let reconstructed = resolve_authority_plan("python", &image, &text)?;
+
         assert_eq!(original.digest()?, reconstructed.digest()?);
+
         Ok(())
     }
 }
