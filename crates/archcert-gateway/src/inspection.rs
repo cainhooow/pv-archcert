@@ -1,4 +1,5 @@
 //! Credential-free projection of existing ingress evidence for protocol adapters.
+
 use crate::{IngressError, IngressEvidence};
 use archcert_application::ingress::{
     GitObjectAlgorithm, SourceResolutionSummary, SourceState, SourceSubmissionState,
@@ -67,6 +68,7 @@ impl IngressEvidence {
             accepted_at: self.accepted_at,
         };
         state.validate().map_err(|_| IngressError::Unavailable)?;
+
         Ok(state)
     }
 }

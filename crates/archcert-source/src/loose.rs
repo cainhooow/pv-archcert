@@ -57,6 +57,7 @@ fn open_root(path: &Path) -> Result<OwnedFd, SourceError> {
         Mode::empty(),
     )
     .map_err(|_| SourceError::RepositoryAccessFailure)?;
+
     for component in absolute.components() {
         match component {
             Component::RootDir => {}
@@ -64,6 +65,7 @@ fn open_root(path: &Path) -> Result<OwnedFd, SourceError> {
             _ => return Err(SourceError::RepositoryAccessFailure),
         }
     }
+
     Ok(fd)
 }
 
@@ -75,8 +77,10 @@ impl GitGateway for LocalGitGateway {
         if repository != &self.repository {
             return Err(SourceError::RepositoryAccessFailure);
         }
+
         let root = open_root(&self.git_directory)?;
         let objects = open_directory(&root, std::ffi::OsStr::new("objects"))?;
+
         Ok(Box::new(LooseQuarantine { objects }))
     }
 }
@@ -109,6 +113,7 @@ impl Kind {
             Self::Blob => b"blob",
         }
     }
+
     fn missing(self) -> SourceError {
         match self {
             Self::Commit => SourceError::CommitNotFound,
@@ -135,9 +140,11 @@ impl Validation<'_> {
             .work_bytes
             .checked_add(count)
             .ok_or(SourceError::LimitExceeded(ResourceLimit::ObjectWorkBytes))?;
+
         if self.work_bytes > self.limits.max_object_work_bytes {
             return Err(SourceError::LimitExceeded(ResourceLimit::ObjectWorkBytes));
         }
+
         Ok(())
     }
 
@@ -146,9 +153,11 @@ impl Validation<'_> {
             .visits
             .checked_add(1)
             .ok_or(SourceError::LimitExceeded(ResourceLimit::Objects))?;
+
         if self.visits > self.limits.max_objects {
             return Err(SourceError::LimitExceeded(ResourceLimit::Objects));
         }
+
         let text = oid.as_str();
         let (mut inflated, work) = self
             .store
@@ -167,14 +176,17 @@ impl Validation<'_> {
                 }
             })?;
         self.charge_work(work)?;
+
         let actual = if text.len() == 40 {
             hex::encode(sha1::Sha1::digest(&inflated))
         } else {
             hex::encode(sha2::Sha256::digest(&inflated))
         };
+
         if actual != text {
             return Err(SourceError::ObjectIdentityMismatch);
         }
+
         let nul = inflated
             .iter()
             .position(|b| *b == 0)
@@ -185,29 +197,37 @@ impl Validation<'_> {
             .position(|b| *b == b' ')
             .ok_or(SourceError::MalformedGitObject)?;
         let type_name = &header[..space];
+
         if ![b"commit".as_slice(), b"tree", b"blob", b"tag"].contains(&type_name) {
             return Err(SourceError::MalformedGitObject);
         }
+
         if type_name != kind.bytes() {
             return Err(SourceError::ObjectTypeMismatch);
         }
+
         let size = &header[space + 1..];
+
         if size.is_empty()
             || (size.len() > 1 && size[0] == b'0')
             || !size.iter().all(u8::is_ascii_digit)
         {
             return Err(SourceError::MalformedGitObject);
         }
+
         let size: usize = std::str::from_utf8(size)
             .map_err(|_| SourceError::MalformedGitObject)?
             .parse()
             .map_err(|_| SourceError::MalformedGitObject)?;
+
         if inflated.len() - nul - 1 != size {
             return Err(SourceError::MalformedGitObject);
         }
+
         if kind == Kind::Blob && size as u64 > self.limits.max_blob_bytes {
             return Err(SourceError::LimitExceeded(ResourceLimit::BlobBytes));
         }
+
         Ok(inflated.split_off(nul + 1))
     }
 
@@ -215,6 +235,7 @@ impl Validation<'_> {
         if !self.paths.insert(path.collision_key()) {
             return Err(SourceError::PathCollision);
         }
+
         Ok(())
     }
 
@@ -223,10 +244,12 @@ impl Validation<'_> {
         if depth > self.limits.max_tree_depth.min(128) {
             return Err(SourceError::LimitExceeded(ResourceLimit::TreeDepth));
         }
+
         let bytes = self.read(oid, Kind::Tree)?;
         let oid_len = oid.as_str().len() / 2;
         let mut cursor = 0usize;
         let mut previous_sort_key: Option<Vec<u8>> = None;
+
         while cursor < bytes.len() {
             let space = bytes[cursor..]
                 .iter()
@@ -241,21 +264,26 @@ impl Validation<'_> {
                 .ok_or(SourceError::MalformedGitObject)?
                 + cursor;
             let name = &bytes[cursor..nul];
+
             if name.contains(&b'/') {
                 return Err(SourceError::InvalidSourcePath);
             }
+
             let component = SourcePath::from_bytes(name)?;
             let path =
                 SourcePath::from_bytes(format!("{prefix}{}", component.as_str()).as_bytes())?;
             self.add_path(&path)?;
             let is_tree = mode == b"40000";
             let mut sort_key = name.to_vec();
+
             if is_tree {
                 sort_key.push(b'/');
             }
+
             if previous_sort_key.as_ref().is_some_and(|p| p >= &sort_key) {
                 return Err(SourceError::MalformedGitObject);
             }
+
             previous_sort_key = Some(sort_key);
             cursor = nul + 1;
             let end = cursor
@@ -266,14 +294,18 @@ impl Validation<'_> {
                 .ok_or(SourceError::MalformedGitObject)?;
             let child = GitObjectId::parse(hex::encode(raw_oid))
                 .map_err(|_| SourceError::MalformedGitObject)?;
+
             if raw_oid.iter().all(|b| *b == 0) {
                 return Err(SourceError::MalformedGitObject);
             }
+
             cursor = end;
+
             if is_tree {
                 self.tree(&child, &format!("{}/", path.as_str()), depth + 1)?;
                 continue;
             }
+
             let mode = match mode {
                 b"100644" => SourceMode::File,
                 b"100755" => SourceMode::Executable,
@@ -281,9 +313,11 @@ impl Validation<'_> {
                 b"160000" => SourceMode::Submodule,
                 _ => return Err(SourceError::UnsupportedGitEntry),
             };
+
             if self.files.len() as u64 >= self.limits.max_files {
                 return Err(SourceError::LimitExceeded(ResourceLimit::Files));
             }
+
             let content = if mode == SourceMode::Submodule {
                 child.as_str().as_bytes().to_vec()
             } else {
@@ -293,11 +327,14 @@ impl Validation<'_> {
                 .total
                 .checked_add(content.len() as u64)
                 .ok_or(SourceError::LimitExceeded(ResourceLimit::TotalBytes))?;
+
             if self.total > self.limits.max_total_bytes {
                 return Err(SourceError::LimitExceeded(ResourceLimit::TotalBytes));
             }
+
             self.files.push(SourceFile::new(path, mode, content));
         }
+
         Ok(())
     }
 }
@@ -310,13 +347,16 @@ fn parse_oid(bytes: &[u8], width: usize) -> Result<GitObjectId, SourceError> {
     {
         return Err(SourceError::MalformedGitObject);
     }
+
     let oid = GitObjectId::parse(
         std::str::from_utf8(bytes).map_err(|_| SourceError::MalformedGitObject)?,
     )
     .map_err(|_| SourceError::MalformedGitObject)?;
+
     if bytes.iter().all(|b| *b == b'0') {
         return Err(SourceError::MalformedGitObject);
     }
+
     Ok(oid)
 }
 
@@ -329,14 +369,17 @@ fn validate_person(bytes: &[u8]) -> Result<(), SourceError> {
         .iter()
         .position(|b| *b == b'<')
         .ok_or(SourceError::MalformedGitObject)?;
+
     if opening == 0 || bytes[opening - 1] != b' ' || bytes[..closing].contains(&b'\n') {
         return Err(SourceError::MalformedGitObject);
     }
+
     let suffix = bytes
         .get(closing + 1..)
         .ok_or(SourceError::MalformedGitObject)?;
     let text = std::str::from_utf8(suffix).map_err(|_| SourceError::MalformedGitObject)?;
     let parts: Vec<_> = text.split(' ').collect();
+
     if parts.len() != 3
         || !parts[0].is_empty()
         || parts[1].parse::<i64>().is_err()
@@ -346,6 +389,7 @@ fn validate_person(bytes: &[u8]) -> Result<(), SourceError> {
     {
         return Err(SourceError::MalformedGitObject);
     }
+
     Ok(())
 }
 
@@ -355,9 +399,11 @@ fn commit_tree(bytes: &[u8], width: usize) -> Result<GitObjectId, SourceError> {
         .position(|w| w == b"\n\n")
         .ok_or(SourceError::MalformedGitObject)?;
     let header = &bytes[..separator];
+
     if header.contains(&0) || header.contains(&b'\r') {
         return Err(SourceError::MalformedGitObject);
     }
+
     let mut lines = header.split(|b| *b == b'\n').peekable();
     let first = lines.next().ok_or(SourceError::MalformedGitObject)?;
     let tree = parse_oid(
@@ -366,6 +412,7 @@ fn commit_tree(bytes: &[u8], width: usize) -> Result<GitObjectId, SourceError> {
             .ok_or(SourceError::MalformedGitObject)?,
         width,
     )?;
+
     while lines
         .peek()
         .is_some_and(|line| line.starts_with(b"parent "))
@@ -373,6 +420,7 @@ fn commit_tree(bytes: &[u8], width: usize) -> Result<GitObjectId, SourceError> {
         let line = lines.next().ok_or(SourceError::MalformedGitObject)?;
         parse_oid(&line[7..], width)?;
     }
+
     validate_person(
         lines
             .next()
@@ -386,26 +434,32 @@ fn commit_tree(bytes: &[u8], width: usize) -> Result<GitObjectId, SourceError> {
             .ok_or(SourceError::MalformedGitObject)?,
     )?;
     let mut previous_extra = false;
+
     for line in lines {
         if line.starts_with(b" ") {
             if !previous_extra {
                 return Err(SourceError::MalformedGitObject);
             }
+
             continue;
         }
+
         let space = line
             .iter()
             .position(|b| *b == b' ')
             .ok_or(SourceError::MalformedGitObject)?;
         let key = &line[..space];
+
         if key.is_empty()
             || !key.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'-')
             || [b"tree".as_slice(), b"parent", b"author", b"committer"].contains(&key)
         {
             return Err(SourceError::MalformedGitObject);
         }
+
         previous_extra = true;
     }
+
     Ok(tree)
 }
 
@@ -441,26 +495,33 @@ impl ObjectReader for LooseQuarantine {
         let metadata = file
             .metadata()
             .map_err(|_| SourceError::RepositoryAccessFailure)?;
+
         if !metadata.is_file() {
             return Err(SourceError::RepositoryAccessFailure);
         }
+
         if metadata.len() > cap {
             return Err(SourceError::LimitExceeded(ResourceLimit::ObjectBytes));
         }
+
         let mut compressed = Vec::new();
         (&mut file)
             .take(cap.saturating_add(1))
             .read_to_end(&mut compressed)
             .map_err(|_| SourceError::RepositoryAccessFailure)?;
+
         if compressed.len() as u64 > cap {
             return Err(SourceError::LimitExceeded(ResourceLimit::ObjectBytes));
         }
+
         if compressed.len() as u64 > work_remaining {
             return Err(SourceError::LimitExceeded(ResourceLimit::ObjectWorkBytes));
         }
+
         let mut decoder = Decompress::new(true);
         let mut inflated = Vec::new();
         let mut chunk = [0u8; 8192];
+
         loop {
             let previous_in = decoder.total_in();
             let previous_out = decoder.total_out();
@@ -473,25 +534,33 @@ impl ObjectReader for LooseQuarantine {
                     FlushDecompress::None,
                 )
                 .map_err(|_| SourceError::MalformedGitObject)?;
+
             if decoder.total_out() > cap {
                 return Err(SourceError::LimitExceeded(ResourceLimit::ObjectBytes));
             }
+
             if decoder.total_out() > work_remaining - compressed.len() as u64 {
                 return Err(SourceError::LimitExceeded(ResourceLimit::ObjectWorkBytes));
             }
+
             let written = (decoder.total_out() - previous_out) as usize;
             inflated.extend_from_slice(&chunk[..written]);
+
             if status == Status::StreamEnd {
                 if decoder.total_in() != compressed.len() as u64 {
                     return Err(SourceError::MalformedGitObject);
                 }
+
                 break;
             }
+
             if previous_in == decoder.total_in() && previous_out == decoder.total_out() {
                 return Err(SourceError::MalformedGitObject);
             }
         }
+
         let work = compressed.len() as u64 + inflated.len() as u64;
+
         Ok((inflated, work))
     }
 }
@@ -521,8 +590,11 @@ pub(crate) fn validate_objects(
         paths: BTreeSet::new(),
     };
     let bytes = validation.read(commit, Kind::Commit)?;
+
     let tree = commit_tree(&bytes, commit.as_str().len())?;
+
     validation.tree(&tree, "", 0)?;
+
     SourceManifest::new(
         validation
             .files
@@ -530,6 +602,7 @@ pub(crate) fn validate_objects(
             .map(SourceFile::manifest_entry)
             .collect(),
     )?;
+
     Ok(ValidatedSource {
         commit: commit.clone(),
         tree,

@@ -5,14 +5,18 @@
 
 #[cfg(unix)]
 mod loose;
+
 #[cfg(unix)]
 mod pack;
+
 #[cfg(unix)]
 pub use loose::LocalGitGateway;
+
 #[cfg(unix)]
 pub use pack::{GitObjectFormat, PackLimits, PackedGitGateway, receive_pack};
 
 mod artifact;
+
 pub use artifact::{read_snapshot, write_snapshot};
 
 use archcert_application::source::SourceStore;
@@ -40,10 +44,12 @@ impl SourceStore for MemorySourceStore {
             .map(Arc::clone)
             .ok_or(SourceError::SnapshotUnavailable)
     }
+
     fn retain(&mut self, snapshot: SourceSnapshot) -> Result<Arc<SourceSnapshot>, SourceError> {
         snapshot.verify(&snapshot.identity().snapshot_sha256)?;
         let snapshot = Arc::new(snapshot);
         self.snapshots.push(Arc::clone(&snapshot));
+
         Ok(snapshot)
     }
 }

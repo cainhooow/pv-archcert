@@ -1,15 +1,22 @@
 //! Northgate source reception. OpenSSH authenticates possession; authority grants
 //! authorize repositories. No execution, policy, certificate or signing dependency.
 #![cfg(unix)]
+
 mod git;
+
 mod inspection;
+
 mod protocol;
+
 mod resolution;
+
 mod store;
+
 pub use resolution::{
     LfsGrant, ResolutionConfiguration, ResolutionEvidence, ResolutionReference, SubmoduleGrant,
     read_resolution_configuration, resolve_submission,
 };
+
 pub use store::{AcceptedSubmissionReader, DevelopmentSubmissionStore, StoredSubmission};
 
 use archcert_application::source::{GitGateway, SourceSubmission, ingest_source};
@@ -35,6 +42,7 @@ pub fn read_configuration(path: &std::path::Path) -> Result<GatewayConfiguration
     let bytes = store::read_private_configuration(path)?;
     let config: GatewayConfiguration = serde_json::from_slice(&bytes).map_err(unavailable)?;
     config.validate()?;
+
     Ok(config)
 }
 
@@ -60,12 +68,15 @@ pub enum IngressError {
     #[error("INGRESS_UNAVAILABLE")]
     Unavailable,
 }
+
 fn unavailable<E>(_: E) -> IngressError {
     IngressError::Unavailable
 }
+
 fn rejected<E>(_: E) -> IngressError {
     IngressError::Rejected
 }
+
 fn now() -> Result<u64, IngressError> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -86,6 +97,7 @@ pub struct RepositoryGrant {
     /// Authority-selected Git object format.
     pub object_format: GitObjectFormat,
 }
+
 /// Public identity mapping corresponding to one restricted authorized_keys entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -99,6 +111,7 @@ pub struct AuthorizedDevice {
     /// Explicit repository grants, not inferred from authenticated login.
     pub repositories: Vec<RepositoryGrant>,
 }
+
 /// Operator-owned gateway configuration; never loaded from target source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -116,10 +129,12 @@ pub struct GatewayConfiguration {
     /// Retained attempts, including rejection records. No eviction by candidates.
     pub max_submissions: u32,
 }
+
 impl GatewayConfiguration {
     /// Validates trusted configuration and prevents ambiguous duplicate grants.
     pub fn validate(&self) -> Result<(), IngressError> {
         self.pack_limits.validate().map_err(unavailable)?;
+
         if !self.git_executable.is_absolute()
             || !self.store.is_absolute()
             || self.devices.len() > 256
@@ -128,27 +143,35 @@ impl GatewayConfiguration {
         {
             return Err(IngressError::Unavailable);
         }
+
         let mut keys = std::collections::BTreeSet::new();
         let mut namespace = std::collections::BTreeMap::new();
+
         for device in &self.devices {
             if !keys.insert(device.device.as_str()) || device.repositories.len() > 128 {
                 return Err(IngressError::Unavailable);
             }
+
             let mut routes = std::collections::BTreeSet::new();
+
             for grant in &device.repositories {
                 let target = (grant.project, grant.repository.clone(), grant.object_format);
+
                 if let Some(prior) = namespace.insert(&grant.route, target.clone())
                     && prior != target
                 {
                     return Err(IngressError::Unavailable);
                 }
+
                 if !protocol::valid_route(&grant.route) || !routes.insert(&grant.route) {
                     return Err(IngressError::Unavailable);
                 }
             }
         }
+
         Ok(())
     }
+
     /// Maps an OpenSSH forced-command fingerprint and exact original command.
     /// This function does not itself authenticate SSH. Only the restricted account
     /// may invoke it, with a fingerprint fixed in authority-owned authorized_keys.
@@ -169,6 +192,7 @@ impl GatewayConfiguration {
             .iter()
             .find(|g| g.route == route)
             .ok_or(IngressError::Authorization)?;
+
         Ok((device, grant))
     }
 }
@@ -195,6 +219,7 @@ pub enum IngressEvent {
     /// Immutable source artifact published; no certification job created.
     SourceSnapshotAccepted,
 }
+
 /// Required external content, with explicit unresolved repository/location state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
@@ -224,6 +249,7 @@ pub enum ExternalDependencyEvidence {
         resolution: ExternalResolutionState,
     },
 }
+
 /// Initial required dependencies remain unavailable to execution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -231,6 +257,7 @@ pub enum ExternalResolutionState {
     /// No verified acquisition has completed for this snapshot.
     Unresolved,
 }
+
 /// A gitlink's origin must be assigned by authority before acquisition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -238,9 +265,11 @@ pub enum SubmoduleLocationState {
     /// No approved repository mapping exists in the receive session.
     AuthorityUnmapped,
 }
+
 fn schema_one() -> u32 {
     1
 }
+
 fn external_evidence(
     snapshot: &archcert_domain::source::SourceSnapshot,
 ) -> Vec<ExternalDependencyEvidence> {
@@ -342,8 +371,10 @@ pub trait SubmissionStore {
         snapshot: &archcert_domain::source::SourceSnapshot,
         evidence: &IngressEvidence,
     ) -> Result<(), IngressError>;
+
     /// Records rejection without creating accepted source.
     fn reject(&mut self, evidence: &IngressEvidence) -> Result<(), IngressError>;
+
     /// Retrieves exact accepted source with integrity validation.
     fn load(&self, id: &SourceSubmissionId) -> Result<StoredSubmission, IngressError>;
 }
@@ -358,6 +389,7 @@ pub fn receive(
     mut output: impl Write,
 ) -> Result<IngressEvidence, IngressError> {
     let (actor, grant) = config.authorize(device, original)?;
+
     let mut store = DevelopmentSubmissionStore::open(&config.store, config.max_submissions)?;
     let id = SourceSubmissionId::new();
     let mut evidence = IngressEvidence {
@@ -391,6 +423,7 @@ pub fn receive(
         ],
         candidate: format!("refs/archcert/candidates/{}/{}", grant.project, id),
     };
+
     let quarantine = store.quarantine()?;
     let result = receive_inner(
         config,
@@ -401,6 +434,7 @@ pub fn receive(
         quarantine.path(),
         &mut evidence,
     );
+
     if result.is_err() && store.load(&id).is_err() {
         evidence.status = "REJECTED".into();
         evidence.accepted_at = None;
@@ -412,8 +446,10 @@ pub fn receive(
         evidence.events.push(IngressEvent::GitSubmissionRejected);
         store.reject(&evidence)?;
     }
+
     result.map(|()| evidence)
 }
+
 fn receive_inner(
     config: &GatewayConfiguration,
     grant: &RepositoryGrant,
@@ -438,10 +474,12 @@ fn receive_inner(
     deadline()?;
     output.write_all(&advertisement).map_err(unavailable)?;
     output.flush().map_err(unavailable)?;
+
     let command = protocol::read_command(&mut input, grant.object_format)?;
     evidence.received_refs.push(command.reference.clone());
     evidence.requested_commit = Some(command.commit.clone());
     evidence.events.push(IngressEvent::GitRefReceived);
+
     let pack =
         receive_pack(&mut input, grant.object_format, config.pack_limits).map_err(rejected)?;
     evidence.pack_bytes = pack.len() as u64;
@@ -451,6 +489,7 @@ fn receive_inner(
         IngressEvent::GitObjectsQuarantined,
         IngressEvent::GitObjectValidationStarted,
     ]);
+
     let gateway = PackedGitGateway::new(
         grant.repository.clone(),
         &pack,
@@ -458,6 +497,7 @@ fn receive_inner(
         config.pack_limits,
     )
     .map_err(rejected)?;
+
     // ArchCert validates before Git's second decoder can observe the buffered pack.
     gateway
         .quarantine(&grant.repository)
@@ -465,7 +505,9 @@ fn receive_inner(
         .validate(&command.commit, SourceLimits::default())
         .map_err(rejected)?;
     deadline()?;
+
     let response = git.receive(&command.raw, &pack, &command.reference, &command.commit)?;
+
     let source = ingest_source(
         &gateway,
         &mut MemorySourceStore::default(),
@@ -477,9 +519,11 @@ fn receive_inner(
         SourceLimits::default(),
     )
     .map_err(rejected)?;
+
     evidence.source = Some(source.snapshot.identity().clone());
     evidence.completeness = Some(source.snapshot.status());
     evidence.external_sources = external_evidence(&source.snapshot);
+
     for external in source.snapshot.external() {
         match external {
             archcert_domain::source::ExternalSource::Lfs { .. } => evidence.lfs_unresolved += 1,
@@ -488,6 +532,7 @@ fn receive_inner(
             }
         }
     }
+
     evidence.status = if source.snapshot.require_complete().is_ok() {
         "ACCEPTED"
     } else {
@@ -497,10 +542,13 @@ fn receive_inner(
     deadline()?;
     evidence.accepted_at = Some(now()?);
     evidence.events.push(IngressEvent::SourceSnapshotAccepted);
+
     store.accept(&source.snapshot, evidence)?;
+
     // Git's report-status is withheld until immutable source storage succeeds.
     output.write_all(&response).map_err(unavailable)?;
     output.flush().map_err(unavailable)?;
+
     Ok(())
 }
 
@@ -527,11 +575,13 @@ mod tests {
             max_submissions: 2,
         })
     }
+
     #[test]
     fn authentication_repository_authorization_and_namespace_are_distinct()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut config = config()?;
         let key = config.devices[0].device.clone();
+
         assert!(
             config
                 .authorize(&key, "git-receive-pack 'company/one.git'")
@@ -548,25 +598,33 @@ mod tests {
             ),
             Err(IngressError::Authentication)
         ));
+
         config.devices[0].enabled = false;
+
         assert!(matches!(
             config.authorize(&key, "git-receive-pack 'company/one.git'"),
             Err(IngressError::Authentication)
         ));
+
         config.devices[0].enabled = true;
         let mut conflicting = config.devices[0].clone();
         conflicting.device = DeviceKeyId::parse("2".repeat(64))?;
         conflicting.repositories[0].project = ProjectId::new();
         config.devices.push(conflicting);
+
         assert!(config.validate().is_err());
+
         Ok(())
     }
+
     #[test]
     fn authority_configuration_cannot_disable_resource_limits()
     -> Result<(), Box<dyn std::error::Error>> {
         let original = config()?;
+
         for mutation in 0..5 {
             let mut config = original.clone();
+
             match mutation {
                 0 => config.session_seconds = 0,
                 1 => config.max_submissions = 0,
@@ -574,8 +632,10 @@ mod tests {
                 3 => config.pack_limits.max_delta_depth = u32::MAX,
                 _ => config.git_executable = "git".into(),
             }
+
             assert!(config.validate().is_err());
         }
+
         Ok(())
     }
 }

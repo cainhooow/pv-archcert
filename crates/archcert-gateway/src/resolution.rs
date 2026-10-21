@@ -1,4 +1,5 @@
 //! Authority-provisioned external content. No candidate-selected network transport.
+
 use crate::{
     DevelopmentSubmissionStore, IngressError, IngressEvent, IngressEvidence, StoredSubmission, now,
     rejected, store, unavailable,
@@ -30,6 +31,7 @@ pub struct ResolutionReference {
     /// Expected immutable commit, tree and independent source identity.
     pub identity: SourceIdentity,
 }
+
 impl ResolutionReference {
     fn matches(&self, snapshot: &SourceSnapshot) -> bool {
         self.project == snapshot.project()
@@ -37,6 +39,7 @@ impl ResolutionReference {
             && &self.identity == snapshot.identity()
     }
 }
+
 /// One explicit path/content grant in a private authority LFS object directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,6 +51,7 @@ pub struct LfsGrant {
     /// Expected byte length.
     pub size: u64,
 }
+
 /// One exact accepted child submission, not a mutable origin or branch.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -59,6 +63,7 @@ pub struct SubmoduleGrant {
     /// Explicitly permitted scoped immutable child source.
     pub source: ResolutionReference,
 }
+
 /// Private operator capability. Filesystem ownership authenticates its invocation;
 /// it is never accepted by the SSH forced-command receive interface.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +84,7 @@ pub struct ResolutionConfiguration {
     /// Explicit per-path scoped child grants; no .gitmodules lookup.
     pub submodules: Vec<SubmoduleGrant>,
 }
+
 /// Derivation audit data; operational attribution does not affect source identity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -94,13 +100,16 @@ pub struct ResolutionEvidence {
     /// Verified complete child source expansions.
     pub submodules_resolved: u64,
 }
+
 /// Reads bounded, owner-only configuration without following links or ambient Git config.
 pub fn read_resolution_configuration(path: &Path) -> Result<ResolutionConfiguration, IngressError> {
     let bytes = store::read_private_configuration(path)?;
     let config: ResolutionConfiguration = serde_json::from_slice(&bytes).map_err(unavailable)?;
     config.validate()?;
+
     Ok(config)
 }
+
 impl ResolutionConfiguration {
     fn validate(&self) -> Result<(), IngressError> {
         if !self.store.is_absolute()
@@ -109,7 +118,9 @@ impl ResolutionConfiguration {
         {
             return Err(IngressError::Unavailable);
         }
+
         let mut paths = std::collections::BTreeSet::new();
+
         for grant in &self.lfs {
             if !paths.insert(&grant.path)
                 || grant.size > SourceLimits::default().max_blob_bytes
@@ -118,18 +129,22 @@ impl ResolutionConfiguration {
                 return Err(IngressError::Unavailable);
             }
         }
+
         for grant in &self.submodules {
             if !paths.insert(&grant.path) {
                 return Err(IngressError::Unavailable);
             }
         }
+
         Ok(())
     }
 }
+
 struct Authority<'a> {
     config: &'a ResolutionConfiguration,
     store: &'a DevelopmentSubmissionStore,
 }
+
 impl ExternalSourceAuthority for Authority<'_> {
     fn lfs_object(
         &self,
@@ -140,6 +155,7 @@ impl ExternalSourceAuthority for Authority<'_> {
         if !self.config.parent.matches(parent) {
             return Err(SourceError::IncompleteExternalSource);
         }
+
         let grant = self
             .config
             .lfs
@@ -155,6 +171,7 @@ impl ExternalSourceAuthority for Authority<'_> {
         .map_err(|_| SourceError::IncompleteExternalSource)?;
         let file = store::regular(&root, digest.as_str(), rustix::fs::OFlags::RDONLY)
             .map_err(|_| SourceError::IncompleteExternalSource)?;
+
         if file
             .metadata()
             .map_err(|_| SourceError::IncompleteExternalSource)?
@@ -163,8 +180,10 @@ impl ExternalSourceAuthority for Authority<'_> {
         {
             return Err(SourceError::SnapshotDigestMismatch);
         }
+
         Ok(Box::new(file.take(grant.size.saturating_add(1))))
     }
+
     fn submodule(
         &self,
         parent: &SourceSnapshot,
@@ -173,6 +192,7 @@ impl ExternalSourceAuthority for Authority<'_> {
         if !self.config.parent.matches(parent) {
             return Err(SourceError::IncompleteExternalSource);
         }
+
         let grant = self
             .config
             .submodules
@@ -183,9 +203,11 @@ impl ExternalSourceAuthority for Authority<'_> {
             .store
             .load(&grant.submission)
             .map_err(|_| SourceError::IncompleteExternalSource)?;
+
         if !grant.source.matches(&child.snapshot) {
             return Err(SourceError::SnapshotDigestMismatch);
         }
+
         Ok((
             SnapshotReference {
                 project: grant.source.project,
@@ -196,6 +218,7 @@ impl ExternalSourceAuthority for Authority<'_> {
         ))
     }
 }
+
 /// Resolves one incomplete submission into a NEW complete immutable submission.
 /// The parent is unchanged, source-only publication creates no execution request,
 /// and all acquisition capabilities are dropped before this function returns.
@@ -204,21 +227,25 @@ pub fn resolve_submission(
     id: &SourceSubmissionId,
 ) -> Result<IngressEvidence, IngressError> {
     config.validate()?;
+
     if id != &config.parent_submission {
         return Err(IngressError::Authorization);
     }
+
     let mut store = DevelopmentSubmissionStore::open(&config.store, 32)?;
     let _reservation = store.quarantine()?;
     let StoredSubmission {
         snapshot: parent,
         mut evidence,
     } = store.load(id)?;
+
     if !config.parent.matches(&parent)
         || parent.require_complete().is_ok()
         || config.lfs.len() + config.submodules.len() != parent.external().len()
     {
         return Err(IngressError::Rejected);
     }
+
     let received_at = now()?;
     evidence.submission = SourceSubmissionId::new();
     evidence.transport = "AUTHORITY_PRIVATE_SOURCE_RESOLUTION".into();
@@ -237,6 +264,7 @@ pub fn resolve_submission(
         lfs_resolved: 0,
         submodules_resolved: 0,
     });
+
     let result = (|| {
         let source = resolve_external_source(
             Arc::new(parent),
@@ -277,9 +305,12 @@ pub fn resolve_submission(
         ]);
         evidence.status = "ACCEPTED".into();
         evidence.accepted_at = Some(now()?);
+
         store.accept(&source, &evidence)?;
+
         Ok(())
     })();
+
     if result.is_err() {
         evidence.source = None;
         evidence.completeness = None;
@@ -291,5 +322,6 @@ pub fn resolve_submission(
         evidence.events.push(IngressEvent::GitSubmissionRejected);
         store.reject(&evidence)?;
     }
+
     result.map(|()| evidence)
 }

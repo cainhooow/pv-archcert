@@ -1,5 +1,6 @@
 //! Explicit system Git adapter. All candidate bytes are independently validated
 //! before receive-pack; Git provides maintained advertisement/report semantics.
+
 use crate::{IngressError, unavailable};
 use archcert_domain::GitObjectId;
 use archcert_source::GitObjectFormat;
@@ -21,17 +22,20 @@ pub struct ObservedGit {
     /// Bounded Git-reported version.
     pub version: String,
 }
+
 pub(crate) struct SystemGit {
     executable: PathBuf,
     root: PathBuf,
     deadline: Instant,
     observed: ObservedGit,
 }
+
 impl SystemGit {
     pub fn new(executable: &Path, root: &Path, seconds: u64) -> Result<Self, IngressError> {
         if !executable.is_absolute() {
             return Err(IngressError::Unavailable);
         }
+
         let mut git = Self {
             executable: executable.into(),
             root: root.into(),
@@ -43,18 +47,23 @@ impl SystemGit {
         };
         let version = git.run(&["--version"], None)?;
         let version = std::str::from_utf8(&version).map_err(unavailable)?.trim();
+
         if !version.starts_with("git version ")
             || version.len() > 256
             || !version.bytes().all(|b| b.is_ascii_graphic() || b == b' ')
         {
             return Err(IngressError::Unavailable);
         }
+
         git.observed.version = version.to_owned();
+
         Ok(git)
     }
+
     pub fn observed(&self) -> &ObservedGit {
         &self.observed
     }
+
     fn command(&self) -> Command {
         let mut cmd = Command::new(&self.executable);
         cmd.env_clear()
@@ -101,6 +110,7 @@ impl SystemGit {
             ]);
         cmd
     }
+
     fn run(&self, args: &[&str], input: Option<File>) -> Result<Vec<u8>, IngressError> {
         let mut stdout = tempfile::tempfile_in(&self.root).map_err(unavailable)?;
         let stderr = tempfile::tempfile_in(&self.root).map_err(unavailable)?;
@@ -121,25 +131,31 @@ impl SystemGit {
                 let _ = child.wait();
                 return Err(IngressError::Limit);
             }
+
             if let Some(status) = child.try_wait().map_err(unavailable)? {
                 break status;
             }
+
             std::thread::sleep(Duration::from_millis(5));
         };
+
         if !status.success()
             || stdout.metadata().map_err(unavailable)?.len() > 65536
             || stderr.metadata().map_err(unavailable)?.len() > 65536
         {
             return Err(IngressError::Rejected);
         }
+
         stdout.rewind().map_err(unavailable)?;
         let mut bytes = Vec::new();
         stdout
             .take(65537)
             .read_to_end(&mut bytes)
             .map_err(unavailable)?;
+
         Ok(bytes)
     }
+
     pub fn init(&self, format: GitObjectFormat) -> Result<(), IngressError> {
         self.run(
             &[
@@ -151,8 +167,10 @@ impl SystemGit {
             ],
             None,
         )?;
+
         Ok(())
     }
+
     pub fn advertise(&self) -> Result<Vec<u8>, IngressError> {
         self.run(
             &[
@@ -164,6 +182,7 @@ impl SystemGit {
             None,
         )
     }
+
     pub fn receive(
         &self,
         commands: &[u8],
@@ -182,9 +201,11 @@ impl SystemGit {
         // Never trust subprocess exit alone: report-status failures may still exit 0.
         let received = fs::read(self.root.join("repository").join(reference))
             .map_err(|_| IngressError::Rejected)?;
+
         if received != format!("{}\n", commit.as_str()).as_bytes() {
             return Err(IngressError::Rejected);
         }
+
         Ok(response)
     }
 }
@@ -206,6 +227,7 @@ mod tests {
                 )
             })
             .collect();
+
         for forbidden in [
             "SSH_AUTH_SOCK",
             "GIT_CONFIG_COUNT",
@@ -215,6 +237,7 @@ mod tests {
         ] {
             assert!(!env.contains_key(forbidden));
         }
+
         assert_eq!(
             env.get("GIT_CONFIG_GLOBAL"),
             Some(&Some("/dev/null".into()))
@@ -228,6 +251,7 @@ mod tests {
             env.get("HOME"),
             Some(&Some(root.path().to_string_lossy().into_owned()))
         );
+
         Ok(())
     }
 }

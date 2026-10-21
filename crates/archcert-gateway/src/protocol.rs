@@ -16,24 +16,30 @@ pub(crate) fn valid_route(route: &str) -> bool {
         && SourcePath::from_bytes(route.as_bytes()).is_ok()
         && !route.contains('\'')
 }
+
 pub(crate) fn receive_route(original: &str) -> Result<&str, IngressError> {
     if original.len() > 300 {
         return Err(IngressError::Command);
     }
+
     let route = original
         .strip_prefix("git-receive-pack '")
         .and_then(|s| s.strip_suffix('\''))
         .ok_or(IngressError::Command)?;
+
     if !valid_route(route) {
         return Err(IngressError::Command);
     }
+
     Ok(route)
 }
+
 pub(crate) struct ReceiveCommand {
     pub reference: String,
     pub commit: GitObjectId,
     pub raw: Vec<u8>,
 }
+
 fn packet(input: &mut impl Read) -> Result<Vec<u8>, IngressError> {
     let mut prefix = [0; 4];
     input
@@ -44,16 +50,20 @@ fn packet(input: &mut impl Read) -> Result<Vec<u8>, IngressError> {
         PacketLineOrWantedSize::Line(_) => return Err(IngressError::Rejected),
         PacketLineOrWantedSize::Wanted(n) => usize::from(n),
     };
+
     if wanted > 4096 {
         return Err(IngressError::Limit);
     }
+
     let mut bytes = prefix.to_vec();
     bytes.resize(wanted + 4, 0);
     input
         .read_exact(&mut bytes[4..])
         .map_err(|_| IngressError::Rejected)?;
+
     Ok(bytes)
 }
+
 pub(crate) fn read_command(
     input: &mut impl Read,
     format: GitObjectFormat,
@@ -65,6 +75,7 @@ pub(crate) fn read_command(
             let oid = std::str::from_utf8(&bytes[8..])
                 .map_err(|_| IngressError::Rejected)?
                 .trim_end_matches('\n');
+
             if oid.len() != format.width()
                 || !oid
                     .bytes()
@@ -72,6 +83,7 @@ pub(crate) fn read_command(
             {
                 return Err(IngressError::Rejected);
             }
+
             let oid = oid.to_owned();
             raw.extend_from_slice(&first);
             Some(oid)
@@ -92,6 +104,7 @@ pub(crate) fn read_command(
         .map_err(|_| IngressError::Rejected)?
         .trim_end_matches('\n');
     let (update, capabilities) = text.split_once('\0').ok_or(IngressError::Rejected)?;
+
     for cap in capabilities.split(' ').filter(|c| !c.is_empty()) {
         if ![
             "report-status",
@@ -110,13 +123,16 @@ pub(crate) fn read_command(
             return Err(IngressError::Rejected);
         }
     }
+
     if !capabilities
         .split(' ')
         .any(|c| matches!(c, "report-status" | "report-status-v2"))
     {
         return Err(IngressError::Rejected);
     }
+
     let parts: Vec<_> = update.split(' ').collect();
+
     if parts.len() != 3
         || parts[0] != "0".repeat(format.width())
         || parts[1].len() != format.width()
@@ -127,10 +143,12 @@ pub(crate) fn read_command(
     {
         return Err(IngressError::Rejected);
     }
+
     let reference = parts[2];
     let branch = reference
         .strip_prefix("refs/heads/")
         .ok_or(IngressError::Rejected)?;
+
     if reference.len() > 256
         || SourcePath::from_bytes(branch.as_bytes()).is_err()
         || branch.contains("..")
@@ -141,16 +159,22 @@ pub(crate) fn read_command(
     {
         return Err(IngressError::Rejected);
     }
+
     let commit = GitObjectId::parse(parts[1]).map_err(|_| IngressError::Rejected)?;
+
     if shallow.as_ref().is_some_and(|id| id != commit.as_str()) {
         return Err(IngressError::Rejected);
     }
+
     let reference = reference.to_owned();
     let flush = packet(input)?;
+
     if flush != b"0000" {
         return Err(IngressError::Rejected);
     }
+
     raw.extend_from_slice(&flush);
+
     Ok(ReceiveCommand {
         reference,
         commit,
@@ -165,12 +189,15 @@ mod tests {
         let line = format!("{update}\0report-status object-format=sha1");
         format!("{:04x}{line}0000", line.len() + 4).into_bytes()
     }
+
     #[test]
     fn rejects_ref_confusion_deletion_force_updates_and_multiple_refs() {
         let oid = "1".repeat(40);
         let zero = "0".repeat(40);
         let valid = format!("{zero} {oid} refs/heads/main");
+
         assert!(read_command(&mut wire(&valid).as_slice(), GitObjectFormat::Sha1).is_ok());
+
         for update in [
             format!("{oid} {oid} refs/heads/main"),
             format!("{zero} {zero} refs/heads/main"),
@@ -183,17 +210,21 @@ mod tests {
         ] {
             assert!(read_command(&mut wire(&update).as_slice(), GitObjectFormat::Sha1).is_err());
         }
+
         let mut multiple = wire(&valid);
         multiple.truncate(multiple.len() - 4);
         multiple.extend_from_slice(&wire(&valid));
+
         assert!(read_command(&mut multiple.as_slice(), GitObjectFormat::Sha1).is_err());
     }
+
     #[test]
     fn original_command_never_enters_a_shell() {
         assert_eq!(
             receive_route("git-receive-pack 'company/project.git'").ok(),
             Some("company/project.git")
         );
+
         for command in [
             "",
             "sh",
