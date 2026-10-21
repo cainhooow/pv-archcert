@@ -1,5 +1,11 @@
 # Ravenport development operations
 
+Terminology: [ADR 0045](../adr/0045-roadmap-reconciliation.md) reconciles this work to M7 Asterwyn,
+M8 Greywatch and their durable lifecycle integration. `Ironcrest` in retained
+implementation identifiers and this document is a historical label. Canonical
+M6 Ironcrest (Artifact Binding, Reproducible Builds & Release Permit) remains
+PLANNED / NOT YET IMPLEMENTED. No security or compatibility semantics change.
+
 The PostgreSQL service is infrastructure. It is separate from the independently
 provisioned rootless target execution daemon, network, credentials and filesystem.
 No target container receives the compose network, database URL or object root.
@@ -216,7 +222,8 @@ agent repeatedly corrected approximately 41-second offsets while guest
 historical fixtures both failed under that clock conflict. The development run
 used a single clock authority before repetition; no production lease/fence rule,
 assertion, timeout or expected result was relaxed. See the intentionally untracked
-M6 report for exact repetition counts and retained engineering evidence.
+historically labeled M6 report for exact repetition counts and retained
+engineering evidence.
 
 The inconclusive regression emits its failing transition, database timestamp,
 lease timestamps, job/attempt state and artifact availability on an error. Preserve

@@ -1,5 +1,11 @@
 # Ironcrest semantic review threat model
 
+Terminology: [ADR 0045](../adr/0045-roadmap-reconciliation.md) reconciles this work to M7 Asterwyn,
+M8 Greywatch and their durable lifecycle integration. `Ironcrest` in retained
+implementation identifiers and this document is a historical label. Canonical
+M6 Ironcrest (Artifact Binding, Reproducible Builds & Release Permit) remains
+PLANNED / NOT YET IMPLEMENTED. No security or compatibility semantics change.
+
 Scope: the design and integrated controls in ADRs 0041–0044. Implementation and executed validation are
 listed separately in the current architecture snapshot. This is an engineering
 review, not independent certification. Authority provisioning, controller, storage,

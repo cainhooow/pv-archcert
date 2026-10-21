@@ -1,5 +1,11 @@
 # ADR 0044: Explicit Ironcrest evidence-manifest extension
 
+Terminology: [ADR 0045](0045-roadmap-reconciliation.md) reconciles this work to M7 Asterwyn,
+M8 Greywatch and their durable lifecycle integration. `Ironcrest` in retained
+implementation identifiers and this document is a historical label. Canonical
+M6 Ironcrest (Artifact Binding, Reproducible Builds & Release Permit) remains
+PLANNED / NOT YET IMPLEMENTED. No security or compatibility semantics change.
+
 Status: Implemented construction, compatibility guards and durable controller
 composition; controlled source-to-certificate and restart regressions passed.
 Date: October 21, 2026. Extends ADRs 0025, 0042 and 0043.
@@ -53,7 +59,7 @@ An unsupported retained profile must fail closed, never select a newer default.
 The separate `archcert-ironcrest-controlled-v1` policy version 1.0.0 requires both
 the existing test step and `ironcrest-idempotency` under the existing deterministic
 TEST_SUITE_COMPLETES rule. Its fixed canonical digest is independently reproduced
-in the M6 working evidence:
+in the working evidence under its historical M6 label:
 `2f0101fffb230caf6957065e91ba0655c25893dbee2f6105f44ce3e62cafef4e`.
 The historical development policy is unchanged.
 Certificate preparation for the new policy requires Ironcrest evidence and still

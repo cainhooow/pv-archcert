@@ -1,5 +1,11 @@
 # Ironcrest dependency review
 
+Terminology: [ADR 0045](../adr/0045-roadmap-reconciliation.md) reconciles this work to M7 Asterwyn,
+M8 Greywatch and their durable lifecycle integration. `Ironcrest` in retained
+implementation identifiers and this document is a historical label. Canonical
+M6 Ironcrest (Artifact Binding, Reproducible Builds & Release Permit) remains
+PLANNED / NOT YET IMPLEMENTED. No security or compatibility semantics change.
+
 Scope: passive knowledge, local semantic replay and durable authority composition.
 Updated: October 21, 2026. This is a scoped
 dependency review, not an independent source audit or parser safety proof.
@@ -49,7 +55,8 @@ host-side knowledge/provider operation. Application/domain have no parser/provid
 the parser lives in archcert-knowledge behind the application extractor port.
 
 Validation commands and actual outcomes are retained in the intentionally untracked
-M6 working report and ignored target/m6 logs. cargo-deny must pass before completion.
+working report under its historical M6 filename and ignored target/m6 logs.
+cargo-deny remains required for validation.
 
 ## Integrated controller and issuance composition
 

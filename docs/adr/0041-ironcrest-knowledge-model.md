@@ -1,7 +1,13 @@
 # ADR 0041: Immutable, scoped knowledge above the trust core
 
-Status: Accepted design for Ironcrest; implementation status is recorded in the
-current architecture snapshot. Date: October 20, 2026.
+Terminology: [ADR 0045](0045-roadmap-reconciliation.md) reconciles this work to M7 Asterwyn,
+M8 Greywatch and their durable lifecycle integration. `Ironcrest` in retained
+implementation identifiers and this document is a historical label. Canonical
+M6 Ironcrest (Artifact Binding, Reproducible Builds & Release Permit) remains
+PLANNED / NOT YET IMPLEMENTED. No security or compatibility semantics change.
+
+Status: Accepted design, historically labeled Ironcrest; implementation status is
+recorded in the current architecture snapshot. Date: October 20, 2026.
 
 ## Context
 

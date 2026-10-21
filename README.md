@@ -10,15 +10,26 @@ Its core rule is simple:
 
 The development implementation includes verified source preparation, authenticated
 Northgate ingress, durable Ravenport jobs, Stoneward execution fencing, and the
-controlled Ironcrest review-to-certificate lifecycle. Authority-resolved plans,
-deterministic policy evaluation and canonical certificates retain offline
+controlled knowledge and semantic review-to-certificate lifecycle.
+Authority-resolved plans, deterministic policy evaluation and canonical certificates retain offline
 verification. Signing is DEVELOPMENT ONLY; ArchCert is not a production certifier.
 
-M6 — Ironcrest — COMPLETE. The controlled lifecycle passed crash recovery,
-semantic veto and provider-failure regressions, all standard gates, real PostgreSQL
-and OCI checks, and offline verification with the test services stopped. Completion
-covers the documented development scope; semantic review accuracy and production
-operation remain unproven.
+The canonical roadmap is:
+
+| Milestone | Scope | Status |
+| --- | --- | --- |
+| M5.2 — Stoneward | Native Linux Runner Qualification & Operational Recovery | COMPLETE, within its documented qualification scope |
+| M6 — Ironcrest | Artifact Binding, Reproducible Builds & Release Permit | PLANNED / NOT YET IMPLEMENTED |
+| M7 — Asterwyn | Project Knowledge Engine & Change Impact Graph | SUBSTANTIALLY IMPLEMENTED ahead of sequence; pending formal milestone reconciliation |
+| M8 — Greywatch | Semantic Review, Agent Claims, Discoveries & Blind Spots | SUBSTANTIALLY IMPLEMENTED ahead of sequence; pending formal milestone reconciliation |
+
+The recent knowledge, semantic review and durable lifecycle work was incorrectly
+called M6/Ironcrest. Its implementation and validation remain valuable, but do not
+complete canonical M6 or establish the full Definition of Done for M7/M8.
+[ADR 0045](docs/adr/0045-roadmap-reconciliation.md) records the correction and name
+inventory. Existing `ironcrest` APIs, policy/profile IDs, schemas and commands are
+retained historical implementation labels, not claims of artifact binding,
+reproducible builds or release permits. Git history is preserved.
 
 ## Certification lifecycle
 
@@ -83,7 +94,7 @@ The controlled implementation retains semantic nondeterminism/provider-drift ris
 syntax-only extraction limits and explicit blind spots. Injection containment is
 architectural, not a mathematical guarantee. No universal bug detection or
 production certification authority is claimed. See [the current architecture](docs/architecture/CURRENT_ARCHITECTURE_SNAPSHOT.md),
-[Ironcrest operations](docs/architecture/RAVENPORT_OPERATIONS.md#ironcrest-review-before-admission)
+[Controlled review operations](docs/architecture/RAVENPORT_OPERATIONS.md#ironcrest-review-before-admission)
 and [manifest compatibility](docs/adr/0044-ironcrest-evidence-manifest.md).
 
 ## Inspect exact source

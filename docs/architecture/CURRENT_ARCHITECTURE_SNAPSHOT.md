@@ -1,11 +1,23 @@
-# Current architecture snapshot — Stoneward with integrated Ironcrest
+# Current architecture snapshot — Stoneward with knowledge and semantic review
 
-Ironcrest architecture is defined in ADRs 0041–0044 and the semantic review threat
-model. Controlled authority-profile review, immutable challenge selection, durable
-admission and issuance are integrated. M6 — Ironcrest — COMPLETE. Final validation
-and explicit support limits are recorded in the intentionally untracked M6 working
-report. This does not broaden Stoneward's exact native execution qualification or
-establish a production certifier.
+The canonical roadmap and historical naming inventory are defined in
+[ADR 0045](../adr/0045-roadmap-reconciliation.md). M5.2 Stoneward is COMPLETE within
+its documented qualification scope. M6 Ironcrest (Artifact Binding, Reproducible
+Builds & Release Permit) is PLANNED / NOT YET IMPLEMENTED. M7 Asterwyn (Project
+Knowledge Engine & Change Impact Graph) and M8 Greywatch (Semantic Review, Agent
+Claims, Discoveries & Blind Spots) are SUBSTANTIALLY IMPLEMENTED ahead of sequence,
+pending formal milestone reconciliation. Their full canonical Definitions of Done
+have not been checked here; neither is declared complete.
+
+ADRs 0041–0044 describe the implemented knowledge, semantic review and durable
+lifecycle controls. They were historically mislabeled M6/Ironcrest. The retained
+`ironcrest` code, persistence, profile, policy and manifest names refer to that
+implementation, not canonical M6. Controlled authority-profile review, immutable
+challenge selection, durable admission and issuance remain integrated. Historical
+validation and support limits are recorded in the intentionally untracked
+`docs/MILESTONE_6_REPORT.md` and the validation boundary below. The naming correction
+neither broadens Stoneward's exact native execution qualification nor establishes
+a production certifier.
 
 The initial knowledge core now owns generic graph/provenance/coverage vocabulary,
 explicit scoped authority bundles and an application extractor registry over
@@ -68,8 +80,9 @@ the review decision. The certificate constructor independently re-evaluates poli
 CONTINUE creates no PROVEN result. Historical bundle identities, certificate schema
 1, signing and offline verification remain compatible. Controller composition
 restores the reviewed chain and accepted challenge evidence before evaluation and
-preparation. Final milestone gates passed; exact commands and evidence are recorded
-in the M6 working report.
+preparation. Historical controlled lifecycle gates passed; exact commands and
+evidence are recorded in the working report under its original M6 filename. This is not a
+canonical milestone completion claim.
 
 Migration 0004 and the application IroncrestRepository port now add a separate
 project-scoped pre-admission journal. It checks repository grants and accepted
@@ -324,7 +337,7 @@ creation blocks indefinitely. Committed evidence is validated/adopted without a
 target rerun. See ADRs 0038–0040 and the native qualification document for the
 precise trusted-worker/filesystem profile and observed deployment limits.
 
-## Ironcrest controller and validation boundary
+## Controlled review controller and historical validation boundary
 
 Explicit private grants select Ironcrest, mandatory knowledge and an accepted
 baseline before source/knowledge access. Historical grants retain their prior

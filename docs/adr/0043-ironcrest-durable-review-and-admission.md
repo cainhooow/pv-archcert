@@ -1,5 +1,11 @@
 # ADR 0043: Review before immutable execution admission
 
+Terminology: [ADR 0045](0045-roadmap-reconciliation.md) reconciles this work to M7 Asterwyn,
+M8 Greywatch and their durable lifecycle integration. `Ironcrest` in retained
+implementation identifiers and this document is a historical label. Canonical
+M6 Ironcrest (Artifact Binding, Reproducible Builds & Release Permit) remains
+PLANNED / NOT YET IMPLEMENTED. No security or compatibility semantics change.
+
 Status: Implemented: immutable journal, accepted-review recovery, transactional
 reviewed admission and durable controller/issuance composition. Final milestone
 validation and support limits are recorded separately.
@@ -151,13 +157,14 @@ Required validation includes real PostgreSQL races and immutable pin checks, all
 specified persistence crash checkpoints, cross-project/source/job/request replay,
 no duplicate accepted review, no accepted target rerun, legacy certificate vectors,
 Bottle rejection, semantic-blocker/no-certificate and authenticated successful
-source-to-certificate/offline verification. These checks passed for the controlled
-M6 development scope, including sixteen actual SIGKILL checkpoints, thirteen real
+source-to-certificate/offline verification. These checks passed for the historically
+labeled Ironcrest controlled development scope, including sixteen actual SIGKILL checkpoints, thirteen real
 PostgreSQL groups and offline verification after stopping PostgreSQL and OCI.
-M6 — Ironcrest — COMPLETE. Exact commands, evidence, the bounded historical
+These results do not complete canonical M6 or the full M7/M8 milestones.
+Exact commands, evidence, the bounded historical
 PostgreSQL clock anomaly investigation and remaining limitations are recorded in
-the intentionally untracked M6 working report. Existing exact Stoneward
-qualification is neither broadened nor used as proof of these new control-plane
+the intentionally untracked working report under its historical M6 filename.
+Existing exact Stoneward qualification is neither broadened nor used as proof of these new control-plane
 guarantees.
 
 ## Alternatives

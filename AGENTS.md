@@ -5,6 +5,15 @@ application/domain own business models and ports; adapters own HTTP, Protobuf,
 PostgreSQL, object storage, OCI and signing integrations. Read the current
 architecture snapshot, relevant ADRs and threat models before changing boundaries.
 
+## Canonical roadmap terminology
+
+Follow docs/adr/0045-roadmap-reconciliation.md. M6 Ironcrest means Artifact
+Binding, Reproducible Builds & Release Permit and remains planned. Knowledge and
+semantic review belong to M7 Asterwyn and M8 Greywatch, substantially implemented
+ahead of sequence pending formal milestone reconciliation. Existing `ironcrest`
+identifiers are historical implementation names; do not reinterpret durable bytes
+or claim milestone completion from their presence. Preserve historical commits.
+
 ## Git hygiene for every milestone
 
 One coherent, independently understandable engineering change is one commit.
