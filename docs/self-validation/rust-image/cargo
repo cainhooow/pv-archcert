@@ -5,10 +5,20 @@ import sys
 
 cargo_home = '/home/archcert/.cargo'
 os.makedirs(cargo_home, exist_ok=True)
-for directory in ['registry', 'advisory-dbs']:
+for directory in ['registry']:
     link = cargo_home + '/' + directory
     if not os.path.lexists(link):
         os.symlink('/opt/archcert/cargo/' + directory, link)
+
+# cargo-deny locks the advisory root even in frozen mode. Keep only that
+# operational lock directory writable; each pinned advisory repository stays ro.
+advisory_home = cargo_home + '/advisory-dbs'
+os.makedirs(advisory_home, exist_ok=True)
+for entry in os.scandir('/opt/archcert/cargo/advisory-dbs'):
+    if entry.is_dir():
+        link = advisory_home + '/' + entry.name
+        if not os.path.lexists(link):
+            os.symlink(entry.path, link)
 
 os.environ.update(CARGO_HOME=cargo_home, RUSTUP_HOME='/usr/local/rustup',
                   CARGO_TARGET_DIR='/work/target', CARGO_NET_OFFLINE='true',

@@ -12,7 +12,9 @@ home. Pack only those `registry/` and `advisory-dbs/` trees into
 Docker context imports. Advisory data must be readable without fetching under
 denied runtime network. Retain its exact Git revision, archive SHA-256 and cache
 inventory in the run evidence. The launcher keeps locks/global-cache state in
-writable sandbox Cargo home and links the read-only public registry/advisory trees.
+writable sandbox Cargo home. Its advisory root is writable for cargo-deny's frozen
+operation lock; individual pinned advisory repositories and the public registry
+remain links into read-only image data.
 
 Build with an independently provisioned rootless Docker daemon, publish to an
 explicit development registry and resolve the resulting repository@sha256 digest.
