@@ -39,6 +39,6 @@ working_directory = "/source"
 [[execution.commands]]
 name = "deny"
 program = "cargo"
-args = ["deny", "--disable-fetch", "check"]
+args = ["deny", "--frozen", "check"]
 evidence = "BUILD"
 working_directory = "/source"
