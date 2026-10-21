@@ -1,4 +1,5 @@
 //! Adversarial issuance, parser, canonical identity and offline verification tests.
+
 use archcert_application::{configuration::ProjectConfiguration, validation::*};
 use archcert_certificate::*;
 use archcert_crypto::{
@@ -11,6 +12,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{Value, json};
 use std::cell::Cell;
 type R<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
 struct Fixture {
     source: SourceSnapshot,
     plan: ValidationPlan,
@@ -19,6 +21,7 @@ struct Fixture {
     bundle: PolicyBundle,
     records: Vec<archcert_domain::execution::ExecutionEvidence>,
 }
+
 fn fixture() -> R<Fixture> {
     let source = SourceSnapshot::seal(
         serde_json::from_str::<ProjectId>("\"00000000-0000-4000-8000-000000000004\"")?,
@@ -52,6 +55,7 @@ fn fixture() -> R<Fixture> {
         })
     })
     .collect::<R<Vec<_>>>()?;
+
     let plan = authority.with_required_steps(required)?.resolve(None)?;
     let executions: Vec<_> = plan
         .steps()
@@ -62,6 +66,7 @@ fn fixture() -> R<Fixture> {
         })
         .collect();
     let mut observations = vec![];
+
     for (s, e) in plan.steps().iter().zip(&executions) {
         for (kind, fact) in [
             (
@@ -102,8 +107,10 @@ fn fixture() -> R<Fixture> {
             });
         }
     }
+
     use archcert_domain::{execution::*, materialization::WorkspaceId};
     let mut records = Vec::new();
+
     for (step, execution) in plan.steps().iter().zip(&executions) {
         let empty = CapturedStream {
             sha256: digest_bytes(b""),
@@ -145,6 +152,7 @@ fn fixture() -> R<Fixture> {
             outcome: ExecutionOutcome::Completed,
         });
     }
+
     Ok(Fixture {
         source,
         plan,
@@ -154,6 +162,7 @@ fn fixture() -> R<Fixture> {
         records,
     })
 }
+
 impl Fixture {
     fn evaluation(&self) -> R<PolicyEvaluation> {
         Ok(evaluate(
@@ -168,6 +177,7 @@ impl Fixture {
             },
         )?)
     }
+
     fn context(&self) -> IssuanceContext<'_> {
         IssuanceContext {
             source: &self.source,
@@ -179,6 +189,7 @@ impl Fixture {
             selected: self.bundle.identity(),
         }
     }
+
     fn draft(
         &self,
         e: Option<PolicyEvaluation>,
@@ -195,11 +206,13 @@ impl Fixture {
         )
     }
 }
+
 struct CountingSigner {
     key: SigningKey,
     count: Cell<usize>,
     mode: u8,
 }
+
 impl CountingSigner {
     fn new(seed: u8) -> Self {
         Self {
@@ -208,18 +221,22 @@ impl CountingSigner {
             mode: 0,
         }
     }
+
     fn public(&self) -> R<PublicKey> {
         Ok(PublicKey::from_bytes(self.key.verifying_key().to_bytes())?)
     }
 }
+
 impl CertificateSigner for CountingSigner {
     fn key_id(&self) -> SigningKeyId {
         PublicKey::from_bytes(self.key.verifying_key().to_bytes())
             .unwrap_or_else(|_| unreachable!("fixture key valid"))
             .key_id()
     }
+
     fn sign(&self, m: &[u8]) -> Result<DetachedSignature, SigningFailure> {
         self.count.set(self.count.get() + 1);
+
         match self.mode {
             1 => Err(SigningFailure::SigningFailed),
             2 => Ok(DetachedSignature::from_bytes([0; 64])),
@@ -227,6 +244,7 @@ impl CertificateSigner for CountingSigner {
         }
     }
 }
+
 fn issued(f: &Fixture, s: &CountingSigner) -> R<Value> {
     Ok(serde_json::from_slice(
         &f.draft(Some(f.evaluation()?), s.public()?)?
@@ -235,36 +253,49 @@ fn issued(f: &Fixture, s: &CountingSigner) -> R<Value> {
             .to_json()?,
     )?)
 }
+
 fn verified(v: &Value, key: &PublicKey) -> bool {
     CertificateEnvelope::read(serde_json::to_vec(v).unwrap_or_default().as_slice())
         .and_then(|c| c.verify(key))
         .is_ok()
 }
+
 fn refresh_digest(v: &mut Value) -> R {
     v["certificate_sha256"] = json!(digest_bytes(&canonical_bytes(&v["payload"])?).as_str());
+
     Ok(())
 }
+
 #[test]
 fn eligible_issues_only_after_signing_and_offline_verification() -> R {
     let f = fixture()?;
     let s = CountingSigner::new(7);
     let draft = f.draft(Some(f.evaluation()?), s.public()?)?;
+
     assert_eq!(s.count.get(), 0);
+
     let issued = draft.issue(&s)?;
+
     assert_eq!(s.count.get(), 1);
+
     let parsed = CertificateEnvelope::read(issued.envelope().to_json()?.as_slice())?;
+
     assert_eq!(parsed.verify(&s.public()?)?.report()["status"], "CERTIFIED");
     assert_eq!(issued.verification().report()["scope"], "EXACT_SOURCE");
+
     Ok(())
 }
+
 #[test]
 fn missing_ineligible_inconclusive_unknown_evaluations_never_invoke_signer() -> R {
     let f = fixture()?;
     let s = CountingSigner::new(7);
+
     assert!(matches!(
         f.draft(None, s.public()?),
         Err(CertificateError::MissingEvaluation)
     ));
+
     for disposition in [
         CertificationEligibility::NotEligible,
         CertificationEligibility::Inconclusive,
@@ -272,20 +303,25 @@ fn missing_ineligible_inconclusive_unknown_evaluations_never_invoke_signer() -> 
         let mut e = f.evaluation()?;
         e.eligibility = disposition;
         let attempt = f.draft(Some(e), s.public()?).and_then(|d| d.issue(&s));
+
         assert!(matches!(
             attempt,
             Err(CertificateError::EvaluationNotEligible)
         ));
     }
+
     let mut e = f.evaluation()?;
     e.schema = 2;
+
     assert!(matches!(
         f.draft(Some(e), s.public()?),
         Err(CertificateError::UnsupportedEvaluationSchema)
     ));
     assert_eq!(s.count.get(), 0);
+
     Ok(())
 }
+
 #[test]
 fn bottle_not_proven_cannot_invoke_signer() -> R {
     let mut f = fixture()?;
@@ -301,6 +337,7 @@ fn bottle_not_proven_cannot_invoke_signer() -> R {
     f.executions.clear();
     f.observations.clear();
     let e = f.evaluation()?;
+
     assert_eq!(e.eligibility, CertificationEligibility::NotEligible);
     assert_eq!(
         e.properties
@@ -321,14 +358,18 @@ fn bottle_not_proven_cannot_invoke_signer() -> R {
             .is_err()
     );
     assert_eq!(s.count.get(), 0);
+
     Ok(())
 }
+
 #[test]
 fn original_identity_and_recomputed_findings_gate_reject_post_evaluation_mutation() -> R {
     let f = fixture()?;
     let s = CountingSigner::new(7);
+
     for attack in 0..9 {
         let mut e = f.evaluation()?;
+
         match attack {
             0 => e.source.snapshot_sha256 = digest_bytes(b"substituted source"),
             1 => e.source.commit = GitObjectId::parse("c".repeat(40))?,
@@ -344,6 +385,7 @@ fn original_identity_and_recomputed_findings_gate_reject_post_evaluation_mutatio
             7 => e.blocking_findings.push(digest_bytes(b"invalid finding")),
             _ => e.properties.clear(),
         }
+
         assert!(
             f.draft(Some(e), s.public()?)
                 .and_then(|d| d.issue(&s))
@@ -351,31 +393,41 @@ fn original_identity_and_recomputed_findings_gate_reject_post_evaluation_mutatio
             "attack {attack}"
         );
     }
+
     assert_eq!(s.count.get(), 0);
+
     Ok(())
 }
+
 #[test]
 fn signing_failure_invalid_signature_and_wrong_signer_never_produce_certified() -> R {
     let f = fixture()?;
     let mut s = CountingSigner::new(7);
     s.mode = 1;
+
     assert!(matches!(
         f.draft(Some(f.evaluation()?), s.public()?)?.issue(&s),
         Err(CertificateError::Signing(SigningFailure::SigningFailed))
     ));
+
     s.mode = 2;
+
     assert!(matches!(
         f.draft(Some(f.evaluation()?), s.public()?)?.issue(&s),
         Err(CertificateError::VerificationFailed)
     ));
+
     let other = CountingSigner::new(8);
+
     assert!(matches!(
         f.draft(Some(f.evaluation()?), s.public()?)?.issue(&other),
         Err(CertificateError::SigningKeyMismatch)
     ));
     assert_eq!(other.count.get(), 0);
+
     Ok(())
 }
+
 #[test]
 fn every_signed_field_tamper_rejects_even_after_recomputing_digest() -> R {
     let f = fixture()?;
@@ -410,12 +462,15 @@ fn every_signed_field_tamper_rejects_even_after_recomputing_digest() -> R {
         "revocation",
         "signature_algorithm",
     ];
+
     for path in paths {
         let mut changed = original.clone();
         let mut field = &mut changed["payload"];
+
         for component in path.split('.') {
             field = &mut field[component];
         }
+
         *field = match field {
             Value::Number(n) => json!(n.as_u64().ok_or("number")? + 1),
             Value::Array(_) => json!(["c".repeat(64)]),
@@ -428,15 +483,20 @@ fn every_signed_field_tamper_rejects_even_after_recomputing_digest() -> R {
             }
             _ => return Err("unexpected field type".into()),
         };
+
         assert!(!verified(&changed, &key), "accepted tampering: {path}");
+
         refresh_digest(&mut changed)?;
+
         assert!(
             !verified(&changed, &key),
             "accepted tampering with rehashed digest: {path}"
         );
     }
+
     Ok(())
 }
+
 #[test]
 fn wrong_key_signature_digest_and_cross_certificate_substitutions_reject() -> R {
     let f = fixture()?;
@@ -444,18 +504,26 @@ fn wrong_key_signature_digest_and_cross_certificate_substitutions_reject() -> R 
     let b = CountingSigner::new(8);
     let va = issued(&f, &a)?;
     let vb = issued(&f, &b)?;
+
     assert!(!verified(&va, &b.public()?));
+
     for field in ["signature", "public_key", "certificate_sha256"] {
         let mut changed = va.clone();
         changed[field] = vb[field].clone();
+
         assert!(!verified(&changed, &a.public()?), "{field}");
     }
+
     let mut bad = va.clone();
     bad["signature"] = json!("00".repeat(64));
+
     assert!(!verified(&bad, &a.public()?));
+
     let mut bad = vb.clone();
     bad["signature"] = va["signature"].clone();
+
     assert!(!verified(&bad, &b.public()?));
+
     // Two meaningful source/evidence/evaluation instances under the SAME key.
     let mut other = fixture()?;
     other.source = SourceSnapshot::seal(
@@ -467,13 +535,17 @@ fn wrong_key_signature_digest_and_cross_certificate_substitutions_reject() -> R 
         1,
         1,
     )?;
+
     for o in &mut other.observations {
         o.source = other.source.identity().clone();
     }
+
     for record in &mut other.records {
         record.source = other.source.identity().clone();
     }
+
     let second = issued(&other, &a)?;
+
     for path in [
         "source",
         "evaluation_sha256",
@@ -482,28 +554,38 @@ fn wrong_key_signature_digest_and_cross_certificate_substitutions_reject() -> R 
     ] {
         let mut changed = second.clone();
         changed["payload"][path] = va["payload"][path].clone();
+
         if changed != second {
             refresh_digest(&mut changed)?;
+
             assert!(!verified(&changed, &a.public()?));
         }
     }
+
     Ok(())
 }
+
 #[test]
 fn strict_bounded_parser_rejects_unknown_duplicate_schema_algorithm_and_encodings() -> R {
     let f = fixture()?;
     let s = CountingSigner::new(7);
     let value = issued(&f, &s)?;
+
     for path in ["", "payload", "payload.source", "payload.policy"] {
         let mut changed = value.clone();
         let mut node = &mut changed;
+
         for key in path.split('.').filter(|s| !s.is_empty()) {
             node = &mut node[key];
         }
+
         node["unknown"] = json!(true);
+
         assert!(CertificateEnvelope::read(serde_json::to_vec(&changed)?.as_slice()).is_err());
     }
+
     let compact = serde_json::to_string(&value)?;
+
     for (key, literal) in [
         ("schema", "1"),
         ("commit", &format!("\"{}\"", "a".repeat(40))),
@@ -517,11 +599,13 @@ fn strict_bounded_parser_rejects_unknown_duplicate_schema_algorithm_and_encoding
             &format!("\"{key}\":{literal},\"{key}\":"),
             1,
         );
+
         assert!(
             CertificateEnvelope::read(duplicate.as_bytes()).is_err(),
             "duplicate {key}"
         );
     }
+
     for (path, replacement) in [
         ("schema", json!(2)),
         ("signature_algorithm", json!("Ed25519ph")),
@@ -533,11 +617,13 @@ fn strict_bounded_parser_rejects_unknown_duplicate_schema_algorithm_and_encoding
     ] {
         let mut changed = value.clone();
         changed["payload"][path] = replacement;
+
         assert!(
             CertificateEnvelope::read(serde_json::to_vec(&changed)?.as_slice()).is_err(),
             "{path}"
         );
     }
+
     for (field, encoding) in [
         ("signature", "0".repeat(127)),
         ("signature", "GG".repeat(64)),
@@ -547,18 +633,22 @@ fn strict_bounded_parser_rejects_unknown_duplicate_schema_algorithm_and_encoding
     ] {
         let mut changed = value.clone();
         changed[field] = json!(encoding);
+
         assert!(
             CertificateEnvelope::read(serde_json::to_vec(&changed)?.as_slice()).is_err(),
             "{field}"
         );
     }
+
     assert!(CertificateEnvelope::read(vec![b' '; MAX_CERTIFICATE_BYTES + 1].as_slice()).is_err());
     assert!(
         CertificateEnvelope::read(format!("{}{}", "[".repeat(200), "]".repeat(200)).as_bytes())
             .is_err()
     );
+
     Ok(())
 }
+
 #[test]
 fn draft_owns_all_signing_input_after_gate() -> R {
     let mut f = fixture()?;
@@ -573,14 +663,17 @@ fn draft_owns_all_signing_input_after_gate() -> R {
             .replace("version = \"1.0.0\"", "version = \"9.0.0\"")
             .as_bytes(),
     )?;
+
     assert_eq!(draft.certificate().bytes(), bytes);
     assert_eq!(draft.certificate().digest(), &digest);
     assert_eq!(
         draft.issue(&s)?.verification().report()["status"],
         "CERTIFIED"
     );
+
     Ok(())
 }
+
 #[test]
 fn observations_permutations_duplicates_and_audit_time_leave_identity_deterministic() -> R {
     let mut f = fixture()?;
@@ -588,38 +681,50 @@ fn observations_permutations_duplicates_and_audit_time_leave_identity_determinis
     let baseline = f.draft(Some(f.evaluation()?), s.public()?)?;
     let expected = baseline.certificate().bytes().to_vec();
     let manifest = baseline.manifest().canonical_bytes().to_vec();
+
     for rotation in 0..f.observations.len() {
         f.observations.rotate_left(rotation);
         let mut e = f.evaluation()?;
         e.evaluated_at = 10000;
         let other = f.draft(Some(e), s.public()?)?;
+
         assert_eq!(other.certificate().bytes(), expected);
         assert_eq!(other.manifest().canonical_bytes(), manifest);
     }
+
     f.observations.push(f.observations[0].clone());
     let other = f.draft(Some(f.evaluation()?), s.public()?)?;
+
     assert_eq!(other.certificate().bytes(), expected);
     assert_eq!(
         other.certificate().digest(),
         baseline.certificate().digest()
     );
+
     // JSON presentation and insertion order never enter the signing preimage.
     let issued = baseline.issue(&s)?;
     let v: Value = serde_json::from_slice(&issued.envelope().to_json()?)?;
+
     assert!(verified(&v, &s.public()?));
+
     let compact = serde_json::to_vec(&v)?;
+
     assert!(
         CertificateEnvelope::read(compact.as_slice())?
             .verify(&s.public()?)
             .is_ok()
     );
+
     Ok(())
 }
+
 #[test]
 fn manifest_rejects_unresolvable_observation_id_digest_or_finding_reference() -> R {
     let f = fixture()?;
+
     for attack in 0..3 {
         let mut e = f.evaluation()?;
+
         match attack {
             0 => e.properties[0]
                 .actual_evidence
@@ -649,16 +754,20 @@ fn manifest_rejects_unresolvable_observation_id_digest_or_finding_reference() ->
                 }],
             }),
         }
+
         assert!(EvidenceManifest::build(&e, &f.observations).is_err());
     }
+
     Ok(())
 }
+
 #[test]
 fn issuance_timestamp_changes_instance_identity_but_not_evaluation_or_evidence() -> R {
     let f = fixture()?;
     let s = CountingSigner::new(7);
     let e = f.evaluation()?;
     let a = f.draft(Some(e.clone()), s.public()?)?;
+
     let b = CertificateDraft::prepare(
         f.context(),
         Some(e.clone()),
@@ -668,13 +777,18 @@ fn issuance_timestamp_changes_instance_identity_but_not_evaluation_or_evidence()
         },
         s.public()?,
     )?;
+
     assert_ne!(a.certificate().digest(), b.certificate().digest());
     assert_eq!(a.manifest().digest(), b.manifest().digest());
+
     let mut other = e.clone();
     other.evaluated_at += 100;
+
     assert_eq!(evaluation_digest(&e)?, evaluation_digest(&other)?);
+
     Ok(())
 }
+
 #[test]
 fn target_config_cannot_select_signer_key_algorithm_or_authority() -> R {
     for field in [
@@ -698,6 +812,7 @@ fn target_config_cannot_select_signer_key_algorithm_or_authority() -> R {
             );
         }
     }
+
     Ok(())
 }
 
@@ -705,6 +820,7 @@ fn target_config_cannot_select_signer_key_algorithm_or_authority() -> R {
 fn fixed_openssl_python_vector_matches_bytes_digest_key_identity_and_signature() -> R {
     let value: Value = serde_json::from_slice(include_bytes!("fixtures/openssl-vector.json"))?;
     let canonical = canonical_bytes(&value["payload"])?;
+
     assert_eq!(
         canonical,
         include_bytes!("fixtures/openssl-vector.canonical.json")
@@ -713,12 +829,16 @@ fn fixed_openssl_python_vector_matches_bytes_digest_key_identity_and_signature()
         digest_bytes(&canonical).as_str(),
         include_str!("fixtures/openssl-vector.sha256").trim()
     );
+
     let key = PublicKey::from_hex(value["public_key"].as_str().ok_or("public key")?)?;
     let parsed =
         CertificateEnvelope::read(include_bytes!("fixtures/openssl-vector.json").as_slice())?;
+
     assert_eq!(parsed.verify(&key)?.report()["status"], "CERTIFIED");
+
     // Reject all 64 individual signature-byte flips against this independent vector.
     let original = value["signature"].as_str().ok_or("signature")?;
+
     for byte in 0..64 {
         let mut mutated = original.as_bytes().to_vec();
         mutated[byte * 2] = if mutated[byte * 2] == b'0' {
@@ -728,15 +848,19 @@ fn fixed_openssl_python_vector_matches_bytes_digest_key_identity_and_signature()
         };
         let mut altered = value.clone();
         altered["signature"] = json!(String::from_utf8(mutated)?);
+
         assert!(!verified(&altered, &key));
     }
+
     Ok(())
 }
+
 #[test]
 fn advisory_findings_are_signed_and_cannot_be_transplanted_between_certificates() -> R {
     fn advisory() -> R<Fixture> {
         let mut f = fixture()?;
         let mut text = String::new();
+
         for block in DEVELOPMENT_POLICY.split("[[properties]]") {
             let block = if block.contains("id = \"TEST_SUITE_COMPLETES\"") {
                 block
@@ -745,12 +869,16 @@ fn advisory_findings_are_signed_and_cannot_be_transplanted_between_certificates(
             } else {
                 block.into()
             };
+
             if !text.is_empty() {
                 text.push_str("[[properties]]");
             }
+
             text.push_str(&block);
         }
+
         f.bundle = PolicyBundle::read(text.as_bytes())?;
+
         for o in &mut f.observations {
             if o.id.step == "test" && o.id.kind == ObservationKind::ExecutionFinished {
                 o.fact = ObservationFact::ExecutionFinished {
@@ -760,6 +888,7 @@ fn advisory_findings_are_signed_and_cannot_be_transplanted_between_certificates(
                 };
             }
         }
+
         for record in &mut f.records {
             if record.command == f.plan.steps()[1].command().clone()
                 && record.execution == f.executions[1].execution
@@ -767,11 +896,14 @@ fn advisory_findings_are_signed_and_cannot_be_transplanted_between_certificates(
                 record.exit_code = Some(1);
             }
         }
+
         Ok(f)
     }
+
     let f = advisory()?;
     let s = CountingSigner::new(7);
     let first = issued(&f, &s)?;
+
     assert_eq!(
         first["payload"]["findings"]
             .as_array()
@@ -779,6 +911,7 @@ fn advisory_findings_are_signed_and_cannot_be_transplanted_between_certificates(
             .len(),
         1
     );
+
     let mut other = advisory()?;
     other.source = SourceSnapshot::seal(
         f.source.project(),
@@ -789,32 +922,49 @@ fn advisory_findings_are_signed_and_cannot_be_transplanted_between_certificates(
         1,
         1,
     )?;
+
     for o in &mut other.observations {
         o.source = other.source.identity().clone();
     }
+
     for record in &mut other.records {
         record.source = other.source.identity().clone();
     }
+
     let second = issued(&other, &s)?;
+
     for field in ["findings", "evidence_manifest_sha256", "evaluation_sha256"] {
         assert_ne!(first["payload"][field], second["payload"][field]);
+
         let mut changed = second.clone();
         changed["payload"][field] = first["payload"][field].clone();
         refresh_digest(&mut changed)?;
+
         assert!(!verified(&changed, &s.public()?));
     }
+
     // A validly referenced finding whose meaning/ID was edited fails re-evaluation.
     let mut evaluation = f.evaluation()?;
     evaluation.findings[0].id = digest_bytes(b"transplanted finding");
+
     assert!(matches!(
         f.draft(Some(evaluation), s.public()?),
         Err(CertificateError::InternalIntegrityFailure)
     ));
+
     Ok(())
 }
+
 #[test]
 fn restricted_canonical_strings_sorting_and_numeric_bounds_are_explicit() -> R {
-    let value = json!({"z":"é \"\\\n\t\u{0001}","a":{"b":true,"a":null}});
+    let value = json!({
+        "z": "é \"\\\n\t\u{0001}",
+        "a": {
+            "b": true,
+            "a": null
+        }
+    });
+
     assert_eq!(
         canonical_bytes(&value)?,
         "{\"a\":{\"a\":null,\"b\":true},\"z\":\"é \\\"\\\\\\n\\t\\u0001\"}".as_bytes()
@@ -822,6 +972,7 @@ fn restricted_canonical_strings_sorting_and_numeric_bounds_are_explicit() -> R {
     assert!(canonical_bytes(&json!({"é":1})).is_err());
     assert!(canonical_bytes(&json!(1.5)).is_err());
     assert!(canonical_bytes(&json!(9_007_199_254_740_992u64)).is_err());
+
     Ok(())
 }
 
@@ -844,17 +995,23 @@ fn reversed_json_object_order_and_whitespace_reconstruct_exact_signing_bytes() -
             _ => serde_json::to_string(v)?,
         })
     }
+
     let v: Value = serde_json::from_slice(include_bytes!("fixtures/openssl-vector.json"))?;
     let key = PublicKey::from_hex(v["public_key"].as_str().ok_or("key")?)?;
     let presentation = reversed(&v)?;
+
     assert_ne!(presentation, serde_json::to_string(&v)?);
+
     let verified = CertificateEnvelope::read(presentation.as_bytes())?.verify(&key)?;
+
     assert_eq!(
         verified.report()["certificate_sha256"],
         v["certificate_sha256"]
     );
+
     Ok(())
 }
+
 #[test]
 fn signing_does_not_claim_an_unobserved_isolation_level_under_minimal_policy() -> R {
     let mut f = fixture()?;
@@ -871,6 +1028,7 @@ fn signing_does_not_claim_an_unobserved_isolation_level_under_minimal_policy() -
     f.observations
         .retain(|o| o.id.kind != ObservationKind::EnvironmentEstablished);
     let e = f.evaluation()?;
+
     assert_eq!(
         e.eligibility,
         CertificationEligibility::EligibleForCertification
@@ -880,6 +1038,7 @@ fn signing_does_not_claim_an_unobserved_isolation_level_under_minimal_policy() -
         Err(CertificateError::EvidenceBindingMismatch)
     ));
     assert_eq!(s.count.get(), 0);
+
     Ok(())
 }
 
@@ -893,6 +1052,7 @@ fn detailed_log_mutation_changes_bundle_manifest_and_certificate_identity() -> R
     f.records[0].stdout.observed_bytes = f.records[0].stdout.excerpt.len() as u64;
     f.records[0].stdout.sha256 = digest_bytes(&f.records[0].stdout.excerpt);
     let changed = f.draft(Some(f.evaluation()?), s.public()?)?;
+
     assert_ne!(
         original.evidence_bundle().digest(),
         changed.evidence_bundle().digest()
@@ -903,34 +1063,44 @@ fn detailed_log_mutation_changes_bundle_manifest_and_certificate_identity() -> R
         changed.certificate().digest()
     );
     assert_eq!(evaluation_before, evaluation_digest(&f.evaluation()?)?);
+
     let baseline = changed.certificate().bytes().to_vec();
     f.records.reverse();
     let permuted = f.draft(Some(f.evaluation()?), s.public()?)?;
+
     assert_eq!(permuted.certificate().bytes(), baseline);
+
     Ok(())
 }
+
 #[test]
 fn detailed_records_must_reproduce_consumed_observations_before_signing() -> R {
     let s = CountingSigner::new(7);
+
     for attack in 0..4 {
         let mut f = fixture()?;
         let e = f.evaluation()?;
+
         match attack {
             0 => f.records.clear(),
             1 => f.records[0].exit_code = Some(1),
             2 => f.records[0].source.snapshot_sha256 = digest_bytes(b"wrong record source"),
             _ => f.records[0].command = f.records[1].command.clone(),
         }
+
         if attack == 3 {
             f.records[0].profile = "foreign-profile".into();
         }
+
         assert!(
             f.draft(Some(e), s.public()?)
                 .and_then(|d| d.issue(&s))
                 .is_err()
         );
     }
+
     assert_eq!(s.count.get(), 0);
+
     Ok(())
 }
 
@@ -947,6 +1117,7 @@ fn issued_certificate_resolves_the_exact_manifest_and_detailed_bundle() -> R {
     let certificate: Value = serde_json::from_slice(&issued.envelope().to_json()?)?;
     let manifest: Value = serde_json::from_slice(&manifest_bytes)?;
     let bundle: Value = serde_json::from_slice(&bundle_bytes)?;
+
     assert_eq!(canonical_bytes(&manifest)?, manifest_bytes);
     assert_eq!(canonical_bytes(&bundle)?, bundle_bytes);
     assert_eq!(
@@ -957,20 +1128,26 @@ fn issued_certificate_resolves_the_exact_manifest_and_detailed_bundle() -> R {
         manifest["evidence_bundle_sha256"],
         digest_bytes(&bundle_bytes).as_str()
     );
+
     for identity in ["source", "policy", "plan_sha256", "evaluation_sha256"] {
         assert_eq!(certificate["payload"][identity], manifest[identity]);
         assert_eq!(manifest[identity], bundle[identity]);
     }
+
     let mut observations = std::collections::BTreeMap::new();
+
     for o in bundle["observations"].as_array().ok_or("observations")? {
         observations.insert(digest_bytes(&canonical_bytes(o)?).as_str().to_owned(), o);
     }
+
     for reference in manifest["observations"].as_array().ok_or("references")? {
         let payload = observations
             .get(reference["sha256"].as_str().ok_or("digest")?)
             .ok_or("unresolved payload")?;
+
         assert_eq!(payload["id"], reference["id"]);
     }
+
     assert_eq!(
         bundle["execution_records"]
             .as_array()
@@ -979,6 +1156,7 @@ fn issued_certificate_resolves_the_exact_manifest_and_detailed_bundle() -> R {
         3
     );
     assert!(verified(&certificate, &signer.public()?));
+
     Ok(())
 }
 
@@ -1000,10 +1178,12 @@ fn forged_eligibility_cannot_issue_for_incomplete_external_source() -> R {
         1,
     )?;
     let key = PublicKey::from_bytes(SigningKey::from_bytes(&[7; 32]).verifying_key().to_bytes())?;
+
     assert!(matches!(
         f.draft(Some(e), key),
         Err(CertificateError::IncompleteSource)
     ));
+
     Ok(())
 }
 
@@ -1014,6 +1194,7 @@ fn ironcrest_manifest_extension_preserves_schema_one_and_binds_exact_roles() -> 
         ingress::{GitActorId, SourceSubmissionId},
         jobs::{JobId, PolicyPin},
     };
+
     let f = fixture()?;
     let evaluation = f.evaluation()?;
     let legacy = EvidenceManifest::build(&evaluation, &f.observations)?;
@@ -1075,6 +1256,7 @@ fn ironcrest_manifest_extension_preserves_schema_one_and_binds_exact_roles() -> 
     };
     let extended = legacy.with_ironcrest(&binding)?;
     let parsed: Value = serde_json::from_slice(extended.canonical_bytes())?;
+
     assert_eq!(parsed["schema"], 2);
     assert_eq!(
         parsed["deterministic_manifest_sha256"],
@@ -1086,17 +1268,21 @@ fn ironcrest_manifest_extension_preserves_schema_one_and_binds_exact_roles() -> 
     );
     assert_eq!(legacy.canonical_bytes(), retained);
     assert_ne!(legacy.digest(), extended.digest());
+
     for role in 0..8 {
         let mut changed = binding.clone();
         changed.roles[role].1.sha256 = digest_bytes(b"substitution");
+
         if role == 0 {
             assert!(legacy.with_ironcrest(&changed).is_err());
         } else {
             assert_ne!(legacy.with_ironcrest(&changed)?.digest(), extended.digest());
         }
     }
+
     for field in 0..5 {
         let mut changed = binding.clone();
+
         match field {
             0 => changed.roles.pop().map(|_| ()).ok_or("role")?,
             1 => changed.roles.swap(1, 2),
@@ -1104,26 +1290,34 @@ fn ironcrest_manifest_extension_preserves_schema_one_and_binds_exact_roles() -> 
             3 => changed.pin.policy.sha256 = digest_bytes(b"other-policy"),
             _ => changed.plan_sha256 = digest_bytes(b"other-plan"),
         }
+
         assert!(legacy.with_ironcrest(&changed).is_err());
     }
+
     assert!(extended.with_ironcrest(&binding).is_err());
+
     Ok(())
 }
+
 #[test]
 fn ironcrest_policy_cannot_use_legacy_preparation_without_review_evidence() -> R {
     let mut f = fixture()?;
     f.bundle = ironcrest_controlled_bundle()?;
     let mut forged = f.evaluation()?;
+
     assert_ne!(
         forged.eligibility,
         CertificationEligibility::EligibleForCertification
     );
+
     forged.eligibility = CertificationEligibility::EligibleForCertification;
     let signer = CountingSigner::new(47);
+
     assert!(matches!(
         f.draft(Some(forged), signer.public()?),
         Err(CertificateError::EvidenceBindingMismatch)
     ));
     assert_eq!(signer.count.get(), 0);
+
     Ok(())
 }

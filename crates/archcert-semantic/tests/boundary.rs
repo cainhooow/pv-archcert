@@ -1,4 +1,5 @@
 //! Deterministic semantic fixtures establish boundary behavior, not model quality.
+
 use archcert_application::{
     challenges::*, configuration::ProjectConfiguration, knowledge::*, semantic::*, validation::*,
 };
@@ -12,7 +13,9 @@ use archcert_domain::{
 use archcert_knowledge::RustSyntaxExtractor;
 use archcert_semantic::{ReplayReviewer, UnavailableReviewer};
 type R<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
 const POLICY: &[u8] = br#"{"policy":"controlled-test-only","schema":1}"#;
+
 fn source(project: ProjectId, bytes: &[u8]) -> R<SourceSnapshot> {
     Ok(SourceSnapshot::seal(
         project,
@@ -28,6 +31,7 @@ fn source(project: ProjectId, bytes: &[u8]) -> R<SourceSnapshot> {
         1700000000,
     )?)
 }
+
 fn bundle(project: ProjectId) -> R<AuthorityKnowledgeBundle> {
     Ok(AuthorityKnowledgeBundle::approve(
         "controlled-invariants".into(),
@@ -49,6 +53,7 @@ fn bundle(project: ProjectId) -> R<AuthorityKnowledgeBundle> {
         }],
     )?)
 }
+
 fn request_with(
     project: ProjectId,
     job: JobId,
@@ -59,17 +64,20 @@ fn request_with(
 ) -> R<SemanticReviewRequest> {
     let s = source(project, bytes)?;
     let bundles = vec![bundle(project)?];
+
     let k = KnowledgeEngine::new(
         vec![Box::new(RustSyntaxExtractor)],
         KnowledgeLimits::default(),
     )?
     .extract(&s, &bundles, None)?;
+
     let i = analyze_impact(&k, None)?;
     let policy = PolicyPin {
         id: "controlled-test-policy".into(),
         version: "1.0.0".into(),
         sha256: digest_bytes(POLICY),
     };
+
     Ok(SemanticReviewRequest::prepare(
         ReviewContext {
             job,
@@ -88,6 +96,7 @@ fn request_with(
         limits,
     )?)
 }
+
 fn request() -> R<SemanticReviewRequest> {
     request_with(
         ProjectId::new(),
@@ -98,6 +107,7 @@ fn request() -> R<SemanticReviewRequest> {
         &[],
     )
 }
+
 fn response(r: &SemanticReviewRequest) -> SemanticReviewResponse {
     SemanticReviewResponse {
         schema: 1,
@@ -107,6 +117,7 @@ fn response(r: &SemanticReviewRequest) -> SemanticReviewResponse {
         proposed_challenges: vec![],
     }
 }
+
 fn accept(r: &SemanticReviewRequest, s: SemanticReviewResponse) -> R<SemanticReviewArtifact> {
     Ok(SemanticReviewArtifact::accept(
         r,
@@ -118,17 +129,22 @@ fn accept(r: &SemanticReviewRequest, s: SemanticReviewResponse) -> R<SemanticRev
         1700000001,
     )?)
 }
+
 #[tokio::test]
 async fn replay_keeps_exact_accepted_bytes_metadata_and_bindings() -> R {
     let request = request()?;
     let bytes = serde_json::to_vec_pretty(&response(&request))?;
     let reviewer = ReplayReviewer::new(request.artifact().digest().clone(), bytes.clone())?;
+
     let a = SemanticReviewArtifact::accept(&request, reviewer.review(&request).await, 1700000001)?;
+
     assert_eq!(
         semantic_gate(&request, Some(&a)),
         SemanticGateDecision::Continue
     );
+
     let body: serde_json::Value = serde_json::from_slice(a.artifact().bytes())?;
+
     assert_eq!(
         serde_json::from_value::<Vec<u8>>(body["response_bytes"].clone())?,
         bytes
@@ -138,8 +154,10 @@ async fn replay_keeps_exact_accepted_bytes_metadata_and_bindings() -> R {
     assert_eq!(body["reported"]["model"], "authority-fixture-v1");
     assert_eq!(body["timestamp"], 1700000001);
     assert!(body["error"].is_null());
+
     Ok(())
 }
+
 #[test]
 fn injection_text_and_fake_certification_are_data_only() -> R {
     let payload =
@@ -156,6 +174,7 @@ fn injection_text_and_fake_certification_are_data_only() -> R {
         &[],
     )?;
     let body: serde_json::Value = serde_json::from_slice(r.artifact().bytes())?;
+
     assert_eq!(body["authority_contract"], AUTHORITY_REVIEW_CONTRACT);
     assert_eq!(body["external_source_disclosure"], false);
     assert_eq!(
@@ -168,6 +187,7 @@ fn injection_text_and_fake_certification_are_data_only() -> R {
         body["untrusted_repository_context"]["excerpts"][0]["classification"],
         "UNTRUSTED_REPOSITORY_DATA"
     );
+
     let fake = SemanticReviewArtifact::accept(
         &r,
         Ok(ReviewerOutput {
@@ -177,13 +197,16 @@ fn injection_text_and_fake_certification_are_data_only() -> R {
         }),
         1700000001,
     )?;
+
     assert_eq!(fake.error(), Some(SemanticReviewError::Malformed));
     assert_eq!(
         semantic_gate(&r, Some(&fake)),
         SemanticGateDecision::RequireMoreEvidence
     );
+
     Ok(())
 }
+
 #[test]
 fn project_cannot_select_provider_or_challenge_authority() -> R {
     for extra in [
@@ -194,18 +217,24 @@ fn project_cannot_select_provider_or_challenge_authority() -> R {
         "[baseline]\ncommit = 'convenient'",
     ] {
         let text = format!("schema = 1\n[project]\nname = 'hostile'\n{extra}\n");
+
         assert!(ProjectConfiguration::parse(&text).is_err());
     }
+
     Ok(())
 }
+
 #[test]
 fn semantic_blocker_vetoes_and_clear_adds_no_policy_verdict() -> R {
     let r = request()?;
+
     let clear = accept(&r, response(&r))?;
+
     assert_eq!(
         semantic_gate(&r, Some(&clear)),
         SemanticGateDecision::Continue
     );
+
     let mut blocked = response(&r);
     blocked.items.push(SemanticItem {
         id: "concern-1".into(),
@@ -213,18 +242,26 @@ fn semantic_blocker_vetoes_and_clear_adds_no_policy_verdict() -> R {
         text: "A replay can create duplicate final ledger entries".into(),
         related_authority_ids: vec!["controlled-test-policy".into()],
     });
+
     let a = accept(&r, blocked)?;
+
     assert_eq!(semantic_gate(&r, Some(&a)), SemanticGateDecision::Block);
+
     let body: serde_json::Value = serde_json::from_slice(clear.artifact().bytes())?;
+
     assert!(body.get("properties").is_none());
     assert!(body.get("eligibility").is_none());
     assert!(body.get("certificate").is_none());
+
     Ok(())
 }
+
 #[tokio::test]
 async fn unavailable_default_has_no_external_fallback_and_fails_closed() -> R {
     let r = request()?;
+
     let a = SemanticReviewArtifact::accept(&r, UnavailableReviewer.review(&r).await, 1700000001)?;
+
     assert_eq!(a.error(), Some(SemanticReviewError::Unavailable));
     assert_eq!(
         semantic_gate(&r, Some(&a)),
@@ -234,11 +271,14 @@ async fn unavailable_default_has_no_external_fallback_and_fails_closed() -> R {
         semantic_gate(&r, None),
         SemanticGateDecision::RequireMoreEvidence
     );
+
     Ok(())
 }
+
 #[test]
 fn all_classified_provider_failures_are_persisted_and_cannot_continue() -> R {
     let r = request()?;
+
     for failure in [
         SemanticReviewError::Timeout,
         SemanticReviewError::Malformed,
@@ -250,23 +290,30 @@ fn all_classified_provider_failures_are_persisted_and_cannot_continue() -> R {
         SemanticReviewError::ProviderCrash,
     ] {
         let a = SemanticReviewArtifact::accept(&r, Err(failure), 1700000001)?;
+
         assert_eq!(a.error(), Some(failure));
         assert_eq!(
             semantic_gate(&r, Some(&a)),
             SemanticGateDecision::RequireMoreEvidence
         );
+
         let restored =
             SemanticReviewArtifact::restore(&r, a.artifact().bytes(), a.artifact().digest())?;
+
         assert_eq!(restored.error(), Some(failure));
     }
+
     Ok(())
 }
+
 #[test]
 fn malformed_duplicate_oversized_invalid_encoding_metadata_and_truncation_reject() -> R {
     let r = request()?;
-    let unsupported: ReviewerSelection = serde_json::from_value(
-        serde_json::json!({"adapter":"archcert-semantic-replay","version":"1.0.0","model":"unsupported-model"}),
-    )?;
+    let unsupported: ReviewerSelection = serde_json::from_value(serde_json::json!({
+        "adapter": "archcert-semantic-replay",
+        "version": "1.0.0",
+        "model": "unsupported-model"
+    }))?;
     let cases = vec![
         (
             b"not json".to_vec(),
@@ -305,6 +352,7 @@ fn malformed_duplicate_oversized_invalid_encoding_metadata_and_truncation_reject
             SemanticReviewError::Truncated,
         ),
     ];
+
     for (bytes, truncated, reported, error) in cases {
         let a = SemanticReviewArtifact::accept(
             &r,
@@ -315,19 +363,23 @@ fn malformed_duplicate_oversized_invalid_encoding_metadata_and_truncation_reject
             }),
             1700000001,
         )?;
+
         assert_eq!(a.error(), Some(error));
         assert_eq!(
             semantic_gate(&r, Some(&a)),
             SemanticGateDecision::RequireMoreEvidence
         );
     }
+
     Ok(())
 }
+
 #[test]
 fn cross_source_project_job_and_knowledge_replay_reject() -> R {
     let p = ProjectId::new();
     let job = JobId::new();
     let a = request_with(p, job, b"fn a() {}", SemanticLimits::default(), &[], &[])?;
+
     let accepted = accept(&a, response(&a))?;
     let other = [
         request_with(p, job, b"fn b() {}", SemanticLimits::default(), &[], &[])?,
@@ -348,6 +400,7 @@ fn cross_source_project_job_and_knowledge_replay_reject() -> R {
             &[],
         )?,
     ];
+
     for b in other {
         assert_eq!(
             accept(&b, response(&a))?.error(),
@@ -366,22 +419,27 @@ fn cross_source_project_job_and_knowledge_replay_reject() -> R {
             SemanticGateDecision::RequireMoreEvidence
         );
     }
+
     Ok(())
 }
+
 #[test]
 fn request_refuses_wrong_source_knowledge_policy_or_foreign_bundle() -> R {
     let p = ProjectId::new();
     let s = source(p, b"fn a() {}")?;
     let foreign = source(p, b"fn b() {}")?;
     let bundles = vec![bundle(p)?];
+
     let k =
         KnowledgeEngine::new(vec![], KnowledgeLimits::default())?.extract(&s, &bundles, None)?;
+
     let i = analyze_impact(&k, None)?;
     let policy = PolicyPin {
         id: "test".into(),
         version: "1".into(),
         sha256: digest_bytes(POLICY),
     };
+
     for (snapshot, authority, bytes) in [
         (&foreign, vec![bundle(p)?], POLICY),
         (&s, vec![bundle(ProjectId::new())?], POLICY),
@@ -400,6 +458,7 @@ fn request_refuses_wrong_source_knowledge_policy_or_foreign_bundle() -> R {
             observations: &[],
             claims: &[],
         };
+
         assert!(
             SemanticReviewRequest::prepare(
                 context,
@@ -409,8 +468,10 @@ fn request_refuses_wrong_source_knowledge_policy_or_foreign_bundle() -> R {
             .is_err()
         );
     }
+
     Ok(())
 }
+
 #[tokio::test]
 async fn context_truncation_partial_response_and_explicit_blind_spot_never_continue() -> R {
     let limits = SemanticLimits {
@@ -425,18 +486,22 @@ async fn context_truncation_partial_response_and_explicit_blind_spot_never_conti
         &[],
         &[],
     )?;
+
     assert!(!truncated.context_complete());
+
     // Historical schema-1 requests retain their accepted-review/recovery behavior.
     // Their gate still blocks incomplete context, regardless of provider CLEAR.
     let replay = ReplayReviewer::new(
         truncated.artifact().digest().clone(),
         serde_json::to_vec(&response(&truncated))?,
     )?;
+
     let reviewed = SemanticReviewArtifact::accept(
         &truncated,
         review_with_byte_bound(&truncated, &replay, truncated.limits().request_bytes).await,
         1700000001,
     )?;
+
     assert!(reviewed.error().is_none());
     assert_eq!(
         semantic_gate(&truncated, Some(&reviewed)),
@@ -446,13 +511,16 @@ async fn context_truncation_partial_response_and_explicit_blind_spot_never_conti
         semantic_gate(&truncated, Some(&accept(&truncated, response(&truncated))?)),
         SemanticGateDecision::RequireMoreEvidence
     );
+
     let r = request()?;
     let mut partial = response(&r);
     partial.complete = false;
+
     assert_eq!(
         semantic_gate(&r, Some(&accept(&r, partial)?)),
         SemanticGateDecision::RequireMoreEvidence
     );
+
     let mut blind = response(&r);
     blind.items.push(SemanticItem {
         id: "blind-1".into(),
@@ -460,15 +528,19 @@ async fn context_truncation_partial_response_and_explicit_blind_spot_never_conti
         text: "Runtime locking relationship unresolved".into(),
         related_authority_ids: vec![],
     });
+
     assert_eq!(
         semantic_gate(&r, Some(&accept(&r, blind)?)),
         SemanticGateDecision::RequireMoreEvidence
     );
+
     Ok(())
 }
+
 #[test]
 fn semantic_cannot_construct_deterministic_proof_or_runtime_authority() -> R {
     let r = request()?;
+
     for extra in [
         "properties",
         "eligibility",
@@ -486,6 +558,7 @@ fn semantic_cannot_construct_deterministic_proof_or_runtime_authority() -> R {
     ] {
         let mut raw = serde_json::to_value(response(&r))?;
         raw[extra] = serde_json::json!("PROVEN");
+
         let a = SemanticReviewArtifact::accept(
             &r,
             Ok(ReviewerOutput {
@@ -495,8 +568,10 @@ fn semantic_cannot_construct_deterministic_proof_or_runtime_authority() -> R {
             }),
             1700000001,
         )?;
+
         assert_eq!(a.error(), Some(SemanticReviewError::Malformed));
     }
+
     for extra in [
         "shell",
         "image",
@@ -506,11 +581,23 @@ fn semantic_cannot_construct_deterministic_proof_or_runtime_authority() -> R {
         "command",
         "credentials",
     ] {
-        let raw = serde_json::json!({"id":"proposal","challenge_template_id":IDEMPOTENCY_TEMPLATE,"parameters":{"repetitions":3},"reason":"Replay concern","related_authority_id":"controlled-test-policy",(extra):"escalation"});
+        let raw = serde_json::json!({
+            "id": "proposal",
+            "challenge_template_id": IDEMPOTENCY_TEMPLATE,
+            "parameters": {
+                "repetitions": 3
+            },
+            "reason": "Replay concern",
+            "related_authority_id": "controlled-test-policy",
+            (extra):"escalation"
+        });
+
         assert!(serde_json::from_value::<ChallengeProposal>(raw).is_err());
     }
+
     Ok(())
 }
+
 #[test]
 fn claims_can_be_contradicted_without_becoming_authority() -> R {
     let p = ProjectId::new();
@@ -553,6 +640,7 @@ fn claims_can_be_contradicted_without_becoming_authority() -> R {
         &claims,
     )?;
     let body: serde_json::Value = serde_json::from_slice(r.artifact().bytes())?;
+
     assert_eq!(
         body["untrusted_repository_context"]["claims"][0]["contradicting_evidence"]
             .as_array()
@@ -564,8 +652,10 @@ fn claims_can_be_contradicted_without_becoming_authority() -> R {
         body["untrusted_repository_context"]["claims"][1]["unverified"],
         true
     );
+
     Ok(())
 }
+
 #[test]
 fn replayed_false_green_test_concern_is_inference_and_can_veto() -> R {
     let r = request_with(
@@ -580,22 +670,32 @@ fn replayed_false_green_test_concern_is_inference_and_can_veto() -> R {
     s.items.push(SemanticItem {id:"false-green".into(),kind:SemanticItemKind::BlockingConcern,
         text:"The test is tautological and lacks a final ledger-state assertion; this semantic concern is not mechanically proven".into(),
         related_authority_ids:vec![r.authority_ids().iter().find(|id|id.contains("PAYMENT-001")).ok_or("invariant")?.clone()]});
+
     let a = accept(&r, s)?;
+
     assert_eq!(semantic_gate(&r, Some(&a)), SemanticGateDecision::Block);
+
     Ok(())
 }
+
 #[test]
 fn accepted_response_restore_is_exact_and_does_not_require_provider() -> R {
     let r = request()?;
+
     let a = accept(&r, response(&r))?;
     let restored =
         SemanticReviewArtifact::restore(&r, a.artifact().bytes(), a.artifact().digest())?;
+
     assert_eq!(restored.artifact().bytes(), a.artifact().bytes());
+
     let mut tampered = a.artifact().bytes().to_vec();
     tampered[0] = b'[';
+
     assert!(SemanticReviewArtifact::restore(&r, &tampered, a.artifact().digest()).is_err());
+
     Ok(())
 }
+
 fn base_plan() -> R<(AuthorityConfiguration, ValidationPlan)> {
     let authority = AuthorityConfiguration::development(vec![(
         "python".into(),
@@ -611,17 +711,22 @@ fn base_plan() -> R<(AuthorityConfiguration, ValidationPlan)> {
         )?,
         evidence: EvidenceCategory::Test,
     }])?;
+
     let plan = authority.resolve(None)?;
+
     Ok((authority, plan))
 }
+
 #[test]
 fn authority_challenges_add_to_all_mandatory_steps_and_bind_private_test_identity() -> R {
     let r = request()?;
+
     let a = accept(&r, response(&r))?;
     let registry = AuthorityChallengeRegistry::controlled()?;
     let (authority, base) = base_plan()?;
     let challenges = registry.plan(&r, &a, authority.profile("python")?)?;
     let extended = challenges.extend_authority_plan(&base)?;
+
     assert_eq!(extended.steps().len(), base.steps().len() + 1);
     assert_eq!(extended.steps()[0].id(), base.steps()[0].id());
     assert_eq!(extended.steps()[1].id(), IDEMPOTENCY_STEP);
@@ -640,13 +745,16 @@ fn authority_challenges_add_to_all_mandatory_steps_and_bind_private_test_identit
         base.steps()[0].profile().image()
     );
     assert_eq!(challenges.challenges().len(), 1);
+
     Ok(())
 }
+
 #[test]
 fn unknown_or_out_of_bounds_challenge_proposals_reject_and_block_cannot_execute() -> R {
     let r = request()?;
     let (authority, _) = base_plan()?;
     let registry = AuthorityChallengeRegistry::controlled()?;
+
     for (template, repetitions) in [
         ("unknown-template", 3),
         (IDEMPOTENCY_TEMPLATE, 1),
@@ -660,11 +768,16 @@ fn unknown_or_out_of_bounds_challenge_proposals_reject_and_block_cannot_execute(
             reason: "Check replay".into(),
             related_authority_id: "controlled-test-policy".into(),
         });
+
         let a = accept(&r, s)?;
+
         assert!(registry.plan(&r, &a, authority.profile("python")?).is_err());
     }
+
     let a = SemanticReviewArtifact::accept(&r, Err(SemanticReviewError::Unavailable), 1700000001)?;
+
     assert!(registry.plan(&r, &a, authority.profile("python")?).is_err());
+
     Ok(())
 }
 
@@ -674,20 +787,24 @@ fn same_source_review_cannot_replay_across_knowledge_policy_or_authority_profile
     let job = JobId::new();
     let snapshot = source(project, b"pub fn settle() {}")?;
     let bundles = vec![bundle(project)?];
+
     let prepare = |rust: bool, policy_id: &str, profile: &[u8]| -> R<SemanticReviewRequest> {
         let extractors: Vec<Box<dyn KnowledgeExtractor>> = if rust {
             vec![Box::new(RustSyntaxExtractor)]
         } else {
             vec![]
         };
+
         let knowledge = KnowledgeEngine::new(extractors, KnowledgeLimits::default())?
             .extract(&snapshot, &bundles, None)?;
+
         let impact = analyze_impact(&knowledge, None)?;
         let policy = PolicyPin {
             id: policy_id.into(),
             version: "1".into(),
             sha256: digest_bytes(POLICY),
         };
+
         Ok(SemanticReviewRequest::prepare(
             ReviewContext {
                 job,
@@ -706,8 +823,11 @@ fn same_source_review_cannot_replay_across_knowledge_policy_or_authority_profile
             SemanticLimits::default(),
         )?)
     };
+
     let original = prepare(true, "policy-a", b"profile-a")?;
+
     let accepted = accept(&original, response(&original))?;
+
     for changed in [
         prepare(false, "policy-a", b"profile-a")?,
         prepare(true, "policy-b", b"profile-a")?,
@@ -727,5 +847,6 @@ fn same_source_review_cannot_replay_across_knowledge_policy_or_authority_profile
             .is_err()
         );
     }
+
     Ok(())
 }

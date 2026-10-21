@@ -1,4 +1,5 @@
 //! Worker protocol rejection and compatibility across the real process contract.
+
 use archcert_application::worker::*;
 use archcert_domain::{
     GitObjectId, ProjectId, SourceIdentity,
@@ -42,12 +43,17 @@ fn pinned_assignments_roundtrip_and_reject_mutable_or_missing_inputs()
         source_artifact: b"snapshot codec is independently verified by the worker".to_vec(),
     };
     let bytes = encode_assignment(&assignment)?;
+
     let decoded = decode_assignment(&bytes)?;
+
     assert_eq!(decoded.inputs, assignment.inputs);
     assert_eq!(decoded.attempt, assignment.attempt);
+
     let original = p::WorkerAssignment::decode(bytes.as_slice())?;
+
     for variant in 0..5 {
         let mut w = original.clone();
+
         match variant {
             0 => w.contract_version = 0,
             1 => w.image = "python:latest".into(),
@@ -55,14 +61,18 @@ fn pinned_assignments_roundtrip_and_reject_mutable_or_missing_inputs()
             3 => w.plan_sha256 = None,
             _ => w.maximum_attempts = 999,
         };
+
         assert!(decode_assignment(&w.encode_to_vec()).is_err());
     }
+
     let mut additive = bytes;
     additive.extend([0xa0, 0x06, 1]);
+
     assert_eq!(decode_assignment(&additive)?.inputs, assignment.inputs);
     assert!(decode_assignment(&[]).is_err());
     assert!(decode_result(&[]).is_err());
     assert!(decode_result(&[255]).is_err());
+
     let result = WorkerResult {
         schema: 1,
         job: assignment.job,
@@ -72,21 +82,33 @@ fn pinned_assignments_roundtrip_and_reject_mutable_or_missing_inputs()
         producer: "archcert-worker-v1/0.1.0".into(),
         steps: vec![],
     };
+
     assert!(
         result
             .validate(assignment.job, assignment.attempt, &assignment.inputs)
             .is_err()
     );
+
     let roundtrip = decode_result(&encode_result(&result)?)?;
+
     assert_eq!(roundtrip.job, result.job);
+
     let mut w = p::WorkerResult::decode(encode_result(&result)?.as_slice())?;
     w.contract_version = 2;
+
     assert!(decode_result(&w.encode_to_vec()).is_err());
+
     Ok(())
 }
+
 #[test]
 fn operational_command_deserialization_cannot_bypass_constructor() {
-    let malformed = serde_json::json!({"program":"python","args":[],"working_directory":"/etc"});
+    let malformed = serde_json::json!({
+        "program": "python",
+        "args": [],
+        "working_directory": "/etc"
+    });
+
     assert!(
         serde_json::from_value::<archcert_domain::execution::ExecutionCommand>(malformed).is_err()
     );

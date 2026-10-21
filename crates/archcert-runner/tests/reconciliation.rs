@@ -1,5 +1,6 @@
 //! Native-capable opt-in runtime recovery tests; no database/signing authority.
 #![cfg(unix)]
+
 use archcert_application::jobs::{RuntimeBinding, RuntimeCleanupState};
 use archcert_domain::{
     execution::ExecutionId,
@@ -19,12 +20,14 @@ struct Fixture {
     images: Vec<String>,
     binding: RuntimeBinding,
 }
+
 impl Fixture {
     fn new() -> Result<Self> {
         let cli: PathBuf = std::env::var("ARCHCERT_TEST_DOCKER")?.into();
         let endpoint = std::env::var("ARCHCERT_TEST_ENDPOINT")?;
         let config = tempfile::tempdir()?;
         let root = tempfile::tempdir()?;
+
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700))?;
         let runtime = DockerRuntime::new(cli.clone(), endpoint.clone())?;
@@ -34,6 +37,7 @@ impl Fixture {
             daemon_id: observed.runtime_information["ID"].clone(),
             gate_root: root.path().canonicalize()?.to_string_lossy().into(),
         };
+
         Ok(Self {
             cli,
             endpoint,
@@ -45,6 +49,7 @@ impl Fixture {
             binding,
         })
     }
+
     fn call(&self, args: &[&str]) -> Result<String> {
         let out = Command::new(&self.cli)
             .env_clear()
@@ -55,6 +60,7 @@ impl Fixture {
             .arg(&self.endpoint)
             .args(args)
             .output()?;
+
         if !out.status.success() {
             return Err(format!(
                 "fixture runtime command failed: {}",
@@ -62,8 +68,10 @@ impl Fixture {
             )
             .into());
         }
+
         Ok(String::from_utf8(out.stdout)?.trim().to_owned())
     }
+
     fn create(
         &mut self,
         job: JobId,
@@ -101,9 +109,11 @@ impl Fixture {
             "--log-driver=none",
             "--entrypoint=python3",
         ];
+
         for label in &labels {
             args.extend(["--label", label]);
         }
+
         args.extend([
             image,
             "-c",
@@ -111,15 +121,18 @@ impl Fixture {
         ]);
         self.containers.push(name.clone());
         self.call(&args)?;
+
         Ok(name)
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         // Exact random fixture handles only; never selects arbitrary runtime state.
         for container in &self.containers {
             let _ = self.call(&["container", "rm", "--force", "--volumes", container]);
         }
+
         for image in &self.images {
             let _ = self.call(&["image", "rm", image]);
         }
@@ -143,6 +156,7 @@ fn owned_orphans_are_fenced_wrong_attempts_reject_and_image_cleanup_retries() ->
     f.call(&["container", "commit", &prep, &image])?;
     let target = f.create(job, attempt, execution, false, &image)?;
     f.call(&["container", "start", &target])?;
+
     assert_eq!(
         f.call(&[
             "container",
@@ -154,12 +168,15 @@ fn owned_orphans_are_fenced_wrong_attempts_reject_and_image_cleanup_retries() ->
         "true"
     );
     assert!(f.runtime.reconcile_attempt(job, attempt, &gate).is_err());
+
     gate.revoke()?;
+
     assert!(
         f.runtime
             .reconcile_attempt(job, AttemptId::new(), &gate)
             .is_err()
     );
+
     let foreign = f.create(
         JobId::new(),
         AttemptId::new(),
@@ -167,13 +184,16 @@ fn owned_orphans_are_fenced_wrong_attempts_reject_and_image_cleanup_retries() ->
         false,
         &image,
     )?;
+
     // A foreign reference blocks image removal. It must not be removed to make cleanup pass.
     assert!(f.runtime.reconcile_attempt(job, attempt, &gate).is_err());
     assert!(
         !f.call(&["container", "inspect", "--format", "{{.Id}}", &foreign])?
             .is_empty()
     );
+
     f.call(&["container", "rm", "--force", "--volumes", &foreign])?;
+
     assert_eq!(
         f.runtime.reconcile_attempt(job, attempt, &gate)?,
         RuntimeCleanupState::Succeeded
@@ -185,6 +205,7 @@ fn owned_orphans_are_fenced_wrong_attempts_reject_and_image_cleanup_retries() ->
             .any(|o| o.job == Some(job) && o.attempt == Some(attempt))
     );
     assert!(gate.authorize().is_err());
+
     Ok(())
 }
 
@@ -201,11 +222,13 @@ fn empty_inventory_does_not_clear_uncertain_creation() -> Result {
     drop(gate);
     let mut gate = gates.lock(job, attempt)?;
     gate.revoke()?;
+
     assert_eq!(
         f.runtime.reconcile_attempt(job, attempt, &gate)?,
         RuntimeCleanupState::Blocked
     );
     assert!(gate.authorize().is_err());
+
     Ok(())
 }
 
@@ -235,8 +258,10 @@ fn unknown_archcert_labels_are_retained() -> Result {
         .into_iter()
         .find(|o| o.id == id)
         .ok_or("unknown object was silently omitted")?;
+
     assert!(!object.owned);
     assert!(object.job.is_none());
     assert!(object.attempt.is_none());
+
     Ok(())
 }

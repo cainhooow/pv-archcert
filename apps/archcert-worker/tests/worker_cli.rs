@@ -1,4 +1,5 @@
 //! The execution process rejects substituted source before runtime access.
+
 use archcert_application::worker::*;
 use archcert_domain::{GitObjectId, ProjectId, ingress::*, jobs::*, source::*};
 use std::io::Write;
@@ -16,10 +17,13 @@ fn doctor_fails_closed_without_a_runtime_and_reads_no_assignment()
         ])
         .stdin(std::process::Stdio::null())
         .output()?;
+
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
+
     Ok(())
 }
+
 #[test]
 fn doctor_reports_observed_identity_without_authority_environment()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -51,6 +55,7 @@ else:
 "#,
     )?;
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
+
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_archcert-worker"))
         .env_clear()
         .env("ARCHCERT_DATABASE_URL", "credential-canary")
@@ -60,16 +65,21 @@ else:
         .args(["--endpoint", &endpoint, "doctor"])
         .stdin(std::process::Stdio::null())
         .output()?;
+
     assert!(output.status.success(), "{:?}", output.stderr);
+
     let observed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+
     assert_eq!(
         observed["runtime_information"]["authority/endpoint"],
         endpoint
     );
     assert_eq!(observed["runtime_information"]["ID"], "test-daemon");
     assert!(!String::from_utf8(output.stdout)?.contains("canary"));
+
     Ok(())
 }
+
 #[test]
 fn substituted_source_never_reaches_runtime() -> Result<(), Box<dyn std::error::Error>> {
     let profile = "python";
@@ -131,8 +141,10 @@ fn substituted_source_never_reaches_runtime() -> Result<(), Box<dyn std::error::
         &archcert_protocol::protobuf::worker::encode_assignment(&assignment)?,
     )?;
     let output = child.wait_with_output()?;
+
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("assignment source binding mismatch"));
+
     Ok(())
 }

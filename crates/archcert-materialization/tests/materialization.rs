@@ -37,18 +37,21 @@ struct Fixture {
     root: std::path::PathBuf,
     materializer: UnixSourceMaterializer,
 }
+
 impl Fixture {
     fn new() -> Result<Self, Box<dyn StdError>> {
         let temporary = tempfile::tempdir()?;
         let root = temporary.path().canonicalize()?;
         fs::set_permissions(&root, Permissions::from_mode(0o700))?;
         let materializer = UnixSourceMaterializer::new(AuthorityWorkspaceRoot::open(&root)?);
+
         Ok(Self {
             _temporary: temporary,
             root,
             materializer,
         })
     }
+
     fn begin(
         &self,
         snapshot: &SourceSnapshot,
@@ -56,6 +59,7 @@ impl Fixture {
         self.materializer.begin(snapshot, &request(snapshot))
     }
 }
+
 fn source(entries: &[(&str, SourceMode, &[u8])]) -> Result<SourceSnapshot, Box<dyn StdError>> {
     let files = entries
         .iter()
@@ -67,6 +71,7 @@ fn source(entries: &[(&str, SourceMode, &[u8])]) -> Result<SourceSnapshot, Box<d
             ))
         })
         .collect::<Result<Vec<_>, archcert_domain::source::SourceError>>()?;
+
     Ok(SourceSnapshot::seal(
         ProjectId::new(),
         RepositoryId::parse("test/source")?,
@@ -77,6 +82,7 @@ fn source(entries: &[(&str, SourceMode, &[u8])]) -> Result<SourceSnapshot, Box<d
         1,
     )?)
 }
+
 fn request(snapshot: &SourceSnapshot) -> MaterializationRequest {
     MaterializationRequest {
         snapshot: SnapshotReference {
@@ -87,12 +93,14 @@ fn request(snapshot: &SourceSnapshot) -> MaterializationRequest {
         limits: MaterializationLimits::default(),
     }
 }
+
 fn rejected<T>(
     result: Result<T, MaterializationFailure>,
 ) -> Result<MaterializationFailure, Box<dyn StdError>> {
     let Err(failure) = result else {
         return Err("unsafe materialization succeeded".into());
     };
+
     assert!(
         failure
             .events
@@ -105,6 +113,7 @@ fn rejected<T>(
             .iter()
             .any(|e| matches!(e, MaterializationEvent::RunnerInputIssued(_)))
     );
+
     Ok(failure)
 }
 
@@ -120,10 +129,12 @@ fn text_binary_empty_nested_executable_unicode_and_symlink_round_trip() -> TestR
         ("résumé.txt", File, b"Unicode name"),
         ("link", Symlink, b"../../outside"),
     ])?;
+
     let result = fixture
         .materializer
         .prepare(&snapshot, &request(&snapshot))?;
     let path = result.cleanup.location().as_path();
+
     assert_eq!(fs::read(path.join("text"))?, b"hello\n");
     assert_eq!(fs::read(path.join("binary"))?, [0, 255, 128]);
     assert_eq!(fs::read(path.join("empty"))?, b"");
@@ -154,7 +165,9 @@ fn text_binary_empty_nested_executable_unicode_and_symlink_round_trip() -> TestR
         result.runner_input.expected_source_identity(),
         snapshot.identity()
     );
+
     result.runner_input.source().directory_fd()?;
+
     assert!(matches!(
         result.events.as_slice(),
         [
@@ -164,7 +177,9 @@ fn text_binary_empty_nested_executable_unicode_and_symlink_round_trip() -> TestR
             MaterializationEvent::RunnerInputIssued(_)
         ]
     ));
+
     let receipt = result.cleanup.destroy()?;
+
     assert_eq!(receipt.status, MaterializationState::Destroyed);
     assert!(matches!(
         receipt.event,
@@ -172,6 +187,7 @@ fn text_binary_empty_nested_executable_unicode_and_symlink_round_trip() -> TestR
     ));
     assert!(result.runner_input.source().directory_fd().is_err());
     assert_eq!(fs::read_dir(&fixture.root)?.count(), 0);
+
     Ok(())
 }
 
@@ -179,12 +195,15 @@ fn text_binary_empty_nested_executable_unicode_and_symlink_round_trip() -> TestR
 fn same_snapshot_twice_has_same_digest_and_distinct_workspaces() -> TestResult {
     let fixture = Fixture::new()?;
     let snapshot = source(&[("a", SourceMode::File, b"abc")])?;
+
     let first = fixture
         .materializer
         .prepare(&snapshot, &request(&snapshot))?;
+
     let second = fixture
         .materializer
         .prepare(&snapshot, &request(&snapshot))?;
+
     assert_eq!(
         first.evidence.observed_digest,
         second.evidence.observed_digest
@@ -197,8 +216,10 @@ fn same_snapshot_twice_has_same_digest_and_distinct_workspaces() -> TestResult {
         first.runner_input.workspace(),
         second.runner_input.workspace()
     );
+
     first.cleanup.destroy()?;
     second.cleanup.destroy()?;
+
     Ok(())
 }
 
@@ -206,9 +227,11 @@ fn same_snapshot_twice_has_same_digest_and_distinct_workspaces() -> TestResult {
 fn empty_snapshot_produces_verified_empty_root() -> TestResult {
     let fixture = Fixture::new()?;
     let snapshot = source(&[])?;
+
     let result = fixture
         .materializer
         .prepare(&snapshot, &request(&snapshot))?;
+
     assert_eq!(
         fs::read_dir(result.cleanup.location().as_path())?.count(),
         0
@@ -217,7 +240,9 @@ fn empty_snapshot_produces_verified_empty_root() -> TestResult {
         result.evidence.observed_digest,
         snapshot.identity().snapshot_sha256
     );
+
     result.cleanup.destroy()?;
+
     Ok(())
 }
 
@@ -228,15 +253,19 @@ fn lfs_and_submodule_fail_before_destination_creation() -> TestResult {
         "version https://git-lfs.github.com/spec/v1\noid sha256:{}\nsize 50\n",
         "a".repeat(64)
     );
+
     for snapshot in [
         source(&[("large", SourceMode::File, lfs.as_bytes())])?,
         source(&[("module", SourceMode::Submodule, "a".repeat(40).as_bytes())])?,
     ] {
         let failure = rejected(fixture.begin(&snapshot))?;
+
         assert_eq!(failure.error, Error::SnapshotNotComplete);
         assert_eq!(failure.cleanup, CleanupStatus::NotCreated);
     }
+
     assert_eq!(fs::read_dir(&fixture.root)?.count(), 0);
+
     Ok(())
 }
 
@@ -246,15 +275,18 @@ fn wrong_expected_source_and_store_scope_fail_closed() -> TestResult {
     let snapshot = source(&[("a", SourceMode::File, b"abc")])?;
     let mut request = request(&snapshot);
     request.snapshot.identity.snapshot_sha256 = archcert_domain::source::digest_bytes(b"wrong");
+
     assert_eq!(
         rejected(fixture.materializer.begin(&snapshot, &request))?.error,
         Error::MaterializationIntegrityMismatch
     );
+
     let mut store = MemorySourceStore::default();
     let correct_request = self::request(&snapshot);
     store.retain(snapshot)?;
     let mut wrong_scope = correct_request.clone();
     wrong_scope.snapshot.project = ProjectId::new();
+
     assert_eq!(
         rejected(materialize_source(
             &store,
@@ -264,13 +296,17 @@ fn wrong_expected_source_and_store_scope_fail_closed() -> TestResult {
         .error,
         Error::SnapshotUnavailable
     );
+
     let result = materialize_source(&store, &fixture.materializer, &correct_request)?;
     drop(store);
+
     assert_eq!(
         fs::read(result.cleanup.location().as_path().join("a"))?,
         b"abc"
     );
+
     result.cleanup.destroy()?;
+
     Ok(())
 }
 
@@ -281,9 +317,11 @@ fn mutation_wrong_mode_missing_extra_file_and_changed_link_are_detected() -> Tes
         ("a", SourceMode::File, b"original"),
         ("link", SourceMode::Symlink, b"a"),
     ])?;
+
     for attack in 0..5 {
         let pending = fixture.begin(&snapshot)?;
         let path = pending.location().as_path().to_owned();
+
         match attack {
             0 => fs::write(path.join("a"), b"mutated")?,
             1 => fs::set_permissions(path.join("a"), Permissions::from_mode(0o700))?,
@@ -295,7 +333,9 @@ fn mutation_wrong_mode_missing_extra_file_and_changed_link_are_detected() -> Tes
             }
             _ => return Err("invalid test case".into()),
         }
+
         let failure = rejected(pending.verify_and_seal())?;
+
         assert!(matches!(
             failure.error,
             Error::MaterializationIntegrityMismatch | Error::EntryTypeConflict
@@ -303,6 +343,7 @@ fn mutation_wrong_mode_missing_extra_file_and_changed_link_are_detected() -> Tes
         assert_eq!(failure.cleanup, CleanupStatus::Destroyed);
         assert!(!path.exists());
     }
+
     Ok(())
 }
 
@@ -312,8 +353,11 @@ fn extra_empty_directory_is_detected_even_though_schema_excludes_directories() -
     let snapshot = source(&[("a", SourceMode::File, b"abc")])?;
     let pending = fixture.begin(&snapshot)?;
     fs::create_dir(pending.location().as_path().join("extra"))?;
+
     let failure = rejected(pending.verify_and_seal())?;
+
     assert_eq!(failure.error, Error::EntryTypeConflict);
+
     Ok(())
 }
 
@@ -325,17 +369,22 @@ fn symlink_host_escape_never_reads_writes_or_changes_host_target_permissions() -
     fs::write(&secret, b"HOST SECRET")?;
     fs::set_permissions(&secret, Permissions::from_mode(0o600))?;
     let snapshot = source(&[("link", SourceMode::Symlink, secret.as_os_str().as_bytes())])?;
+
     let result = fixture
         .materializer
         .prepare(&snapshot, &request(&snapshot))?;
+
     assert!(
         fs::symlink_metadata(result.cleanup.location().as_path().join("link"))?
             .file_type()
             .is_symlink()
     );
+
     result.cleanup.destroy()?;
+
     assert_eq!(fs::read(&secret)?, b"HOST SECRET");
     assert_eq!(fs::metadata(&secret)?.permissions().mode() & 0o7777, 0o600);
+
     Ok(())
 }
 
@@ -349,12 +398,14 @@ fn directory_swap_between_write_and_verification_does_not_follow_host_symlink() 
     let path = pending.location().as_path().to_owned();
     fs::rename(path.join("dir"), path.join("moved"))?;
     std::os::unix::fs::symlink(host.path(), path.join("dir"))?;
+
     assert!(matches!(
         rejected(pending.verify_and_seal())?.error,
         Error::EntryTypeConflict
     ));
     assert_eq!(fs::read(host.path().join("file"))?, b"HOST SECRET");
     assert!(!path.exists());
+
     Ok(())
 }
 
@@ -366,15 +417,18 @@ fn file_substitution_and_host_hardlink_are_rejected_without_chmod_on_host() -> T
     fs::write(&secret, b"HOST SECRET")?;
     fs::set_permissions(&secret, Permissions::from_mode(0o600))?;
     let snapshot = source(&[("a", SourceMode::File, b"accepted")])?;
+
     for hardlink in [false, true] {
         let pending = fixture.begin(&snapshot)?;
         let path = pending.location().as_path().to_owned();
         fs::remove_file(path.join("a"))?;
+
         if hardlink {
             fs::hard_link(&secret, path.join("a"))?;
         } else {
             std::os::unix::fs::symlink(&secret, path.join("a"))?;
         }
+
         assert_eq!(
             rejected(pending.verify_and_seal())?.error,
             Error::EntryTypeConflict
@@ -382,6 +436,7 @@ fn file_substitution_and_host_hardlink_are_rejected_without_chmod_on_host() -> T
         assert_eq!(fs::read(&secret)?, b"HOST SECRET");
         assert_eq!(fs::metadata(&secret)?.permissions().mode() & 0o7777, 0o600);
     }
+
     Ok(())
 }
 
@@ -389,16 +444,22 @@ fn file_substitution_and_host_hardlink_are_rejected_without_chmod_on_host() -> T
 fn post_seal_mutation_is_rejected_at_final_handoff() -> TestResult {
     let fixture = Fixture::new()?;
     let snapshot = source(&[("a", SourceMode::File, b"accepted")])?;
+
     let sealed = fixture.begin(&snapshot)?.verify_and_seal()?;
+
     assert_eq!(sealed.evidence().status, MaterializationState::Sealed);
+
     let file = sealed.location().as_path().join("a");
     // The owner can undo Unix permissions. This deliberately exercises that remaining risk.
     fs::set_permissions(&file, Permissions::from_mode(0o600))?;
     fs::write(&file, b"mutated after seal")?;
     fs::set_permissions(&file, Permissions::from_mode(0o400))?;
+
     let failure = rejected(sealed.handoff())?;
+
     assert_eq!(failure.error, Error::MaterializationIntegrityMismatch);
     assert_eq!(failure.cleanup, CleanupStatus::Destroyed);
+
     Ok(())
 }
 
@@ -409,12 +470,16 @@ fn timestamp_changes_do_not_change_reconstructed_identity() -> TestResult {
     let pending = fixture.begin(&snapshot)?;
     File::open(pending.location().as_path().join("a"))?
         .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(5)))?;
+
     let result = pending.verify_and_seal()?.handoff()?;
+
     assert_eq!(
         result.evidence.observed_digest,
         snapshot.identity().snapshot_sha256
     );
+
     result.cleanup.destroy()?;
+
     Ok(())
 }
 
@@ -426,6 +491,7 @@ fn every_materialization_budget_is_enforced_before_writes() -> TestResult {
         ("link", SourceMode::Symlink, b"dir/file"),
     ])?;
     let defaults = MaterializationLimits::default();
+
     for (limits, budget) in [
         (
             MaterializationLimits {
@@ -485,34 +551,44 @@ fn every_materialization_budget_is_enforced_before_writes() -> TestResult {
         let mut request = request(&snapshot);
         request.limits = limits;
         let failure = rejected(fixture.materializer.begin(&snapshot, &request))?;
+
         assert_eq!(failure.error, Error::LimitExceeded(budget));
         assert_eq!(failure.cleanup, CleanupStatus::NotCreated);
     }
+
     assert_eq!(fs::read_dir(&fixture.root)?.count(), 0);
+
     Ok(())
 }
 
 #[test]
 fn invalid_symlink_payloads_are_explicitly_unsupported_and_never_rewritten() -> TestResult {
     let fixture = Fixture::new()?;
+
     for target in [b"".as_slice(), b"a\0b"] {
         let snapshot = source(&[("link", SourceMode::Symlink, target)])?;
+
         assert_eq!(
             rejected(fixture.begin(&snapshot))?.error,
             Error::UnsupportedFilesystemFeature
         );
     }
+
     let snapshot = source(&[("link", SourceMode::Symlink, &[0xff, b'a'])])?;
+
     let result = fixture
         .materializer
         .prepare(&snapshot, &request(&snapshot))?;
+
     assert_eq!(
         fs::read_link(result.cleanup.location().as_path().join("link"))?
             .as_os_str()
             .as_bytes(),
         [0xff, b'a']
     );
+
     result.cleanup.destroy()?;
+
     Ok(())
 }
 
@@ -522,19 +598,25 @@ fn authority_root_must_be_private_absolute_and_not_a_symlink() -> TestResult {
         AuthorityWorkspaceRoot::open(Path::new("relative")),
         Err(Error::UnsafeDestination)
     ));
+
     let fixture = Fixture::new()?;
     let alias = fixture.root.join("alias");
     std::os::unix::fs::symlink(&fixture.root, &alias)?;
+
     assert!(matches!(
         AuthorityWorkspaceRoot::open(&alias),
         Err(Error::UnsafeDestination)
     ));
+
     fs::set_permissions(&fixture.root, Permissions::from_mode(0o755))?;
+
     assert!(matches!(
         AuthorityWorkspaceRoot::open(&fixture.root),
         Err(Error::UnsafeDestination)
     ));
+
     fs::set_permissions(&fixture.root, Permissions::from_mode(0o700))?;
+
     Ok(())
 }
 
@@ -548,10 +630,13 @@ fn root_name_substitution_cannot_redirect_verification_or_cleanup() -> TestResul
     fs::rename(&original, &moved)?;
     fs::create_dir(&original)?;
     fs::write(original.join("host-data"), b"do not remove")?;
+
     let failure = rejected(pending.verify_and_seal())?;
+
     assert_eq!(failure.error, Error::EntryTypeConflict);
     assert_eq!(failure.cleanup, CleanupStatus::Failed);
     assert_eq!(fs::read(original.join("host-data"))?, b"do not remove");
+
     Ok(())
 }
 
@@ -562,7 +647,9 @@ fn abandoned_workspace_gets_best_effort_cleanup_without_success_evidence() -> Te
     let pending = fixture.begin(&snapshot)?;
     let path = pending.location().as_path().to_owned();
     drop(pending);
+
     assert!(!path.exists());
+
     Ok(())
 }
 
@@ -572,6 +659,7 @@ fn retained_writable_descriptor_can_mutate_permissions_seal_but_handoff_detects_
         io::Write,
         sync::{Arc, Barrier},
     };
+
     let fixture = Fixture::new()?;
     let snapshot = source(&[("a", SourceMode::File, b"accepted")])?;
     let pending = fixture.begin(&snapshot)?;
@@ -584,13 +672,16 @@ fn retained_writable_descriptor_can_mutate_permissions_seal_but_handoff_detects_
         other.wait();
         writer.write_all(b"MUTATION")
     });
+
     let sealed = pending.verify_and_seal()?;
     barrier.wait();
     mutation.join().map_err(|_| "mutation thread failed")??;
+
     assert_eq!(
         rejected(sealed.handoff())?.error,
         Error::MaterializationIntegrityMismatch
     );
+
     Ok(())
 }
 
@@ -607,13 +698,18 @@ fn authority_parent_rename_keeps_operations_anchored_to_the_original_directory()
     fs::write(host.path().join("secret"), b"HOST")?;
     std::os::unix::fs::symlink(host.path(), &authority)?;
     let snapshot = source(&[("a", SourceMode::File, b"accepted")])?;
+
     let result = materializer.prepare(&snapshot, &request(&snapshot))?;
     let actual = moved.join(result.runner_input.workspace().to_string());
+
     assert_eq!(fs::read(actual.join("a"))?, b"accepted");
     assert_eq!(fs::read_dir(host.path())?.count(), 1);
+
     result.cleanup.destroy()?;
+
     assert!(!actual.exists());
     assert_eq!(fs::read(host.path().join("secret"))?, b"HOST");
+
     Ok(())
 }
 
@@ -625,6 +721,7 @@ fn host_umask_and_credentials_are_exercised_in_isolated_test_processes() -> Test
             fixture.root.join("host-token"),
             b"DO NOT COPY HOST CREDENTIAL",
         )?;
+
         let output = Command::new(std::env::current_exe()?)
             .args([
                 "--exact",
@@ -641,12 +738,14 @@ fn host_umask_and_credentials_are_exercised_in_isolated_test_processes() -> Test
             .env("OPENAI_API_KEY", "DO NOT COPY")
             .env("TMPDIR", "/invalid-should-not-be-used")
             .output()?;
+
         assert!(
             output.status.success(),
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
     Ok(())
 }
 
@@ -668,8 +767,10 @@ fn child_materialization_with_hostile_environment() -> TestResult {
         (".ssh/config", SourceMode::File, b"tracked ssh data"),
         ("run", SourceMode::Executable, b"passive executable bytes"),
     ])?;
+
     let result = materializer.prepare(&snapshot, &request(&snapshot))?;
     let directory = result.cleanup.location().as_path();
+
     assert_eq!(
         fs::read(directory.join(".gitconfig"))?,
         b"tracked project data"
@@ -679,6 +780,7 @@ fn child_materialization_with_hostile_environment() -> TestResult {
         b"tracked ssh data"
     );
     assert_eq!(fs::read_dir(directory)?.count(), 3);
+
     for unexpected in [
         ".git",
         "host-token",
@@ -688,12 +790,15 @@ fn child_materialization_with_hostile_environment() -> TestResult {
     ] {
         assert!(!directory.join(unexpected).exists());
     }
+
     assert_eq!(
         result.evidence.observed_digest,
         snapshot.identity().snapshot_sha256
     );
+
     result.cleanup.destroy()?;
     rustix::process::umask(old);
+
     Ok(())
 }
 
@@ -701,20 +806,27 @@ fn child_materialization_with_hostile_environment() -> TestResult {
 fn execution_export_reverifies_after_handoff_and_rejects_destroyed_source() -> TestResult {
     let fixture = Fixture::new()?;
     let snapshot = source(&[("a", SourceMode::File, b"accepted")])?;
+
     let prepared = fixture
         .materializer
         .prepare(&snapshot, &request(&snapshot))?;
+
     assert_eq!(
         prepared.runner_input.source().verified_files()?[0].bytes(),
         b"accepted"
     );
+
     let path = prepared.cleanup.location().as_path().join("a");
     fs::set_permissions(&path, Permissions::from_mode(0o600))?;
     fs::write(&path, b"tampered")?;
     fs::set_permissions(&path, Permissions::from_mode(0o400))?;
+
     assert!(prepared.runner_input.source().verified_files().is_err());
+
     prepared.cleanup.destroy()?;
+
     assert!(prepared.runner_input.source().verified_files().is_err());
+
     Ok(())
 }
 
@@ -729,15 +841,19 @@ fn execution_export_uses_descriptor_after_authority_parent_rename() -> TestResul
         ("dir/a", SourceMode::File, b"accepted"),
         ("escape", SourceMode::Symlink, b"/host/secret"),
     ])?;
+
     let prepared = materializer.prepare(&snapshot, &request(&snapshot))?;
     fs::rename(&authority, fixture.root.join("renamed"))?;
     fs::create_dir(&authority)?;
     fs::write(authority.join("host-only-marker"), b"must not export")?;
     let files = prepared.runner_input.source().verified_files()?;
+
     assert_eq!(files.len(), 2);
     assert!(files.iter().any(|f| f.bytes() == b"accepted"));
     assert!(files.iter().any(|f| f.bytes() == b"/host/secret"));
+
     prepared.cleanup.destroy()?;
+
     Ok(())
 }
 
@@ -749,6 +865,7 @@ fn resolved_source_rehashes_binding_at_every_materialization_boundary() -> TestR
     };
     use archcert_domain::{Sha256Digest, source::SourceError};
     struct Authority(Vec<u8>);
+
     impl ExternalSourceAuthority for Authority {
         fn lfs_object(
             &self,
@@ -758,6 +875,7 @@ fn resolved_source_rehashes_binding_at_every_materialization_boundary() -> TestR
         ) -> Result<Box<dyn std::io::Read + '_>, SourceError> {
             Ok(Box::new(std::io::Cursor::new(&self.0)))
         }
+
         fn submodule(
             &self,
             _: &SourceSnapshot,
@@ -766,6 +884,7 @@ fn resolved_source_rehashes_binding_at_every_materialization_boundary() -> TestR
             Err(SourceError::IncompleteExternalSource)
         }
     }
+
     let payload = b"complete external source";
     let pointer = format!(
         "version https://git-lfs.github.com/spec/v1\noid sha256:{}\nsize {}\n",
@@ -779,22 +898,28 @@ fn resolved_source_rehashes_binding_at_every_materialization_boundary() -> TestR
         SourceLimits::default(),
     )?
     .into_snapshot();
+
     assert_eq!(resolved.schema_version(), 2);
     assert_ne!(
         resolved.manifest().digest(),
         resolved.identity().snapshot_sha256
     );
+
     let mut encoded = Vec::new();
     archcert_source::write_snapshot(&resolved, &mut encoded)?;
     let restored = archcert_source::read_snapshot(encoded.as_slice(), SourceLimits::default())?;
+
     assert_eq!(restored.binding(), resolved.binding());
     assert_eq!(restored.identity(), resolved.identity());
+
     let fixture = Fixture::new()?;
+
     let prepared = fixture
         .materializer
         .prepare(&restored, &request(&restored))
         .map_err(|e| format!("{e:?}"))?;
     let files = prepared.runner_input.source().verified_files()?;
+
     assert_eq!(files[0].bytes(), payload);
     assert_eq!(
         prepared.runner_input.source().source_binding(),
@@ -804,10 +929,12 @@ fn resolved_source_rehashes_binding_at_every_materialization_boundary() -> TestR
         prepared.evidence.observed_digest,
         restored.identity().snapshot_sha256
     );
+
     prepared.cleanup.destroy()?;
     // A real filesystem substitution cannot preserve the accepted identity recipe.
     let pending = fixture.begin(&restored).map_err(|e| format!("{e:?}"))?;
     fs::write(pending.location().as_path().join("data"), b"substituted")?;
     rejected(pending.verify_and_seal())?;
+
     Ok(())
 }

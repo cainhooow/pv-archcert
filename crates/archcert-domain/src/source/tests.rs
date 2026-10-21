@@ -514,7 +514,7 @@ fn recursive_resolved_children_verify_exact_identities_and_bound_depth()
 #[test]
 fn expanded_children_cannot_hide_incomplete_lfs_or_reparse_verified_lfs_bytes()
 -> Result<(), Box<dyn std::error::Error>> {
-    let inner=b"version https://git-lfs.github.com/spec/v1\noid sha256:1111111111111111111111111111111111111111111111111111111111111111\nsize 1\n";
+    let inner = b"version https://git-lfs.github.com/spec/v1\noid sha256:1111111111111111111111111111111111111111111111111111111111111111\nsize 1\n";
     let child = snapshot(
         vec![SourceFile::new(
             SourcePath::from_bytes(b"data")?,

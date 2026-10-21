@@ -1,6 +1,8 @@
 //! Public-only RFC 8032 interoperability and malformed key regression vectors.
+
 use archcert_crypto::{DetachedSignature, PublicKey};
 type R = Result<(), Box<dyn std::error::Error>>;
+
 #[test]
 fn rfc8032_empty_message_vector_verifies_without_a_private_key() -> R {
     let key =
@@ -10,9 +12,12 @@ fn rfc8032_empty_message_vector_verifies_without_a_private_key() -> R {
         "b8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
     ))?;
     key.verify(b"", &signature)?;
+
     assert!(key.verify(b"altered", &signature).is_err());
+
     Ok(())
 }
+
 #[test]
 fn weak_noncanonical_wrong_length_and_nonhex_public_keys_reject() {
     for key in [

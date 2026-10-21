@@ -1,4 +1,5 @@
 //! Deterministic policy regression and exhaustive finite permutation tests.
+
 use archcert_application::{configuration::ProjectConfiguration, validation::*};
 use archcert_domain::{
     GitObjectId, ProjectId, PropertyVerdict as V, execution::*, materialization::WorkspaceId,
@@ -6,11 +7,13 @@ use archcert_domain::{
 };
 use archcert_policy::*;
 type R<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
 struct Fixture {
     snapshot: SourceSnapshot,
     plan: ValidationPlan,
     evidence: ExecutionEvidence,
 }
+
 fn fixture() -> R<Fixture> {
     let snapshot = SourceSnapshot::seal(
         ProjectId::new(),
@@ -43,6 +46,7 @@ fn fixture() -> R<Fixture> {
         evidence,
     })
     .collect();
+
     let plan = authority.with_required_steps(mandatory)?.resolve(None)?;
     let empty = CapturedStream {
         sha256: digest_bytes(b""),
@@ -83,18 +87,22 @@ fn fixture() -> R<Fixture> {
         stderr: empty,
         outcome: ExecutionOutcome::Completed,
     };
+
     Ok(Fixture {
         snapshot,
         plan,
         evidence,
     })
 }
+
 fn bundle() -> R<PolicyBundle> {
     Ok(PolicyBundle::read(DEVELOPMENT_POLICY.as_bytes())?)
 }
+
 fn observations(f: &Fixture) -> R<(Vec<ExpectedExecution>, Vec<ValidationObservation>)> {
     let mut expected = vec![];
     let mut observations = vec![];
+
     for step in f.plan.steps() {
         let mut evidence = f.evidence.clone();
         evidence.execution = ExecutionId::new();
@@ -106,8 +114,10 @@ fn observations(f: &Fixture) -> R<(Vec<ExpectedExecution>, Vec<ValidationObserva
             &f.plan, step, &evidence,
         )?);
     }
+
     Ok((expected, observations))
 }
+
 fn run(
     f: &Fixture,
     b: &PolicyBundle,
@@ -127,12 +137,14 @@ fn run(
         },
     )?)
 }
+
 fn property(e: &PolicyEvaluation, id: PropertyId) -> R<&PropertyEvaluation> {
     e.properties
         .iter()
         .find(|p| p.property == id)
         .ok_or_else(|| "property missing".into())
 }
+
 fn test_fact(obs: &mut [ValidationObservation], outcome: ExecutionOutcome, exit_code: Option<i64>) {
     for o in obs
         .iter_mut()
@@ -145,28 +157,36 @@ fn test_fact(obs: &mut [ValidationObservation], outcome: ExecutionOutcome, exit_
         };
     }
 }
+
 #[test]
 fn all_proven_is_eligible_but_never_a_certificate() -> R {
     let f = fixture()?;
     let b = bundle()?;
     let (ids, obs) = observations(&f)?;
+
     let e = run(&f, &b, &ids, &obs, 1)?;
+
     assert!(e.properties.iter().all(|p| p.verdict == V::Proven));
     assert_eq!(
         e.eligibility,
         CertificationEligibility::EligibleForCertification
     );
     assert!(e.findings.is_empty());
+
     let json = serde_json::to_string(&e)?;
+
     assert!(!json.contains("CERTIFIED"));
     assert!(!json.contains("signature"));
+
     Ok(())
 }
+
 #[test]
 fn target_failure_runtime_failure_missing_and_ambiguous_are_distinct() -> R {
     let f = fixture()?;
     let b = bundle()?;
     let (ids, mut obs) = observations(&f)?;
+
     for (outcome, exit, verdict, reason, eligibility) in [
         (
             ExecutionOutcome::Completed,
@@ -226,50 +246,66 @@ fn target_failure_runtime_failure_missing_and_ambiguous_are_distinct() -> R {
         ),
     ] {
         test_fact(&mut obs, outcome, exit);
+
         let e = run(&f, &b, &ids, &obs, 1)?;
         let p = property(&e, PropertyId::TestSuiteCompletes)?;
+
         assert_eq!(
             (p.verdict, p.reason, e.eligibility),
             (verdict, reason, eligibility)
         );
     }
+
     obs.retain(|o| !(o.id.step == "test" && o.id.kind == ObservationKind::ExecutionFinished));
+
     let e = run(&f, &b, &ids, &obs, 1)?;
+
     assert_eq!(
         property(&e, PropertyId::TestSuiteCompletes)?.verdict,
         V::NotProven
     );
     assert_eq!(e.eligibility, CertificationEligibility::NotEligible);
+
     Ok(())
 }
+
 #[test]
 fn every_missing_mandatory_fact_never_passes() -> R {
     let f = fixture()?;
     let b = bundle()?;
     let (ids, obs) = observations(&f)?;
+
     for i in 0..obs.len() {
         let mut subset = obs.clone();
         subset.remove(i);
+
         let e = run(&f, &b, &ids, &subset, 1)?;
+
         assert_eq!(e.eligibility, CertificationEligibility::NotEligible);
         assert!(e.properties.iter().any(|p| p.verdict == V::NotProven));
     }
+
     let e = run(&f, &b, &[], &[], 1)?;
+
     assert!(
         e.properties
             .iter()
             .filter(|p| p.property != PropertyId::SourceComplete)
             .all(|p| p.verdict == V::NotProven)
     );
+
     Ok(())
 }
+
 #[test]
 fn substitution_of_source_commit_plan_profile_step_job_category_or_kind_never_satisfies() -> R {
     let f = fixture()?;
     let b = bundle()?;
     let (ids, obs) = observations(&f)?;
+
     for attack in 0..10 {
         let mut forged = obs.clone();
+
         for o in &mut forged {
             match attack {
                 0 => o.source.snapshot_sha256 = digest_bytes(b"other-source"),
@@ -288,7 +324,9 @@ fn substitution_of_source_commit_plan_profile_step_job_category_or_kind_never_sa
                 _ => o.producer = "LLM-says-PASS/v1".into(),
             }
         }
+
         let e = run(&f, &b, &ids, &forged, 1)?;
+
         assert_ne!(
             property(&e, PropertyId::TestSuiteCompletes)?.verdict,
             V::Proven,
@@ -299,15 +337,19 @@ fn substitution_of_source_commit_plan_profile_step_job_category_or_kind_never_sa
             CertificationEligibility::EligibleForCertification
         );
     }
+
     Ok(())
 }
+
 #[test]
 fn unknown_schema_or_producer_is_inconclusive_and_never_reinterpreted() -> R {
     let f = fixture()?;
     let b = bundle()?;
     let (ids, obs) = observations(&f)?;
+
     for unknown in [true, false] {
         let mut changed = obs.clone();
+
         for o in &mut changed {
             if unknown {
                 o.schema = 2;
@@ -315,26 +357,33 @@ fn unknown_schema_or_producer_is_inconclusive_and_never_reinterpreted() -> R {
                 o.producer = "archcert-docker-cli-v2/9.9".into();
             }
         }
+
         let e = run(&f, &b, &ids, &changed, 1)?;
+
         assert_eq!(
             property(&e, PropertyId::TestSuiteCompletes)?.verdict,
             V::Inconclusive
         );
         assert_eq!(e.eligibility, CertificationEligibility::Inconclusive);
     }
+
     Ok(())
 }
+
 #[test]
 fn identical_duplicates_are_idempotent_and_contradictions_are_inconclusive() -> R {
     let f = fixture()?;
     let b = bundle()?;
     let (ids, mut obs) = observations(&f)?;
+
     let e = run(&f, &b, &ids, &obs, 1)?;
     obs.extend(obs.clone());
+
     assert_eq!(
         serde_json::to_value(&e)?,
         serde_json::to_value(run(&f, &b, &ids, &obs, 1)?)?
     );
+
     let mut contrary = obs
         .iter()
         .find(|o| o.id.step == "test" && o.id.kind == ObservationKind::ExecutionFinished)
@@ -346,30 +395,39 @@ fn identical_duplicates_are_idempotent_and_contradictions_are_inconclusive() -> 
         category: EvidenceCategory::Test,
     };
     obs.push(contrary);
+
     let e = run(&f, &b, &ids, &obs, 1)?;
+
     assert_eq!(
         property(&e, PropertyId::TestSuiteCompletes)?.reason,
         ReasonCode::ContradictoryEvidence
     );
     assert_eq!(e.eligibility, CertificationEligibility::Inconclusive);
+
     obs.reverse();
+
     assert_eq!(
         serde_json::to_value(&e)?,
         serde_json::to_value(run(&f, &b, &ids, &obs, 1)?)?
     );
+
     Ok(())
 }
+
 fn permute<T: Clone>(items: &mut [T], start: usize, apply: &mut impl FnMut(&[T]) -> R) -> R {
     if start == items.len() {
         return apply(items);
     }
+
     for i in start..items.len() {
         items.swap(start, i);
         permute(items, start + 1, apply)?;
         items.swap(start, i);
     }
+
     Ok(())
 }
+
 #[test]
 fn exhaustive_fact_permutations_and_audit_time_leave_results_and_finding_ids_unchanged() -> R {
     let f = fixture()?;
@@ -385,16 +443,21 @@ fn exhaustive_fact_permutations_and_audit_time_leave_results_and_finding_ids_unc
     permute(&mut chunk, 0, &mut |chunk| {
         let mut changed = chunk.to_vec();
         changed.extend_from_slice(&obs[4..]);
+
         for rotation in 0..changed.len() {
             changed.rotate_left(rotation);
             let mut e = serde_json::to_value(run(&f, &b, &ids, &changed, 123456)?)?;
             e.as_object_mut().ok_or("object")?.remove("evaluated_at");
+
             assert_eq!(baseline, e);
         }
+
         Ok(())
     })?;
+
     Ok(())
 }
+
 #[test]
 fn property_permutations_and_toml_whitespace_have_identical_canonical_identity() -> R {
     let b = bundle()?;
@@ -412,8 +475,10 @@ fn property_permutations_and_toml_whitespace_have_identical_canonical_identity()
             properties.join("\n[[properties]]")
         );
         let other = PolicyBundle::read(text.as_bytes())?;
+
         assert_eq!(b.canonical_bytes(), other.canonical_bytes());
         assert_eq!(b.identity(), other.identity());
+
         Ok(())
     })?;
     properties.reverse();
@@ -423,12 +488,15 @@ fn property_permutations_and_toml_whitespace_have_identical_canonical_identity()
         properties.join("[[properties]]")
     );
     let other = PolicyBundle::read(text.as_bytes())?;
+
     assert_eq!(
         expected,
         serde_json::to_value(run(&f, &other, &ids, &obs, 1)?)?
     );
+
     Ok(())
 }
+
 #[test]
 fn strict_parser_bounds_unknown_fields_duplicates_and_rule_confusion_reject() -> R {
     for text in [
@@ -445,26 +513,33 @@ fn strict_parser_bounds_unknown_fields_duplicates_and_rule_confusion_reject() ->
         DEVELOPMENT_POLICY.replace("producers = [", &format!("producers = [\"{}\",", "x".repeat(129))),
         DEVELOPMENT_POLICY.replace("steps = [\"test\"]",&format!("steps = [{}]",(0..33).map(|i|format!("\"s{i}\"")).collect::<Vec<_>>().join(","))),
     ] {assert!(PolicyBundle::read(text.as_bytes()).is_err(),"accepted invalid input: {text}");}
+
     let duplicated = format!(
         "{}{}",
         DEVELOPMENT_POLICY,
         "[[properties]]\nid='SOURCE_COMPLETE'\ndescription='duplicate'\nseverity='P0'\nmandatory=true\nallow_not_applicable=false\napplicability={kind='ALWAYS'}\nrule={kind='SOURCE_COMPLETE'}\n"
     );
+
     assert!(PolicyBundle::read(duplicated.as_bytes()).is_err());
+
     Ok(())
 }
+
 #[test]
 fn policy_id_version_or_digest_substitution_is_an_error_without_eligibility() -> R {
     let f = fixture()?;
     let b = bundle()?;
     let (ids, obs) = observations(&f)?;
+
     for attack in 0..3 {
         let mut selected = b.identity().clone();
+
         match attack {
             0 => selected.id = "weaker-policy".into(),
             1 => selected.version = "0.0.0".into(),
             _ => selected.sha256 = digest_bytes(b"other-policy"),
         }
+
         assert!(matches!(
             evaluate(
                 &b,
@@ -480,12 +555,15 @@ fn policy_id_version_or_digest_substitution_is_an_error_without_eligibility() ->
             Err(PolicyError::SelectionMismatch)
         ));
     }
+
     Ok(())
 }
+
 #[test]
 fn non_applicability_requires_authority_condition_and_explicit_permission() -> R {
     let f = fixture()?;
     let (ids, obs) = observations(&f)?;
+
     for permission in [false, true] {
         let text = DEVELOPMENT_POLICY
             .replace(
@@ -497,7 +575,9 @@ fn non_applicability_requires_authority_condition_and_explicit_permission() -> R
                 &format!("allow_not_applicable = {permission}"),
             );
         let b = PolicyBundle::read(text.as_bytes())?;
+
         let e = run(&f, &b, &ids, &obs, 1)?;
+
         assert!(e.properties.iter().all(|p| p.verdict == V::NotApplicable));
         assert_eq!(
             e.eligibility,
@@ -508,21 +588,26 @@ fn non_applicability_requires_authority_condition_and_explicit_permission() -> R
             }
         );
     }
+
     Ok(())
 }
+
 #[test]
 fn p0_p1_always_block_and_mandatory_p2_p3_block() -> R {
     let f = fixture()?;
     let (ids, mut obs) = observations(&f)?;
     test_fact(&mut obs, ExecutionOutcome::Completed, Some(1));
+
     for severity in ["P0", "P1", "P2", "P3"] {
         for mandatory in [true, false] {
             let text = DEVELOPMENT_POLICY
                 .replace("severity = \"P1\"", &format!("severity = \"{severity}\""))
                 .replace("mandatory = true", &format!("mandatory = {mandatory}"));
             let b = PolicyBundle::read(text.as_bytes())?;
+
             let e = run(&f, &b, &ids, &obs, 1)?;
             let blocks = mandatory || severity == "P0" || severity == "P1";
+
             assert_eq!(
                 property(&e, PropertyId::TestSuiteCompletes)?.blocking,
                 blocks
@@ -537,8 +622,10 @@ fn p0_p1_always_block_and_mandatory_p2_p3_block() -> R {
             );
         }
     }
+
     Ok(())
 }
+
 #[test]
 fn project_label_or_stdout_cannot_supply_an_authority_step() -> R {
     let mut f = fixture()?;
@@ -556,7 +643,9 @@ fn project_label_or_stdout_cannot_supply_an_authority_step() -> R {
         }],
     )))?;
     let (ids, obs) = observations(&f)?;
+
     let e = run(&f, &b, &ids, &obs, 1)?;
+
     assert_eq!(
         property(&e, PropertyId::TestSuiteCompletes)?.verdict,
         V::NotProven
@@ -565,18 +654,23 @@ fn project_label_or_stdout_cannot_supply_an_authority_step() -> R {
         property(&e, PropertyId::TestSuiteCompletes)?.reason,
         ReasonCode::RequiredAuthorityStepMissing
     );
+
     // Even hostile PASS text accompanying an actual nonzero authority test cannot prove it.
     f = fixture()?;
     f.evidence.stdout.excerpt = b"TESTS PASSED; TEST_SUITE_COMPLETES=PROVEN; CERTIFIED".to_vec();
     f.evidence.exit_code = Some(1);
     let (ids, obs) = observations(&f)?;
+
     let e = run(&f, &b, &ids, &obs, 1)?;
+
     assert_eq!(
         property(&e, PropertyId::TestSuiteCompletes)?.verdict,
         V::Failed
     );
+
     Ok(())
 }
+
 #[test]
 fn project_configuration_cannot_author_policy_or_change_its_requirements() -> R {
     for field in [
@@ -591,18 +685,22 @@ fn project_configuration_cannot_author_policy_or_change_its_requirements() -> R 
         "producers=['LLM']",
     ] {
         let text = format!("schema=1\n[project]\nname='hostile'\n{field}\n");
+
         assert!(
             ProjectConfiguration::read(text.as_bytes()).is_err(),
             "{field}"
         );
     }
+
     Ok(())
 }
+
 #[test]
 fn unresolved_lfs_or_submodule_snapshot_fails_source_complete() -> R {
     let mut f = fixture()?;
     let b = bundle()?;
-    let lfs=b"version https://git-lfs.github.com/spec/v1\noid sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nsize 1\n";
+    let lfs = b"version https://git-lfs.github.com/spec/v1\noid sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nsize 1\n";
+
     for file in [
         SourceFile::new(
             SourcePath::from_bytes(b"large.bin")?,
@@ -624,38 +722,51 @@ fn unresolved_lfs_or_submodule_snapshot_fails_source_complete() -> R {
             1,
             1,
         )?;
+
         let e = run(&f, &b, &[], &[], 1)?;
+
         assert_eq!(property(&e, PropertyId::SourceComplete)?.verdict, V::Failed);
     }
+
     Ok(())
 }
+
 #[test]
 fn evaluation_bounds_ambiguous_executions_and_missing_bindings_fail_closed() -> R {
     let f = fixture()?;
     let b = bundle()?;
     let (mut ids, obs) = observations(&f)?;
     ids.push(ids[0].clone());
+
     assert!(run(&f, &b, &ids, &obs, 1).is_err());
+
     let (ids, obs) = observations(&f)?;
     let many = vec![obs[0].clone(); 4097];
+
     assert!(run(&f, &b, &ids, &many, 1).is_err());
+
     let e = run(&f, &b, &[], &obs, 1)?;
+
     assert_ne!(
         e.eligibility,
         CertificationEligibility::EligibleForCertification
     );
+
     Ok(())
 }
 
 #[test]
 fn fixed_canonical_vectors_match_independent_python_and_node_bytes_and_sha256() -> R {
     let b = development_bundle()?;
+
     assert_eq!(
         b.canonical_bytes(),
         include_bytes!("../../../policies/archcert-development-v1.canonical.json")
     );
     assert_eq!(b.identity().sha256.as_str(), DEVELOPMENT_POLICY_SHA256);
+
     let unicode = PolicyBundle::read(include_bytes!("fixtures/canonical-unicode.toml").as_slice())?;
+
     assert_eq!(
         unicode.canonical_bytes(),
         include_bytes!("fixtures/canonical-unicode.json")
@@ -664,35 +775,47 @@ fn fixed_canonical_vectors_match_independent_python_and_node_bytes_and_sha256() 
         unicode.identity().sha256.as_str(),
         "d16b30957bbec71442b24289730df4e209e20e6b4b01885c081d5afe4b564357"
     );
+
     Ok(())
 }
+
 #[test]
 fn controller_failure_producer_cannot_assert_positive_evidence() -> R {
     let f = fixture()?;
     let b = bundle()?;
     let (ids, mut obs) = observations(&f)?;
+
     for o in &mut obs {
         o.producer = "archcert-controller-v1/0.1.0".into();
     }
+
     let e = run(&f, &b, &ids, &obs, 1)?;
+
     assert_eq!(
         property(&e, PropertyId::TestSuiteCompletes)?.verdict,
         V::Inconclusive
     );
+
     test_fact(&mut obs, ExecutionOutcome::SandboxFailure, None);
+
     let e = run(&f, &b, &ids, &obs, 1)?;
+
     assert_eq!(
         property(&e, PropertyId::TestSuiteCompletes)?.reason,
         ReasonCode::InfrastructureFailure
     );
+
     Ok(())
 }
+
 #[test]
 fn empty_plan_never_vacuously_proves_all_execution_requirements() -> R {
     let mut f = fixture()?;
     let b = bundle()?;
     f.plan = AuthorityConfiguration::development(vec![])?.resolve(None)?;
+
     let e = run(&f, &b, &[], &[], 1)?;
+
     assert_eq!(e.eligibility, CertificationEligibility::NotEligible);
     assert!(
         e.properties
@@ -700,6 +823,7 @@ fn empty_plan_never_vacuously_proves_all_execution_requirements() -> R {
             .filter(|p| p.property != PropertyId::SourceComplete)
             .all(|p| p.verdict == V::NotProven)
     );
+
     Ok(())
 }
 
@@ -717,7 +841,9 @@ fn real_bottle_request_version_command_leaves_all_validation_properties_not_prov
     f.plan = authority.resolve(config.execution_request())?;
     f.evidence.command = f.plan.steps().first().ok_or("step")?.command().clone();
     let (ids, obs) = observations(&f)?;
+
     let e = run(&f, &b, &ids, &obs, 1)?;
+
     for id in [
         PropertyId::TypecheckCompletes,
         PropertyId::TestSuiteCompletes,
@@ -725,6 +851,7 @@ fn real_bottle_request_version_command_leaves_all_validation_properties_not_prov
     ] {
         assert_eq!(property(&e, id)?.verdict, V::NotProven);
     }
+
     for id in [
         PropertyId::SourceComplete,
         PropertyId::SourceIdentityVerified,
@@ -733,9 +860,12 @@ fn real_bottle_request_version_command_leaves_all_validation_properties_not_prov
     ] {
         assert_eq!(property(&e, id)?.verdict, V::Proven);
     }
+
     assert_eq!(e.eligibility, CertificationEligibility::NotEligible);
+
     Ok(())
 }
+
 #[test]
 fn retained_unsigned_demos_resolve_every_observation_reference_and_bind_the_exact_plan() -> R {
     for (text, verdict) in [
@@ -757,39 +887,54 @@ fn retained_unsigned_demos_resolve_every_observation_reference_and_bind_the_exac
         ),
     ] {
         let report: serde_json::Value = serde_json::from_str(text)?;
+
         assert_eq!(report["kind"], "UNSIGNED POLICY EVALUATION");
         assert_eq!(report["notice"], "NOT A CERTIFICATE");
         assert_eq!(report["certificate"], "NOT ISSUED");
+
         let evaluation = &report["evaluation"];
+
         assert_eq!(evaluation["source"], report["source"]["identity"]);
         assert_eq!(evaluation["policy"]["sha256"], DEVELOPMENT_POLICY_SHA256);
-        let mut canonical_plan =
-            serde_json::json!({"schema":1,"kind":"ARCHCERT_VALIDATION_PLAN","plan":report["plan"]});
+
+        let mut canonical_plan = serde_json::json!({
+            "schema": 1,
+            "kind": "ARCHCERT_VALIDATION_PLAN",
+            "plan": report["plan"]
+        });
         canonical_plan.sort_all_objects();
         let digest = digest_bytes(&serde_json::to_vec(&canonical_plan)?);
+
         assert_eq!(evaluation["plan_sha256"], digest.as_str());
+
         let mut payloads = std::collections::BTreeMap::new();
+
         for step in report["steps"].as_array().ok_or("steps")? {
             for o in step["observations"].as_array().ok_or("observations")? {
                 payloads.insert(digest_bytes(&serde_json::to_vec(o)?).as_str().to_owned(), o);
             }
         }
+
         for p in evaluation["properties"].as_array().ok_or("properties")? {
             if p["property"] == "TEST_SUITE_COMPLETES" {
                 assert_eq!(p["verdict"], verdict);
             }
+
             for reference in p["actual_evidence"].as_array().ok_or("refs")? {
                 if reference["kind"] == "OBSERVATION" {
                     let observation = payloads
                         .get(reference["sha256"].as_str().ok_or("digest")?)
                         .ok_or("unresolved reference")?;
+
                     assert_eq!(reference["id"], observation["id"]);
                 }
             }
         }
     }
+
     Ok(())
 }
+
 #[test]
 fn unknown_fields_reject_in_every_rule_and_applicability_variant_and_excess_nesting() -> R {
     for kind in [
@@ -803,15 +948,21 @@ fn unknown_fields_reject_in_every_rule_and_applicability_variant_and_excess_nest
             &format!("kind = \"{kind}\""),
             &format!("kind = \"{kind}\", injected = true"),
         );
+
         assert!(PolicyBundle::read(text.as_bytes()).is_err(), "{kind}");
     }
+
     let text = DEVELOPMENT_POLICY.replace(
         "kind = \"ALWAYS\"",
         "kind = \"POLICY_PROFILES\", profiles = [\"python\"], injected = true",
     );
+
     assert!(PolicyBundle::read(text.as_bytes()).is_err());
+
     let nested = format!("schema={}1{}", "[".repeat(256), "]".repeat(256));
+
     assert!(PolicyBundle::read(nested.as_bytes()).is_err());
+
     let property = DEVELOPMENT_POLICY
         .split("[[properties]]")
         .nth(1)
@@ -823,7 +974,9 @@ fn unknown_fields_reject_in_every_rule_and_applicability_variant_and_excess_nest
             .map(|_| format!("[[properties]]{property}"))
             .collect::<String>()
     );
+
     assert!(PolicyBundle::read(too_many.as_bytes()).is_err());
+
     Ok(())
 }
 
@@ -836,14 +989,19 @@ fn applicability_uses_authority_policy_profile_even_with_an_empty_or_changed_pro
     );
     let b = PolicyBundle::read(text.as_bytes())?;
     let (ids, obs) = observations(&f)?;
+
     let e = run(&f, &b, &ids, &obs, 1)?;
+
     assert!(
         e.properties
             .iter()
             .all(|p| p.applicability == PropertyApplicability::Applicable)
     );
+
     f.plan = AuthorityConfiguration::development(vec![])?.resolve(None)?;
+
     let e = run(&f, &b, &[], &[], 1)?;
+
     assert!(
         e.properties
             .iter()
@@ -854,6 +1012,7 @@ fn applicability_uses_authority_policy_profile_even_with_an_empty_or_changed_pro
         V::NotProven
     );
     assert_eq!(e.eligibility, CertificationEligibility::NotEligible);
+
     Ok(())
 }
 
@@ -883,8 +1042,11 @@ fn incomplete_source_is_never_eligible_even_when_authority_properties_are_not_ap
             "allow_not_applicable = true",
         );
     let b = PolicyBundle::read(text.as_bytes())?;
+
     let e = run(&f, &b, &[], &[], 1)?;
+
     assert!(e.properties.iter().all(|p| p.verdict == V::NotApplicable));
     assert_eq!(e.eligibility, CertificationEligibility::NotEligible);
+
     Ok(())
 }

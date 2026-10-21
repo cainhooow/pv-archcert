@@ -1,4 +1,5 @@
 //! Explicit migration entry point; use separately provisioned migration credentials.
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let url = std::env::var("ARCHCERT_DATABASE_URL")?;
@@ -7,5 +8,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .migrate()
         .await?;
     println!("ArchCert migrations applied");
+
     Ok(())
 }

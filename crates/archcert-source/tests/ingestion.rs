@@ -36,6 +36,7 @@ impl Repository {
         let temporary = tempfile::tempdir()?;
         // macOS's /var alias belongs to the test host, not the hostile repository.
         let path = temporary.path().canonicalize()?.join("source.git");
+
         let output = Command::new("git")
             .env_clear()
             .env("PATH", std::env::var_os("PATH").ok_or("missing PATH")?)
@@ -44,6 +45,7 @@ impl Repository {
             .args(["init", "--bare", &format!("--object-format={format}")])
             .arg(&path)
             .output()?;
+
         if !output.status.success() {
             return Err(format!(
                 "fixture Git init failed: {}",
@@ -51,6 +53,7 @@ impl Repository {
             )
             .into());
         }
+
         Ok(Self {
             _temporary: temporary,
             path,
@@ -77,6 +80,7 @@ impl Repository {
             .ok_or("missing fixture stdin")?
             .write_all(input)?;
         let output = child.wait_with_output()?;
+
         if !output.status.success() {
             return Err(format!(
                 "fixture Git failed: {}",
@@ -84,6 +88,7 @@ impl Repository {
             )
             .into());
         }
+
         Ok(output.stdout)
     }
 
@@ -92,6 +97,7 @@ impl Repository {
             &["hash-object", "--literally", "-w", "--stdin", "-t", kind],
             bytes,
         )?;
+
         Ok(GitObjectId::parse(String::from_utf8(output)?.trim())?)
     }
 
@@ -100,6 +106,7 @@ impl Repository {
         entries: &[(&str, &[u8], &GitObjectId)],
     ) -> Result<GitObjectId, Box<dyn Error>> {
         let mut bytes = Vec::new();
+
         for (mode, name, oid) in entries {
             bytes.extend_from_slice(mode.as_bytes());
             bytes.push(b' ');
@@ -107,6 +114,7 @@ impl Repository {
             bytes.push(0);
             bytes.extend_from_slice(&hex::decode(oid.as_str())?);
         }
+
         self.object("tree", &bytes)
     }
 
@@ -139,6 +147,7 @@ impl Repository {
     ) -> Result<(GitObjectId, GitObjectId, GitObjectId), Box<dyn Error>> {
         let blob = self.object("blob", bytes)?;
         let tree = self.raw_tree(&[(mode, b"file", &blob)])?;
+
         Ok((self.commit(&tree, "fixture")?, tree, blob))
     }
 
@@ -154,6 +163,7 @@ fn rejected(result: Result<SourceIngestion, SourceRejection>, expected: SourceEr
     let Err(rejection) = result else {
         return Err("invalid source was accepted".into());
     };
+
     assert_eq!(rejection.error, expected);
     assert!(
         matches!(rejection.events.last(), Some(SourceEvent::Rejected(error)) if *error == expected)
@@ -164,6 +174,7 @@ fn rejected(result: Result<SourceIngestion, SourceRejection>, expected: SourceEr
             .iter()
             .any(|e| matches!(e, SourceEvent::SnapshotCreated(_)))
     );
+
     Ok(())
 }
 
@@ -185,23 +196,29 @@ fn normal_nested_empty_binary_unicode_and_symlink_source() -> TestResult {
     let commit = repo.commit(&tree, "normal")?;
     // An independent Git parser must also accept the normal fixture.
     repo.git(&["fsck", "--strict", "--no-reflogs", commit.as_str()], b"")?;
+
     let result = repo.ingest(&commit, SourceLimits::default())?;
+
     assert_eq!(result.evidence.identity.commit, commit);
     assert_eq!(result.evidence.identity.tree, tree);
     assert_eq!(result.evidence.entry_count, 5);
     assert_eq!(result.evidence.object_count, 8);
     assert_eq!(result.evidence.status, SourceStatus::Complete);
     assert_eq!(result.snapshot.files()[1].path().as_str(), "dir/empty");
+
     let symlink = result
         .snapshot
         .files()
         .iter()
         .find(|f| f.mode() == SourceMode::Symlink)
         .ok_or("missing symlink")?;
+
     assert_eq!(symlink.bytes(), b"../../outside-secret");
+
     result
         .snapshot
         .verify(&result.evidence.identity.snapshot_sha256)?;
+
     assert!(matches!(
         result.events.as_slice(),
         [
@@ -212,26 +229,35 @@ fn normal_nested_empty_binary_unicode_and_symlink_source() -> TestResult {
             SourceEvent::SnapshotCreated(_)
         ]
     ));
+
     Ok(())
 }
 
 #[test]
 fn same_tree_reproduces_identity_across_commits_and_git_hash_algorithms() -> TestResult {
     let mut identities = Vec::new();
+
     for format in ["sha1", "sha256"] {
         let repo = Repository::new(format)?;
         let (first, tree, _) = repo.one_file(b"same source", "100644")?;
         let second = repo.commit(&tree, "different commit metadata")?;
+
         assert_ne!(first, second);
+
         let a = repo.ingest(&first, SourceLimits::default())?;
+
         let b = repo.ingest(&second, SourceLimits::default())?;
+
         assert_eq!(
             a.evidence.identity.snapshot_sha256,
             b.evidence.identity.snapshot_sha256
         );
+
         identities.push(a.evidence.identity.snapshot_sha256);
     }
+
     assert_eq!(identities[0], identities[1]);
+
     Ok(())
 }
 
@@ -239,6 +265,7 @@ fn same_tree_reproduces_identity_across_commits_and_git_hash_algorithms() -> Tes
 fn changed_content_and_executable_mode_change_source_identity() -> TestResult {
     let repo = Repository::new("sha1")?;
     let mut identities = Vec::new();
+
     for (bytes, mode) in [
         (b"original".as_slice(), "100644"),
         (b"changed", "100644"),
@@ -252,8 +279,10 @@ fn changed_content_and_executable_mode_change_source_identity() -> TestResult {
                 .snapshot_sha256,
         );
     }
+
     assert_ne!(identities[0], identities[1]);
     assert_ne!(identities[0], identities[2]);
+
     Ok(())
 }
 
@@ -270,14 +299,20 @@ fn unresolved_lfs_and_submodule_are_explicit_in_evidence() -> TestResult {
         ("100644", b"large.bin", &blob),
         ("160000", b"module", &absent_submodule),
     ])?;
+
     let result = repo.ingest(&repo.commit(&tree, "external")?, SourceLimits::default())?;
+
     assert_eq!(
         result.evidence.status,
         SourceStatus::IncompleteExternalSource
     );
-    assert!(
-        matches!(result.evidence.unresolved.as_slice(), [ExternalSource::Lfs { expected_size: 123456789, .. }, ExternalSource::Submodule { commit, .. }] if *commit == absent_submodule)
-    );
+    assert!(matches!(
+        result.evidence.unresolved.as_slice(),
+        [
+            ExternalSource::Lfs { expected_size: 123456789, .. },
+            ExternalSource::Submodule { commit, .. }
+        ] if *commit == absent_submodule
+    ));
     assert_eq!(
         result.snapshot.require_complete(),
         Err(SourceError::IncompleteExternalSource)
@@ -286,6 +321,7 @@ fn unresolved_lfs_and_submodule_are_explicit_in_evidence() -> TestResult {
         e,
         SourceEvent::Accepted(SourceStatus::IncompleteExternalSource)
     )));
+
     Ok(())
 }
 
@@ -332,6 +368,7 @@ fn missing_commit_tree_blob_and_wrong_types_are_distinct() -> TestResult {
         ),
         SourceError::ObjectTypeMismatch,
     )?;
+
     Ok(())
 }
 
@@ -339,6 +376,7 @@ fn missing_commit_tree_blob_and_wrong_types_are_distinct() -> TestResult {
 fn malicious_tree_paths_are_rejected_before_materialization() -> TestResult {
     let repo = Repository::new("sha1")?;
     let blob = repo.object("blob", b"hostile")?;
+
     for name in [
         b"..".as_slice(),
         b"/absolute",
@@ -359,6 +397,7 @@ fn malicious_tree_paths_are_rejected_before_materialization() -> TestResult {
             SourceError::InvalidSourcePath,
         )?;
     }
+
     Ok(())
 }
 
@@ -367,6 +406,7 @@ fn duplicate_normalization_and_empty_directory_collisions_fail_closed() -> TestR
     let repo = Repository::new("sha1")?;
     let blob = repo.object("blob", b"bytes")?;
     let empty = repo.raw_tree(&[])?;
+
     for entries in [
         vec![("100644", b"A".as_slice(), &blob), ("100644", b"a", &blob)],
         vec![("100644", b"a".as_slice(), &blob), ("100644", b"a", &blob)],
@@ -381,6 +421,7 @@ fn duplicate_normalization_and_empty_directory_collisions_fail_closed() -> TestR
             SourceError::PathCollision,
         )?;
     }
+
     Ok(())
 }
 
@@ -393,6 +434,7 @@ fn malformed_graphs_and_unsupported_modes_are_rejected() -> TestResult {
         repo.ingest(&malformed_commit, SourceLimits::default()),
         SourceError::MalformedGitObject,
     )?;
+
     for bytes in [b"100644 file\0short".as_slice(), b"no mode or terminator"] {
         let tree = repo.object("tree", bytes)?;
         rejected(
@@ -403,6 +445,7 @@ fn malformed_graphs_and_unsupported_modes_are_rejected() -> TestResult {
             SourceError::MalformedGitObject,
         )?;
     }
+
     let tree = repo.raw_tree(&[("100600", b"file", &blob)])?;
     rejected(
         repo.ingest(&repo.commit(&tree, "unsupported")?, SourceLimits::default()),
@@ -416,6 +459,7 @@ fn malformed_graphs_and_unsupported_modes_are_rejected() -> TestResult {
         ),
         SourceError::MalformedGitObject,
     )?;
+
     Ok(())
 }
 
@@ -424,6 +468,7 @@ fn compressed_corruption_and_object_substitution_are_rejected() -> TestResult {
     let repo = Repository::new("sha1")?;
     let (commit, _, blob) = repo.one_file(b"original", "100644")?;
     let other = repo.object("blob", b"substitute")?;
+
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(repo.object_path(&blob), fs::Permissions::from_mode(0o644))?;
     fs::copy(repo.object_path(&other), repo.object_path(&blob))?;
@@ -437,6 +482,7 @@ fn compressed_corruption_and_object_substitution_are_rejected() -> TestResult {
         repo.ingest(&commit, SourceLimits::default()),
         SourceError::MalformedGitObject,
     )?;
+
     Ok(())
 }
 
@@ -444,6 +490,7 @@ fn compressed_corruption_and_object_substitution_are_rejected() -> TestResult {
 fn trailing_compressed_bytes_and_invalid_declared_size_are_rejected() -> TestResult {
     let repo = Repository::new("sha1")?;
     let (commit, _, blob) = repo.one_file(b"data", "100644")?;
+
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(repo.object_path(&blob), fs::Permissions::from_mode(0o644))?;
     let mut compressed = fs::read(repo.object_path(&blob))?;
@@ -465,6 +512,7 @@ fn trailing_compressed_bytes_and_invalid_declared_size_are_rejected() -> TestRes
         repo.ingest(&repo.commit(&tree, "wrong size")?, SourceLimits::default()),
         SourceError::MalformedGitObject,
     )?;
+
     Ok(())
 }
 
@@ -472,13 +520,16 @@ fn trailing_compressed_bytes_and_invalid_declared_size_are_rejected() -> TestRes
 fn snapshot_owns_bytes_after_repository_tampering() -> TestResult {
     let repo = Repository::new("sha1")?;
     let (commit, _, blob) = repo.one_file(b"original", "100644")?;
+
     let result = repo.ingest(&commit, SourceLimits::default())?;
+
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(repo.object_path(&blob), fs::Permissions::from_mode(0o644))?;
     fs::write(repo.object_path(&blob), b"changed after acceptance")?;
     result
         .snapshot
         .verify(&result.evidence.identity.snapshot_sha256)?;
+
     assert_eq!(result.snapshot.files()[0].bytes(), b"original");
     assert_eq!(
         result
@@ -487,6 +538,7 @@ fn snapshot_owns_bytes_after_repository_tampering() -> TestResult {
         Err(SourceError::SnapshotDigestMismatch)
     );
     assert!(repo.ingest(&commit, SourceLimits::default()).is_err());
+
     Ok(())
 }
 
@@ -499,18 +551,22 @@ fn symlink_payload_never_reads_outside_source_and_object_symlinks_fail() -> Test
         secret.to_str().ok_or("non-UTF-8 fixture path")?.as_bytes(),
         "120000",
     )?;
+
     let result = repo.ingest(&commit, SourceLimits::default())?;
+
     assert_eq!(
         result.snapshot.files()[0].bytes(),
         secret.as_os_str().as_encoded_bytes()
     );
     assert_ne!(result.snapshot.files()[0].bytes(), b"private material");
+
     fs::remove_file(repo.object_path(&blob))?;
     std::os::unix::fs::symlink(&secret, repo.object_path(&blob))?;
     rejected(
         repo.ingest(&commit, SourceLimits::default()),
         SourceError::RepositoryAccessFailure,
     )?;
+
     Ok(())
 }
 
@@ -522,6 +578,7 @@ fn every_configured_resource_budget_fails_closed() -> TestResult {
     let tree = repo.raw_tree(&[("40000", b"dir", &child)])?;
     let commit = repo.commit(&tree, "limits")?;
     let defaults = SourceLimits::default();
+
     for (limits, resource) in [
         (
             SourceLimits {
@@ -578,6 +635,7 @@ fn every_configured_resource_budget_fails_closed() -> TestResult {
             SourceError::LimitExceeded(resource),
         )?;
     }
+
     Ok(())
 }
 
@@ -590,6 +648,7 @@ fn no_hooks_filters_worktree_refs_or_configuration_are_executed_or_trusted() -> 
         repo.path.join("hooks/post-checkout"),
         format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
     )?;
+
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(
         repo.path.join("hooks/post-checkout"),
@@ -599,12 +658,15 @@ fn no_hooks_filters_worktree_refs_or_configuration_are_executed_or_trusted() -> 
     fs::write(repo.path.join("config"), b"[malformed configuration\n")?;
     fs::write(repo.path.join("HEAD"), b"ref: ../../outside\n")?;
     fs::write(repo.path.join("file"), b"uncommitted substituted worktree")?;
+
     let result = repo.ingest(&commit, SourceLimits::default())?;
+
     assert_eq!(
         result.snapshot.files()[0].bytes(),
         b"trusted only after hashing"
     );
     assert!(!marker.exists());
+
     Ok(())
 }
 
@@ -614,11 +676,14 @@ fn packed_only_repository_is_rejected_instead_of_using_git_fallback() -> TestRes
     let (commit, _, _) = repo.one_file(b"packed", "100644")?;
     repo.git(&["update-ref", "refs/heads/main", commit.as_str()], b"")?;
     repo.git(&["repack", "-a", "-d"], b"")?;
+
     assert!(!repo.object_path(&commit).exists());
+
     rejected(
         repo.ingest(&commit, SourceLimits::default()),
         SourceError::CommitNotFound,
     )?;
+
     Ok(())
 }
 
@@ -627,8 +692,11 @@ fn large_compressed_blobs_are_bounded_during_inflation() -> TestResult {
     let repo = Repository::new("sha1")?;
     let content = vec![b'x'; 128 * 1024];
     let (commit, _, blob) = repo.one_file(&content, "100644")?;
+
     let accepted = repo.ingest(&commit, SourceLimits::default())?;
+
     assert_eq!(accepted.snapshot.files()[0].bytes(), content);
+
     rejected(
         repo.ingest(
             &commit,
@@ -640,6 +708,7 @@ fn large_compressed_blobs_are_bounded_during_inflation() -> TestResult {
         SourceError::LimitExceeded(ResourceLimit::ObjectBytes),
     )?;
     let compressed = fs::read(repo.object_path(&blob))?;
+
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(repo.object_path(&blob), fs::Permissions::from_mode(0o644))?;
     fs::write(repo.object_path(&blob), &compressed[..compressed.len() - 2])?;
@@ -647,6 +716,7 @@ fn large_compressed_blobs_are_bounded_during_inflation() -> TestResult {
         repo.ingest(&commit, SourceLimits::default()),
         SourceError::MalformedGitObject,
     )?;
+
     Ok(())
 }
 
@@ -656,10 +726,12 @@ fn repository_mapping_and_locator_symlinks_fail_closed() -> TestResult {
     let repo = Repository::new("sha1")?;
     let (commit, _, _) = repo.one_file(b"source", "100644")?;
     let gateway = LocalGitGateway::new(repo.identity.clone(), &repo.path);
+
     assert!(matches!(
         gateway.quarantine(&RepositoryId::parse("different")?),
         Err(SourceError::RepositoryAccessFailure)
     ));
+
     let alias = repo
         .path
         .parent()
@@ -680,6 +752,7 @@ fn repository_mapping_and_locator_symlinks_fail_closed() -> TestResult {
         ),
         SourceError::RepositoryAccessFailure,
     )?;
+
     Ok(())
 }
 
@@ -695,6 +768,7 @@ fn packed_and_loose_ingestion_have_identical_canonical_source() -> TestResult {
         let tree =
             repository.raw_tree(&[("100644", b"file", &blob), ("120000", b"link", &blob)])?;
         let commit = repository.commit(&tree, "same exact source")?;
+
         let loose = repository.ingest(&commit, SourceLimits::default())?;
         let pack = repository.git(
             &["pack-objects", "--stdout", "--revs"],
@@ -712,6 +786,7 @@ fn packed_and_loose_ingestion_have_identical_canonical_source() -> TestResult {
             loose.evidence.submission.clone(),
             SourceLimits::default(),
         )?;
+
         assert_eq!(packed.snapshot.identity(), loose.snapshot.identity());
         assert_eq!(
             packed.snapshot.manifest().canonical_bytes(),
@@ -719,8 +794,10 @@ fn packed_and_loose_ingestion_have_identical_canonical_source() -> TestResult {
         );
         assert!(gateway_for_wrong_scope(&pack, format, &commit)?);
     }
+
     Ok(())
 }
+
 fn gateway_for_wrong_scope(
     pack: &[u8],
     format: archcert_source::GitObjectFormat,
@@ -732,6 +809,7 @@ fn gateway_for_wrong_scope(
         format,
         archcert_source::PackLimits::default(),
     )?;
+
     Ok(ingest_source(
         &gateway,
         &mut MemorySourceStore::default(),
@@ -750,13 +828,16 @@ fn synthetic_pack(
 ) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut out =
         gix_pack::data::header::encode(gix_pack::data::Version::V2, entries.len() as u32).to_vec();
+
     for (header, bytes) in entries {
         header.write_to(bytes.len() as u64, &mut out)?;
         let mut z = ZlibEncoder::new(Vec::new(), Compression::default());
         z.write_all(bytes)?;
         out.extend_from_slice(&z.finish()?);
     }
+
     out.extend_from_slice(&sha1::Sha1::digest(out.clone()));
+
     Ok(out)
 }
 
@@ -769,6 +850,7 @@ fn malformed_oversized_pack_and_missing_delta_base_fail_closed() -> TestResult {
     let load = |bytes: &[u8], limits| {
         PackedGitGateway::new(identity.clone(), bytes, GitObjectFormat::Sha1, limits)
     };
+
     for bytes in [
         b"malformed".to_vec(),
         valid[..valid.len() - 1].to_vec(),
@@ -776,8 +858,10 @@ fn malformed_oversized_pack_and_missing_delta_base_fail_closed() -> TestResult {
     ] {
         assert!(load(&bytes, PackLimits::default()).is_err());
     }
+
     let mut corrupted = valid.clone();
     *corrupted.last_mut().ok_or("empty pack")? ^= 1;
+
     assert!(matches!(
         load(&corrupted, PackLimits::default()),
         Err(SourceError::ObjectIdentityMismatch)
@@ -802,7 +886,9 @@ fn malformed_oversized_pack_and_missing_delta_base_fail_closed() -> TestResult {
         )
         .is_err()
     );
+
     let too_many = synthetic_pack(&[(Header::Blob, b"a".to_vec()), (Header::Blob, b"b".to_vec())])?;
+
     assert!(
         load(
             &too_many,
@@ -813,12 +899,15 @@ fn malformed_oversized_pack_and_missing_delta_base_fail_closed() -> TestResult {
         )
         .is_err()
     );
+
     let base_id = gix_hash::ObjectId::from_hex(b"1111111111111111111111111111111111111111")?;
     let missing = synthetic_pack(&[(
         Header::RefDelta { base_id },
         b"\x03\x04\x90\x03\x01d".to_vec(),
     )])?;
+
     assert!(load(&missing, PackLimits::default()).is_err());
+
     // Declared zero output with a nonempty stream is rejected at the first chunk.
     let mut bomb = gix_pack::data::header::encode(gix_pack::data::Version::V2, 1).to_vec();
     Header::Blob.write_to(0, &mut bomb)?;
@@ -826,6 +915,7 @@ fn malformed_oversized_pack_and_missing_delta_base_fail_closed() -> TestResult {
     z.write_all(&vec![0; 1024 * 1024])?;
     bomb.extend_from_slice(&z.finish()?);
     bomb.extend_from_slice(&sha1::Sha1::digest(bomb.clone()));
+
     assert!(
         receive_pack(
             std::io::Cursor::new(bomb),
@@ -834,6 +924,7 @@ fn malformed_oversized_pack_and_missing_delta_base_fail_closed() -> TestResult {
         )
         .is_err()
     );
+
     Ok(())
 }
 
@@ -857,6 +948,7 @@ fn ref_and_offset_deltas_decode_and_depth_expansion_budgets_apply() -> TestResul
         GitObjectFormat::Sha1,
         PackLimits::default(),
     )?;
+
     assert!(
         PackedGitGateway::new(
             id.clone(),
@@ -869,6 +961,7 @@ fn ref_and_offset_deltas_decode_and_depth_expansion_budgets_apply() -> TestResul
         )
         .is_err()
     );
+
     let repeated_base =
         gix_hash::ObjectId::from_hex(hex::encode(sha1::Sha1::digest(b"blob 3\0abc")).as_bytes())?;
     let duplicate = synthetic_pack(&[
@@ -895,6 +988,7 @@ fn ref_and_offset_deltas_decode_and_depth_expansion_budgets_apply() -> TestResul
     // Make a real ofs chain using library header encoding; no custom production delta parser.
     let mut out = gix_pack::data::header::encode(gix_pack::data::Version::V2, 35).to_vec();
     let mut previous = 0;
+
     for n in 0..35 {
         let at = out.len();
         let (header, payload) = if n == 0 {
@@ -913,7 +1007,9 @@ fn ref_and_offset_deltas_decode_and_depth_expansion_budgets_apply() -> TestResul
         out.extend_from_slice(&z.finish()?);
         previous = at;
     }
+
     out.extend_from_slice(&sha1::Sha1::digest(out.clone()));
+
     assert!(matches!(
         PackedGitGateway::new(
             id.clone(),
@@ -923,6 +1019,7 @@ fn ref_and_offset_deltas_decode_and_depth_expansion_budgets_apply() -> TestResul
         ),
         Err(SourceError::LimitExceeded(ResourceLimit::DeltaDepth))
     ));
+
     PackedGitGateway::new(
         id.clone(),
         &out,
@@ -933,6 +1030,7 @@ fn ref_and_offset_deltas_decode_and_depth_expansion_budgets_apply() -> TestResul
         },
     )?;
     let expansion = synthetic_pack(&[(Header::Blob, vec![b'a'; 100_000])])?;
+
     assert!(matches!(
         PackedGitGateway::new(
             id.clone(),
@@ -957,5 +1055,6 @@ fn ref_and_offset_deltas_decode_and_depth_expansion_budgets_apply() -> TestResul
         )
         .is_err()
     );
+
     Ok(())
 }

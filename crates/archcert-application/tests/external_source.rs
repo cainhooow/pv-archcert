@@ -1,4 +1,5 @@
 //! External bytes require authority mapping and verification; no URL fetch exists.
+
 use archcert_application::external_source::{ExternalSourceAuthority, resolve_external_source};
 use archcert_domain::{
     GitObjectId, ProjectId,
@@ -14,6 +15,7 @@ struct Authority {
     submodule: Option<Arc<SourceSnapshot>>,
     wrong_commit: bool,
 }
+
 impl ExternalSourceAuthority for Authority {
     fn lfs_object(
         &self,
@@ -23,6 +25,7 @@ impl ExternalSourceAuthority for Authority {
     ) -> Result<Box<dyn Read + '_>, SourceError> {
         Ok(Box::new(std::io::Cursor::new(&self.lfs)))
     }
+
     fn submodule(
         &self,
         _: &SourceSnapshot,
@@ -33,10 +36,12 @@ impl ExternalSourceAuthority for Authority {
             .as_ref()
             .ok_or(SourceError::IncompleteExternalSource)?;
         let mut identity = snapshot.identity().clone();
+
         if self.wrong_commit {
             identity.commit = GitObjectId::parse("9".repeat(40))
                 .map_err(|_| SourceError::InternalIntegrityFailure)?;
         }
+
         Ok((
             SnapshotReference {
                 project: snapshot.project(),
@@ -47,6 +52,7 @@ impl ExternalSourceAuthority for Authority {
         ))
     }
 }
+
 fn snapshot(files: Vec<SourceFile>) -> Result<Arc<SourceSnapshot>, Box<dyn std::error::Error>> {
     Ok(Arc::new(SourceSnapshot::seal(
         ProjectId::new(),
@@ -58,6 +64,7 @@ fn snapshot(files: Vec<SourceFile>) -> Result<Arc<SourceSnapshot>, Box<dyn std::
         1,
     )?))
 }
+
 fn file(name: &str, mode: SourceMode, bytes: &[u8]) -> Result<SourceFile, SourceError> {
     Ok(SourceFile::new(
         SourcePath::from_bytes(name.as_bytes())?,
@@ -65,6 +72,7 @@ fn file(name: &str, mode: SourceMode, bytes: &[u8]) -> Result<SourceFile, Source
         bytes.to_vec(),
     ))
 }
+
 #[test]
 fn lfs_digest_and_size_are_verified_in_a_new_immutable_representation()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -83,13 +91,17 @@ fn lfs_digest_and_size_are_verified_in_a_new_immutable_representation()
     };
     let resolved =
         resolve_external_source(Arc::clone(&original), &authority, SourceLimits::default())?;
+
     assert_eq!(resolved.files()[0].bytes(), bytes);
     assert_ne!(resolved.digest(), &identity.snapshot_sha256);
     assert_eq!(original.identity(), &identity);
     assert!(original.require_complete().is_err());
+
     let repeated =
         resolve_external_source(Arc::clone(&original), &authority, SourceLimits::default())?;
+
     assert_eq!(resolved.canonical_bytes(), repeated.canonical_bytes());
+
     for lfs in [b"wrong content".to_vec(), b"resolved source extra".to_vec()] {
         assert!(
             resolve_external_source(
@@ -104,12 +116,15 @@ fn lfs_digest_and_size_are_verified_in_a_new_immutable_representation()
             .is_err()
         );
     }
+
     Ok(())
 }
+
 #[test]
 fn submodule_urls_are_never_authority_and_only_exact_complete_mappings_resolve()
 -> Result<(), Box<dyn std::error::Error>> {
     let child = snapshot(vec![file("child", SourceMode::File, b"immutable")?])?;
+
     for url in [
         "file:///etc",
         "https://localhost/",
@@ -130,6 +145,7 @@ fn submodule_urls_are_never_authority_and_only_exact_complete_mappings_resolve()
                 child.identity().commit.as_str().as_bytes(),
             )?,
         ])?;
+
         assert!(
             resolve_external_source(
                 Arc::clone(&original),
@@ -154,6 +170,7 @@ fn submodule_urls_are_never_authority_and_only_exact_complete_mappings_resolve()
             )
             .is_err()
         );
+
         let resolved = resolve_external_source(
             original,
             &Authority {
@@ -163,6 +180,7 @@ fn submodule_urls_are_never_authority_and_only_exact_complete_mappings_resolve()
             },
             SourceLimits::default(),
         )?;
+
         assert!(
             resolved
                 .files()
@@ -170,5 +188,6 @@ fn submodule_urls_are_never_authority_and_only_exact_complete_mappings_resolve()
                 .any(|f| f.path().as_str() == "module/child")
         );
     }
+
     Ok(())
 }

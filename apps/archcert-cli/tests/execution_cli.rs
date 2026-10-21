@@ -1,4 +1,5 @@
 //! Project requests never become authority runtime configuration.
+
 use std::{error::Error, fs, process::Command};
 #[test]
 fn project_config_accepts_structured_requests_and_rejects_security_settings()
@@ -7,13 +8,16 @@ fn project_config_accepts_structured_requests_and_rejects_security_settings()
     let config = root.path().join("archcert.toml");
     let valid = "schema=1\n[project]\nname='fixture'\n[execution]\nprofile='node'\n[[execution.commands]]\nname='typecheck'\nprogram='pnpm'\nargs=['typecheck']\n";
     fs::write(&config, valid)?;
+
     let check = || {
         Command::new(env!("CARGO_BIN_EXE_archcert"))
             .args(["config-check", "--file"])
             .arg(&config)
             .output()
     };
+
     assert!(check()?.status.success());
+
     for setting in [
         "privileged=true",
         "network='host'",
@@ -25,22 +29,30 @@ fn project_config_accepts_structured_requests_and_rejects_security_settings()
     ] {
         let invalid = valid.replace("profile='node'", &format!("profile='node'\n{setting}"));
         fs::write(&config, invalid)?;
+
         assert!(!check()?.status.success(), "{setting}");
     }
+
     fs::write(
         &config,
         valid.replace("program='pnpm'", "program='sh -c test'"),
     )?;
+
     assert!(!check()?.status.success());
+
     Ok(())
 }
+
 #[test]
 fn execution_help_exposes_only_structural_dry_run_inputs() -> Result<(), Box<dyn Error>> {
     let output = Command::new(env!("CARGO_BIN_EXE_archcert"))
         .args(["run", "--help"])
         .output()?;
+
     assert!(output.status.success());
+
     let help = String::from_utf8(output.stdout)?;
+
     for required in [
         "--snapshot",
         "--profile",
@@ -51,8 +63,10 @@ fn execution_help_exposes_only_structural_dry_run_inputs() -> Result<(), Box<dyn
     ] {
         assert!(help.contains(required));
     }
+
     assert!(help.contains("engineering evidence"));
     assert!(!help.contains("Validates the local"));
+
     for forbidden in [
         "--privileged",
         "--mount",
@@ -62,6 +76,7 @@ fn execution_help_exposes_only_structural_dry_run_inputs() -> Result<(), Box<dyn
     ] {
         assert!(!help.contains(forbidden));
     }
+
     Ok(())
 }
 
@@ -73,6 +88,7 @@ fn run_resolves_project_configuration_before_contacting_runtime() -> Result<(), 
         &config,
         "schema=1\n[project]\nname='fixture'\n[execution]\nprofile='rust'\n[[execution.commands]]\nname='test'\nprogram='cargo'\nargs=['test']\n",
     )?;
+
     let output = Command::new(env!("CARGO_BIN_EXE_archcert"))
         .args([
             "run",
@@ -100,9 +116,11 @@ fn run_resolves_project_configuration_before_contacting_runtime() -> Result<(), 
         ])
         .arg(config)
         .output()?;
+
     assert!(!output.status.success());
     assert!(
         String::from_utf8(output.stderr)?.contains("unknown authority execution profile: rust")
     );
+
     Ok(())
 }
