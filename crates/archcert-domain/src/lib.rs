@@ -9,11 +9,17 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub mod execution;
+
 pub mod ingress;
+
 pub mod jobs;
+
 pub mod knowledge;
+
 pub mod materialization;
+
 pub mod source;
+
 /// Unique identifier of a registered project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ProjectId(Uuid);
@@ -92,6 +98,7 @@ impl GitObjectId {
         let value = value.into();
         let valid_len = value.len() == 40 || value.len() == 64;
         let valid_hex = value.bytes().all(|b| b.is_ascii_hexdigit());
+
         if valid_len && valid_hex {
             Ok(Self(value.to_ascii_lowercase()))
         } else {
@@ -123,6 +130,7 @@ impl Sha256Digest {
     /// Validates a SHA-256 hexadecimal digest.
     pub fn parse(value: impl Into<String>) -> Result<Self, SourceIdentityError> {
         let value = value.into();
+
         if value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()) {
             Ok(Self(value.to_ascii_lowercase()))
         } else {

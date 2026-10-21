@@ -10,30 +10,37 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String")]
 pub struct ExecutionId(Uuid);
+
 impl ExecutionId {
     /// Generates a new opaque execution identity.
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
 }
+
 impl TryFrom<String> for ExecutionId {
     type Error = ExecutionError;
+
     fn try_from(text: String) -> Result<Self, Self::Error> {
         let id = Uuid::parse_str(&text).map_err(|_| ExecutionError::SourceIntegrity)?;
+
         if id.get_version_num() != 4
             || id.get_variant() != uuid::Variant::RFC4122
             || id.to_string() != text
         {
             return Err(ExecutionError::SourceIntegrity);
         }
+
         Ok(Self(id))
     }
 }
+
 impl Default for ExecutionId {
     fn default() -> Self {
         Self::new()
     }
 }
+
 impl std::fmt::Display for ExecutionId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -69,6 +76,7 @@ pub struct ExecutionLimits {
     /// /output tmpfs ceiling; artifacts are not exported in this milestone.
     pub output_bytes: u64,
 }
+
 impl Default for ExecutionLimits {
     fn default() -> Self {
         Self {
@@ -84,6 +92,7 @@ impl Default for ExecutionLimits {
         }
     }
 }
+
 impl ExecutionLimits {
     /// Rejects zero, excessive or inconsistent authority budgets before runtime access.
     pub fn validate(&self) -> Result<(), ExecutionError> {
@@ -102,6 +111,7 @@ impl ExecutionLimits {
         {
             return Err(ExecutionError::InvalidLimits);
         }
+
         Ok(())
     }
 }
@@ -114,6 +124,7 @@ pub struct ExecutionCommand {
     args: Vec<String>,
     working_directory: String,
 }
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawCommand {
@@ -121,12 +132,15 @@ struct RawCommand {
     args: Vec<String>,
     working_directory: String,
 }
+
 impl TryFrom<RawCommand> for ExecutionCommand {
     type Error = ExecutionError;
+
     fn try_from(c: RawCommand) -> Result<Self, Self::Error> {
         Self::new(c.program, c.args, c.working_directory)
     }
 }
+
 impl ExecutionCommand {
     /// Accepts a program name or absolute sandbox path and literal arguments.
     pub fn new(
@@ -148,29 +162,35 @@ impl ExecutionCommand {
         {
             return Err(ExecutionError::InvalidCommand);
         }
+
         let valid_cwd = ["/source", "/work"].iter().any(|root| {
             working_directory == *root
                 || working_directory
                     .strip_prefix(&format!("{root}/"))
                     .is_some_and(|p| crate::source::SourcePath::from_bytes(p.as_bytes()).is_ok())
         });
+
         if !valid_cwd {
             return Err(ExecutionError::InvalidCommand);
         }
+
         Ok(Self {
             program,
             args,
             working_directory,
         })
     }
+
     /// Literal executable; it is executed only inside the sandbox.
     pub fn program(&self) -> &str {
         &self.program
     }
+
     /// Literal argument vector.
     pub fn args(&self) -> &[String] {
         &self.args
     }
+
     /// Absolute sandbox directory, limited to /source or /work and descendants.
     pub fn working_directory(&self) -> &str {
         &self.working_directory
@@ -185,6 +205,7 @@ pub struct ExecutionProfile {
     programs: Vec<String>,
     limits: ExecutionLimits,
 }
+
 impl ExecutionProfile {
     /// Selects an immutable locally provisioned OCI digest, commands and limits.
     pub fn new(
@@ -197,6 +218,7 @@ impl ExecutionProfile {
         let Some((repository, digest)) = image.split_once("@sha256:") else {
             return Err(ExecutionError::InvalidProfile);
         };
+
         if name.is_empty()
             || name.len() > 64
             || !name
@@ -219,6 +241,7 @@ impl ExecutionProfile {
         {
             return Err(ExecutionError::InvalidProfile);
         }
+
         Ok(Self {
             name,
             image,
@@ -226,29 +249,36 @@ impl ExecutionProfile {
             limits,
         })
     }
+
     /// Profile policy name.
     pub fn name(&self) -> &str {
         &self.name
     }
+
     /// Immutable OCI repository digest. Automatic pulls are disabled.
     pub fn image(&self) -> &str {
         &self.image
     }
+
     /// Authority resource policy.
     pub fn limits(&self) -> ExecutionLimits {
         self.limits
     }
+
     /// Selects finite authority budgets; profile registry enforces its narrower maximum.
     pub fn with_limits(&self, limits: ExecutionLimits) -> Result<Self, ExecutionError> {
         limits.validate()?;
         let mut profile = self.clone();
         profile.limits = limits;
+
         Ok(profile)
     }
+
     /// Approved executable set, independent of actual observed toolchain versions.
     pub fn programs(&self) -> &[String] {
         &self.programs
     }
+
     /// Fails closed for executables outside the selected profile.
     pub fn authorize(&self, command: &ExecutionCommand) -> Result<(), ExecutionError> {
         if self.programs.iter().any(|p| p == command.program()) {
@@ -324,6 +354,7 @@ pub enum ExecutionState {
     /// Sandbox and job image removed.
     Destroyed,
 }
+
 impl ExecutionState {
     /// Enforces forward progress; rejection can enter termination during setup.
     pub fn advance(self, next: Self) -> Result<Self, ExecutionError> {
@@ -362,6 +393,7 @@ pub enum ExecutionOutcome {
     /// Runtime reports termination by signal; causality may be unknown.
     Terminated,
 }
+
 /// Observed termination cause; never infer a PID/CPU exhaustion from arbitrary log text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TerminationReason {
@@ -408,6 +440,7 @@ pub struct ObservedRuntimeIdentity {
     /// Reported runtime component versions, kernel and operating system facts.
     pub runtime_information: BTreeMap<String, String>,
 }
+
 /// Image/profile naming cannot establish a toolchain version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolchainObservation {
@@ -499,10 +532,13 @@ mod tests {
             vec!["test".into(), "--locked".into(), "$(touch /x); hi".into()],
             "/source".into(),
         )?;
+
         assert_eq!(c.args()[2], "$(touch /x); hi");
+
         for p in ["sh -c test", "../cargo", "./cargo", "-x", ""] {
             assert!(ExecutionCommand::new(p.into(), vec![], "/source".into()).is_err());
         }
+
         for cwd in [
             "/",
             "/work/../source",
@@ -513,14 +549,19 @@ mod tests {
         ] {
             assert!(ExecutionCommand::new("cargo".into(), vec![], cwd.into()).is_err());
         }
+
         Ok(())
     }
+
     #[test]
     fn every_resource_limit_is_validated() {
         let valid = ExecutionLimits::default();
+
         assert!(valid.validate().is_ok());
+
         for n in 0..10 {
             let mut l = valid;
+
             match n {
                 0 => l.timeout_ms = 0,
                 1 => l.cpu_millis = 0,
@@ -533,9 +574,11 @@ mod tests {
                 8 => l.output_bytes = 0,
                 _ => l.timeout_ms = u64::MAX,
             }
+
             assert_eq!(l.validate(), Err(ExecutionError::InvalidLimits));
         }
     }
+
     #[test]
     fn immutable_authority_profile_and_clean_environment() -> Result<(), ExecutionError> {
         let image = format!("archcert/runner@sha256:{}", "a".repeat(64));
@@ -545,6 +588,7 @@ mod tests {
             vec!["cargo".into()],
             ExecutionLimits::default(),
         )?;
+
         assert!(
             profile
                 .authorize(&ExecutionCommand::new(
@@ -562,6 +606,7 @@ mod tests {
             )?),
             Err(ExecutionError::CommandNotAllowed)
         );
+
         for image in ["rust:latest", "rust:1", "--privileged", "x@sha256:ab"] {
             assert!(
                 ExecutionProfile::new(
@@ -573,9 +618,12 @@ mod tests {
                 .is_err()
             );
         }
+
         let env = sandbox_environment();
+
         assert_eq!(env.len(), 5);
         assert_eq!(env["HOME"], "/home/archcert");
+
         for key in [
             "SSH_AUTH_SOCK",
             "DATABASE_URL",
@@ -589,12 +637,15 @@ mod tests {
         ] {
             assert!(!env.contains_key(key));
         }
+
         assert_eq!(
             serde_json::to_value(NetworkPolicy::Denied).ok(),
             Some(serde_json::json!("Denied"))
         );
+
         Ok(())
     }
+
     #[test]
     fn lifecycle_never_confuses_unfinished_with_destroyed() -> Result<(), ExecutionError> {
         use ExecutionState::*;
@@ -610,6 +661,7 @@ mod tests {
             Destroyed
         );
         assert!(Destroyed.advance(Running).is_err());
+
         Ok(())
     }
 }

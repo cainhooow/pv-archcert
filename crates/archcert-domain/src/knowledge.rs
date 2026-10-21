@@ -1,4 +1,5 @@
 //! Knowledge vocabulary. Observation, authority assertion and inference are distinct.
+
 use crate::{ProjectId, Sha256Digest, source::SourcePath};
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +11,7 @@ macro_rules! vocabulary {
         pub enum $name { $(#[doc = $description] $variant),+ }
     };
 }
+
 vocabulary!(NodeKind, "Generic typed knowledge; no language-specific graph schema.", {
     SourceFile => "An exact accepted source entry.",
     Symbol => "An observed syntactic declaration.",
@@ -25,6 +27,7 @@ vocabulary!(NodeKind, "Generic typed knowledge; no language-specific graph schem
     CertificationEvidence => "An exact prior evidence reference selected by authority.",
     BlindSpot => "An explicitly unresolved knowledge area."
 });
+
 vocabulary!(RelationKind, "Relations describe observations, never an invented resolved call graph.", {
     Defines => "A source or syntactic container declares a node.",
     Imports => "An observed import spelling; resolution is separately recorded.",
@@ -38,6 +41,7 @@ vocabulary!(RelationKind, "Relations describe observations, never an invented re
     Claims => "An untrusted claim about another node.",
     Contradicts => "A referenced evidence item contradicts an untrusted claim."
 });
+
 vocabulary!(Provenance, "Evidence confidence is categorical provenance, separate from coverage.", {
     DirectlyObserved => "Retained source syntax or exact canonical bytes.",
     DeterministicallyDerived => "A mechanical derivation from bound inputs.",
@@ -45,11 +49,13 @@ vocabulary!(Provenance, "Evidence confidence is categorical provenance, separate
     SemanticallyInferred => "A semantic hypothesis, never deterministic proof.",
     Unresolved => "No supported derivation establishes the relationship."
 });
+
 vocabulary!(CoverageState, "Dimensional coverage, never a correctness percentage.", {
     Complete => "The explicitly bounded dimension was fully inventoried.",
     Partial => "Supported observations exist with explicit omissions.",
     NotAvailable => "This dimension has no supported analysis."
 });
+
 vocabulary!(CoverageDimension, "Independent coverage dimensions.", {
     SourceInventory => "Accepted source inventory.",
     RustStructure => "Rust syntax, excluding compilation and macro expansion.",
@@ -59,17 +65,20 @@ vocabulary!(CoverageDimension, "Independent coverage dimensions.", {
     GitBaseline => "Authority-selected exact baseline availability.",
     SemanticReview => "Accepted semantic context and response availability."
 });
+
 vocabulary!(ApprovalState, "Authority-owned approval state; source cannot approve anything.", {
     Draft => "Not approved as authority knowledge.",
     Approved => "Approved by the separately provisioned authority.",
     Retired => "Retained history that is no longer approved for new composition."
 });
+
 vocabulary!(KnowledgeSeverity, "Authority assertion priority, separate from deterministic verdicts.", {
     Critical => "Critical authority concern.",
     High => "High-priority authority concern.",
     Medium => "Additional authority scrutiny.",
     Informational => "Context only."
 });
+
 vocabulary!(AuthorityEntryKind, "Types that only authority composition may contribute.", {
     Invariant => "A domain rule asserted by the authority.",
     Finding => "An owner, auditor, incident, postmortem or certification finding.",
@@ -90,12 +99,14 @@ pub enum KnowledgeScope {
     /// Knowledge private to one authority project.
     Project(ProjectId),
 }
+
 impl KnowledgeScope {
     /// Checks scope before packaging any private content.
     pub fn permits(&self, project: ProjectId) -> bool {
         matches!(self, Self::Global) || *self == Self::Project(project)
     }
 }
+
 /// An omission that must survive into immutable evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -107,6 +118,7 @@ pub struct BlindSpot {
     /// Human explanation of the unproven area.
     pub reason: String,
 }
+
 /// Coverage of one dimension; reasons are part of artifact identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -118,6 +130,7 @@ pub struct KnowledgeCoverage {
     /// Explicit scope and limitations.
     pub reason: String,
 }
+
 /// A graph node. Its producer and provenance govern interpretation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -135,6 +148,7 @@ pub struct KnowledgeNode {
     /// How this fact was established.
     pub provenance: Provenance,
 }
+
 /// A typed relationship with explicit unresolved semantics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -150,6 +164,7 @@ pub struct KnowledgeEdge {
     /// Derivation category, never a probability.
     pub provenance: Provenance,
 }
+
 /// Explicit supersession reference; cannot mutate the previous immutable entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Supersession {
@@ -160,6 +175,7 @@ pub struct Supersession {
     /// Previous canonical entry identity.
     pub sha256: Sha256Digest,
 }
+
 /// Trusted authoring input. Frozen bundles validate it; no target decoder exists.
 #[derive(Debug, Clone, Serialize)]
 pub struct AuthorityKnowledgeEntry {

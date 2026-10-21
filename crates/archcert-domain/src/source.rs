@@ -11,6 +11,7 @@ use thiserror::Error;
 use unicode_normalization::is_nfc;
 
 mod binding;
+
 pub use binding::{ResolvedDependency, SourceBinding};
 
 #[cfg(test)]
@@ -137,6 +138,7 @@ impl RepositoryId {
     /// Accepts a nonempty ASCII authority label, at most 128 bytes.
     pub fn parse(value: impl Into<String>) -> Result<Self, SourceError> {
         let value = value.into();
+
         if value.is_empty()
             || value.len() > 128
             || !value
@@ -145,6 +147,7 @@ impl RepositoryId {
         {
             return Err(SourceError::UnsupportedRepository);
         }
+
         Ok(Self(value))
     }
 
@@ -156,6 +159,7 @@ impl RepositoryId {
 
 impl TryFrom<String> for RepositoryId {
     type Error = SourceError;
+
     fn try_from(value: String) -> Result<Self, Self::Error> {
         Self::parse(value)
     }
@@ -171,15 +175,18 @@ impl SourcePath {
     /// Non-UTF-8 and non-NFC Git names are explicitly unsupported by schema v1.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, SourceError> {
         let value = std::str::from_utf8(bytes).map_err(|_| SourceError::InvalidSourcePath)?;
+
         if value.is_empty() || value.len() > 4096 || !is_nfc(value) {
             return Err(SourceError::InvalidSourcePath);
         }
+
         for part in value.split('/') {
             let lower = part.to_lowercase();
             let stem = lower
                 .split('.')
                 .next()
                 .ok_or(SourceError::InvalidSourcePath)?;
+
             if part.is_empty()
                 || part.len() > 255
                 || part == "."
@@ -197,6 +204,7 @@ impl SourcePath {
                 return Err(SourceError::InvalidSourcePath);
             }
         }
+
         Ok(Self(value.to_owned()))
     }
 
@@ -213,6 +221,7 @@ impl SourcePath {
 
 impl TryFrom<String> for SourcePath {
     type Error = SourceError;
+
     fn try_from(value: String) -> Result<Self, Self::Error> {
         Self::from_bytes(value.as_bytes())
     }
@@ -273,18 +282,22 @@ impl ManifestEntry {
             size,
         }
     }
+
     /// Validated source path.
     pub fn path(&self) -> &SourcePath {
         &self.path
     }
+
     /// Git leaf mode.
     pub fn mode(&self) -> SourceMode {
         self.mode
     }
+
     /// Independently computed content identity.
     pub fn content_sha256(&self) -> &Sha256Digest {
         &self.content_sha256
     }
+
     /// Canonical payload size in bytes.
     pub fn size(&self) -> u64 {
         self.size
@@ -302,15 +315,19 @@ impl SourceManifest {
     pub fn new(mut entries: Vec<ManifestEntry>) -> Result<Self, SourceError> {
         entries.sort_by(|a, b| a.path.cmp(&b.path));
         let mut names: BTreeMap<String, (String, bool)> = BTreeMap::new();
+
         for entry in &entries {
             let mut prefix = String::new();
             let parts: Vec<_> = entry.path.as_str().split('/').collect();
+
             for (index, part) in parts.iter().enumerate() {
                 if !prefix.is_empty() {
                     prefix.push('/');
                 }
+
                 prefix.push_str(part);
                 let leaf = index + 1 == parts.len();
+
                 if let Some((existing, existing_leaf)) = names.get(&prefix.to_lowercase()) {
                     if existing != &prefix || leaf || *existing_leaf {
                         return Err(SourceError::PathCollision);
@@ -320,6 +337,7 @@ impl SourceManifest {
                 }
             }
         }
+
         Ok(Self { entries })
     }
 
@@ -332,6 +350,7 @@ impl SourceManifest {
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut bytes = b"ARCHCERT-SOURCE\0\x00\x00\x00\x01".to_vec();
         bytes.extend_from_slice(&(self.entries.len() as u64).to_be_bytes());
+
         for entry in &self.entries {
             let path = entry.path.as_str().as_bytes();
             bytes.extend_from_slice(&(path.len() as u64).to_be_bytes());
@@ -341,6 +360,7 @@ impl SourceManifest {
             bytes.extend_from_slice(entry.content_sha256.as_str().as_bytes());
             bytes.extend_from_slice(&entry.size.to_be_bytes());
         }
+
         bytes
     }
 
@@ -375,18 +395,22 @@ impl SourceFile {
     pub fn new(path: SourcePath, mode: SourceMode, bytes: Vec<u8>) -> Self {
         Self { path, mode, bytes }
     }
+
     /// Source name, never a host path.
     pub fn path(&self) -> &SourcePath {
         &self.path
     }
+
     /// File semantics; symlink payloads must never be dereferenced.
     pub fn mode(&self) -> SourceMode {
         self.mode
     }
+
     /// Retained immutable payload.
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
+
     /// Independently derives manifest metadata from the owned payload.
     pub fn manifest_entry(&self) -> ManifestEntry {
         ManifestEntry::new(
@@ -427,6 +451,7 @@ fn external_source(file: &SourceFile) -> Result<Option<ExternalSource>, SourceEr
             commit: GitObjectId::parse(oid).map_err(|_| SourceError::MalformedGitObject)?,
         }));
     }
+
     if !matches!(file.mode, SourceMode::File | SourceMode::Executable)
         || !file
             .bytes
@@ -434,21 +459,27 @@ fn external_source(file: &SourceFile) -> Result<Option<ExternalSource>, SourceEr
     {
         return Ok(None);
     }
+
     // Recognizable but noncanonical pointers fail closed instead of appearing complete.
     let text = std::str::from_utf8(&file.bytes).map_err(|_| SourceError::InvalidLfsPointer)?;
+
     if text.contains('\r') || !text.ends_with('\n') {
         return Err(SourceError::InvalidLfsPointer);
     }
+
     let lines: Vec<_> = text.lines().collect();
+
     if lines.len() != 3 || lines[0] != "version https://git-lfs.github.com/spec/v1" {
         return Err(SourceError::InvalidLfsPointer);
     }
+
     let oid = lines[1]
         .strip_prefix("oid sha256:")
         .ok_or(SourceError::InvalidLfsPointer)?;
     let size = lines[2]
         .strip_prefix("size ")
         .ok_or(SourceError::InvalidLfsPointer)?;
+
     if oid.len() != 64
         || !oid
             .bytes()
@@ -459,6 +490,7 @@ fn external_source(file: &SourceFile) -> Result<Option<ExternalSource>, SourceEr
     {
         return Err(SourceError::InvalidLfsPointer);
     }
+
     Ok(Some(ExternalSource::Lfs {
         path: file.path.clone(),
         expected_sha256: Sha256Digest::parse(oid).map_err(|_| SourceError::InvalidLfsPointer)?,
@@ -532,6 +564,7 @@ impl SourceSnapshot {
             SourceBinding::default(),
         )
     }
+
     /// Trusted adapter/artifact constructor. Restoring a binding is not source
     /// authentication: the caller must use an authority-owned accepted store.
     pub fn seal_bound(
@@ -547,6 +580,7 @@ impl SourceSnapshot {
             object_count,
             created_at,
         } = metadata;
+
         if commit.as_str().len() != tree.as_str().len()
             || binding
                 .original()
@@ -554,6 +588,7 @@ impl SourceSnapshot {
         {
             return Err(SourceError::MalformedGitObject);
         }
+
         files.sort_by(|a, b| a.path.cmp(&b.path));
         let manifest = SourceManifest::new(files.iter().map(SourceFile::manifest_entry).collect())?;
         let external = Self::external_for(&files, &binding)?;
@@ -562,6 +597,7 @@ impl SourceSnapshot {
             tree,
             snapshot_sha256: binding.digest(&manifest)?,
         };
+
         Ok(Self {
             project,
             repository,
@@ -574,6 +610,7 @@ impl SourceSnapshot {
             object_count,
         })
     }
+
     /// Seals a newly complete representation after independently checking original
     /// dependency claims, unchanged files and all resolved content identities.
     pub fn seal_resolved(
@@ -587,6 +624,7 @@ impl SourceSnapshot {
         metadata.created_at = created_at;
         Self::seal_bound(metadata, files, binding)
     }
+
     fn external_for(
         files: &[SourceFile],
         binding: &SourceBinding,
@@ -596,15 +634,19 @@ impl SourceSnapshot {
             .filter(|f| !binding.covers(f.path()))
             .filter_map(|f| external_source(f).transpose())
             .collect::<Result<Vec<_>, _>>()?;
+
         if binding.schema_version() == 2 && !external.is_empty() {
             return Err(SourceError::IncompleteExternalSource);
         }
+
         Ok(external)
     }
+
     /// Credential-free immutable manifest identity recipe.
     pub fn binding(&self) -> &SourceBinding {
         &self.binding
     }
+
     /// Owned audit/Git metadata for trusted artifact restoration.
     pub fn metadata(&self) -> SnapshotMetadata {
         SnapshotMetadata {
@@ -616,12 +658,14 @@ impl SourceSnapshot {
             created_at: self.created_at,
         }
     }
+
     /// Rehashes retained bytes, validating both content metadata and the expected identity.
     /// Call at the source-store/materializer boundary; stored reports are insufficient.
     pub fn verify(&self, expected: &Sha256Digest) -> Result<(), SourceError> {
         let manifest =
             SourceManifest::new(self.files.iter().map(SourceFile::manifest_entry).collect())?;
         let external = Self::external_for(&self.files, &self.binding)?;
+
         if manifest != self.manifest
             || self.binding.digest(&manifest)? != *expected
             || self.identity.snapshot_sha256 != *expected
@@ -629,8 +673,10 @@ impl SourceSnapshot {
         {
             return Err(SourceError::SnapshotDigestMismatch);
         }
+
         Ok(())
     }
+
     /// Requires complete retained source before any future runner handoff.
     pub fn require_complete(&self) -> Result<(), SourceError> {
         if self.external.is_empty() {
@@ -639,46 +685,57 @@ impl SourceSnapshot {
             Err(SourceError::IncompleteExternalSource)
         }
     }
+
     /// Authority project identity.
     pub fn project(&self) -> ProjectId {
         self.project
     }
+
     /// Authority repository identity.
     pub fn repository(&self) -> &RepositoryId {
         &self.repository
     }
+
     /// Preserved Git identity plus independent ArchCert identity.
     pub fn identity(&self) -> &SourceIdentity {
         &self.identity
     }
+
     /// Canonical manifest.
     pub fn manifest(&self) -> &SourceManifest {
         &self.manifest
     }
+
     /// Retained bytes, never borrowed from the developer's repository.
     pub fn files(&self) -> &[SourceFile] {
         &self.files
     }
+
     /// Explicit unresolved source dependencies.
     pub fn external(&self) -> &[ExternalSource] {
         &self.external
     }
+
     /// Authority creation time in UTC Unix seconds.
     pub fn created_at(&self) -> u64 {
         self.created_at
     }
+
     /// Snapshot schema version.
     pub fn schema_version(&self) -> u32 {
         self.binding.schema_version()
     }
+
     /// Number of Git object visits validated during ingestion.
     pub fn object_count(&self) -> u64 {
         self.object_count
     }
+
     /// Total retained payload bytes, including symlink targets and gitlink OID text.
     pub fn total_bytes(&self) -> u64 {
         self.manifest.entries.iter().map(|e| e.size).sum()
     }
+
     /// Immutable source completeness.
     pub fn status(&self) -> SourceStatus {
         if self.external.is_empty() {

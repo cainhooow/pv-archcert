@@ -60,6 +60,7 @@ fn paths_are_preserved_or_explicitly_rejected() -> Result<(), SourceError> {
             "{path:?}"
         );
     }
+
     assert_eq!(
         SourcePath::from_bytes(&[0xff]),
         Err(SourceError::InvalidSourcePath)
@@ -68,6 +69,7 @@ fn paths_are_preserved_or_explicitly_rejected() -> Result<(), SourceError> {
         SourcePath::from_bytes("café/résumé.txt".as_bytes())?.as_str(),
         "café/résumé.txt"
     );
+
     Ok(())
 }
 
@@ -84,11 +86,13 @@ fn duplicate_and_prefix_aliases_are_rejected() -> Result<(), SourceError> {
             .into_iter()
             .map(|p| entry(p, b"", SourceMode::File))
             .collect::<Result<Vec<_>, _>>()?;
+
         assert_eq!(
             SourceManifest::new(entries),
             Err(SourceError::PathCollision)
         );
     }
+
     assert!(
         SourceManifest::new(vec![
             entry("dir/a", b"", SourceMode::File)?,
@@ -96,6 +100,7 @@ fn duplicate_and_prefix_aliases_are_rejected() -> Result<(), SourceError> {
         ])
         .is_ok()
     );
+
     Ok(())
 }
 
@@ -110,11 +115,14 @@ fn sha256_known_answer() {
 #[test]
 fn canonical_manifest_vectors() -> Result<(), Box<dyn std::error::Error>> {
     let empty = SourceManifest::new(vec![])?;
+
     assert_eq!(
         hex::encode(empty.canonical_bytes()),
         "41524348434552542d534f5552434500000000010000000000000000"
     );
+
     let one = SourceManifest::new(vec![entry("a", b"abc", SourceMode::File)?])?;
+
     assert_eq!(
         hex::encode(one.canonical_bytes()),
         concat!(
@@ -134,6 +142,7 @@ fn canonical_manifest_vectors() -> Result<(), Box<dyn std::error::Error>> {
         one.digest().as_str(),
         "252d8a8aa373a45994b32021ac661a412b3c90138086686e41aaf92a491b2175"
     );
+
     Ok(())
 }
 
@@ -146,30 +155,36 @@ fn every_permutation_has_the_same_source_identity() -> Result<(), SourceError> {
         entry("link", b"../../outside", SourceMode::Symlink)?,
     ];
     let expected = SourceManifest::new(source.to_vec())?;
+
     for a in 0..4 {
         for b in 0..4 {
             for c in 0..4 {
                 for d in 0..4 {
                     let mut indices = [a, b, c, d];
                     indices.sort();
+
                     if indices != [0, 1, 2, 3] {
                         continue;
                     }
+
                     let actual = SourceManifest::new(
                         [a, b, c, d].iter().map(|i| source[*i].clone()).collect(),
                     )?;
+
                     assert_eq!(actual.canonical_bytes(), expected.canonical_bytes());
                     assert_eq!(actual.digest(), expected.digest());
                 }
             }
         }
     }
+
     Ok(())
 }
 
 #[test]
 fn content_mode_path_and_symlink_target_bind_the_digest() -> Result<(), SourceError> {
     let base = SourceManifest::new(vec![entry("a", b"abc", SourceMode::File)?])?.digest();
+
     for changed in [
         entry("a", b"abd", SourceMode::File)?,
         entry("a", b"abc", SourceMode::Executable)?,
@@ -178,6 +193,7 @@ fn content_mode_path_and_symlink_target_bind_the_digest() -> Result<(), SourceEr
     ] {
         assert_ne!(SourceManifest::new(vec![changed])?.digest(), base);
     }
+
     Ok(())
 }
 
@@ -189,10 +205,12 @@ fn timestamps_and_authority_metadata_do_not_affect_digest() -> Result<(), Box<dy
         SourceMode::File,
         b"abc".to_vec(),
     );
+
     assert_eq!(
         snapshot(vec![file.clone()], 0)?.identity().snapshot_sha256,
         snapshot(vec![file], u64::MAX)?.identity().snapshot_sha256
     );
+
     Ok(())
 }
 
@@ -208,16 +226,20 @@ fn tampering_and_wrong_expected_digest_fail_closed() -> Result<(), Box<dyn std::
     )?;
     let expected = source.identity().snapshot_sha256.clone();
     source.verify(&expected)?;
+
     assert_eq!(
         source.verify(&digest_bytes(b"wrong")),
         Err(SourceError::SnapshotDigestMismatch)
     );
+
     // Private test access models corruption in a future persistence adapter.
     source.files[0].bytes[0] ^= 1;
+
     assert_eq!(
         source.verify(&expected),
         Err(SourceError::SnapshotDigestMismatch)
     );
+
     Ok(())
 }
 
@@ -227,6 +249,7 @@ fn incomplete_states_never_allow_runner_handoff() -> Result<(), Box<dyn std::err
         "version https://git-lfs.github.com/spec/v1\noid sha256:{}\nsize 99\n",
         "a".repeat(64)
     );
+
     for file in [
         SourceFile::new(
             SourcePath::from_bytes(b"large")?,
@@ -240,6 +263,7 @@ fn incomplete_states_never_allow_runner_handoff() -> Result<(), Box<dyn std::err
         ),
     ] {
         let source = snapshot(vec![file], 0)?;
+
         assert_eq!(source.status(), SourceStatus::IncompleteExternalSource);
         assert_eq!(
             source.require_complete(),
@@ -247,9 +271,13 @@ fn incomplete_states_never_allow_runner_handoff() -> Result<(), Box<dyn std::err
         );
         assert_eq!(source.external().len(), 1);
     }
+
     let complete = snapshot(vec![], 0)?;
+
     assert_eq!(complete.status(), SourceStatus::Complete);
+
     complete.require_complete()?;
+
     Ok(())
 }
 
@@ -269,10 +297,12 @@ fn malformed_lfs_is_rejected_instead_of_falsely_complete() -> Result<(), Box<dyn
             )],
             0,
         );
+
         assert!(
             matches!(result, Err(error) if error.downcast_ref::<SourceError>() == Some(&SourceError::InvalidLfsPointer))
         );
     }
+
     Ok(())
 }
 
@@ -280,11 +310,13 @@ fn malformed_lfs_is_rejected_instead_of_falsely_complete() -> Result<(), Box<dyn
 fn input_errors_and_internal_failures_remain_distinct() -> Result<(), serde_json::Error> {
     let input = serde_json::to_value(SourceError::MalformedGitObject)?;
     let internal = serde_json::to_value(SourceError::InternalIntegrityFailure)?;
+
     assert_ne!(input, internal);
     assert_eq!(
         SourceError::SnapshotDigestMismatch.to_string(),
         "snapshot digest mismatch"
     );
+
     Ok(())
 }
 
@@ -301,10 +333,12 @@ fn external_evidence_tampering_is_detected_by_reconstruction()
     )?;
     let expected = source.identity().snapshot_sha256.clone();
     source.external.clear();
+
     assert_eq!(
         source.verify(&expected),
         Err(SourceError::SnapshotDigestMismatch)
     );
+
     Ok(())
 }
 
@@ -341,13 +375,16 @@ fn resolved_binding_preserves_original_and_rejects_content_recipe_substitution()
     let resolved =
         SourceSnapshot::seal_resolved(&original, files.clone(), vec![replacement.clone()], 2)?;
     resolved.require_complete()?;
+
     assert_eq!(resolved.binding().original(), Some(original.identity()));
     assert_eq!(resolved.identity().commit, original.identity().commit);
     assert_eq!(resolved.identity().tree, original.identity().tree);
     assert_eq!(resolved.schema_version(), 2);
     assert!(original.require_complete().is_err());
+
     let replay =
         SourceSnapshot::seal_resolved(&original, files.clone(), vec![replacement.clone()], 9999)?;
+
     assert_eq!(resolved.identity(), replay.identity());
     assert_eq!(
         digest_bytes(&resolved.binding().canonical_bytes(resolved.manifest())?),
@@ -357,9 +394,11 @@ fn resolved_binding_preserves_original_and_rejects_content_recipe_substitution()
         resolved.manifest().digest(),
         resolved.identity().snapshot_sha256
     );
+
     for mutation in 0..5 {
         let mut files = files.clone();
         let mut deps = vec![replacement.clone()];
+
         match mutation {
             0 => {
                 files[0] = SourceFile::new(
@@ -384,15 +423,19 @@ fn resolved_binding_preserves_original_and_rejects_content_recipe_substitution()
             }
             _ => deps.clear(),
         }
+
         assert!(
             SourceSnapshot::seal_resolved(&original, files, deps, 2).is_err(),
             "mutation {mutation}"
         );
     }
+
     let mut claimed = serde_json::to_value(resolved.binding())?;
     claimed["dependencies"][0]["sha256"] = serde_json::json!(digest_bytes(b"other"));
     let substituted: SourceBinding = serde_json::from_value(claimed)?;
+
     assert!(substituted.digest(resolved.manifest()).is_err());
+
     Ok(())
 }
 
@@ -407,6 +450,7 @@ fn recursive_resolved_children_verify_exact_identities_and_bound_depth()
         )],
         1,
     )?;
+
     for depth in 1..=33 {
         let path = SourcePath::from_bytes(b"module")?;
         let parent = snapshot(
@@ -435,19 +479,24 @@ fn recursive_resolved_children_verify_exact_identities_and_bound_depth()
                 ))
             })
             .collect::<Result<Vec<_>, SourceError>>()?;
+
         if depth == 1 {
             if let ResolvedDependency::Submodule { identity, .. } = &mut dependency {
                 identity.snapshot_sha256 = digest_bytes(b"other child");
             }
+
             assert!(
                 SourceSnapshot::seal_resolved(&parent, files.clone(), vec![dependency.clone()], 2)
                     .is_err()
             );
+
             if let ResolvedDependency::Submodule { identity, .. } = &mut dependency {
                 *identity = child.identity().clone();
             }
         }
+
         let result = SourceSnapshot::seal_resolved(&parent, files, vec![dependency], 2);
+
         if depth == 33 {
             assert!(matches!(
                 result,
@@ -458,6 +507,7 @@ fn recursive_resolved_children_verify_exact_identities_and_bound_depth()
             child.require_complete()?;
         }
     }
+
     Ok(())
 }
 
@@ -473,6 +523,7 @@ fn expanded_children_cannot_hide_incomplete_lfs_or_reparse_verified_lfs_bytes()
         )],
         1,
     )?;
+
     fn expand(child: &SourceSnapshot) -> Result<SourceSnapshot, Box<dyn std::error::Error>> {
         let path = SourcePath::from_bytes(b"module")?;
         let parent = snapshot(
@@ -483,6 +534,7 @@ fn expanded_children_cannot_hide_incomplete_lfs_or_reparse_verified_lfs_bytes()
             )],
             1,
         )?;
+
         Ok(SourceSnapshot::seal_resolved(
             &parent,
             vec![SourceFile::new(
@@ -500,7 +552,9 @@ fn expanded_children_cannot_hide_incomplete_lfs_or_reparse_verified_lfs_bytes()
             2,
         )?)
     }
+
     assert!(expand(&child).is_err());
+
     // An acquired object may itself happen to contain pointer-shaped content.
     // Its verified byte digest is final source, and must not initiate another fetch.
     let outer = format!(
@@ -528,5 +582,6 @@ fn expanded_children_cannot_hide_incomplete_lfs_or_reparse_verified_lfs_bytes()
     )?;
     complete.require_complete()?;
     expand(&complete)?.require_complete()?;
+
     Ok(())
 }

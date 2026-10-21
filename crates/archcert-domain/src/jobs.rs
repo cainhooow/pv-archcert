@@ -1,4 +1,5 @@
 //! Durable job language. Operational state is separate from cryptographic validity.
+
 use crate::{
     ProjectId, Sha256Digest, SourceIdentity,
     ingress::{GitActorId, SourceSubmissionId},
@@ -19,39 +20,48 @@ macro_rules! identity {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
         #[serde(try_from = "String", into = "String")]
         pub struct $name(Uuid);
+
         impl $name {
             /// Generates a new immutable authority identity.
             pub fn new() -> Self {
                 Self(Uuid::new_v4())
             }
+
             /// Checks canonical RFC 4122 UUID v4 text.
             pub fn parse(text: &str) -> Result<Self, JobError> {
                 let id = Uuid::parse_str(text).map_err(|_| JobError)?;
+
                 if id.get_version_num() != 4
                     || id.get_variant() != uuid::Variant::RFC4122
                     || id.to_string() != text
                 {
                     return Err(JobError);
                 }
+
                 Ok(Self(id))
             }
         }
+
         impl Default for $name {
             fn default() -> Self {
                 Self::new()
             }
         }
+
         impl std::fmt::Display for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 self.0.fmt(f)
             }
         }
+
         impl TryFrom<String> for $name {
             type Error = JobError;
+
             fn try_from(v: String) -> Result<Self, JobError> {
                 Self::parse(&v)
             }
         }
+
         impl From<$name> for String {
             fn from(v: $name) -> String {
                 v.to_string()
@@ -59,11 +69,14 @@ macro_rules! identity {
         }
     };
 }
+
 identity!(JobId, "Immutable certification job identity.");
+
 identity!(
     AttemptId,
     "Fresh identity for exactly one execution attempt."
 );
+
 identity!(
     LeaseToken,
     "Unpredictable fencing capability, never passed into target execution."
@@ -73,6 +86,7 @@ identity!(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct IdempotencyKey(String);
+
 impl IdempotencyKey {
     /// Accepts 1–128 ASCII identifier characters, excluding whitespace/control data.
     pub fn parse(text: String) -> Result<Self, JobError> {
@@ -84,19 +98,24 @@ impl IdempotencyKey {
         {
             return Err(JobError);
         }
+
         Ok(Self(text))
     }
+
     /// Exact scoped key; never a filesystem path.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
+
 impl TryFrom<String> for IdempotencyKey {
     type Error = JobError;
+
     fn try_from(v: String) -> Result<Self, JobError> {
         Self::parse(v)
     }
 }
+
 impl From<IdempotencyKey> for String {
     fn from(v: IdempotencyKey) -> String {
         v.0
@@ -114,6 +133,7 @@ pub struct PolicyPin {
     /// Canonical policy digest.
     pub sha256: Sha256Digest,
 }
+
 /// All immutable job inputs. Deserialization conveys no acceptance or authorization.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -141,10 +161,12 @@ pub struct JobInputs {
     /// Authority maximum total attempts (including the initial attempt).
     pub maximum_attempts: u16,
 }
+
 impl JobInputs {
     /// Checks structural bounds; application must independently verify source/policy/plan.
     pub fn validate(&self) -> Result<(), JobError> {
         let (_, hash) = self.image.rsplit_once("@sha256:").ok_or(JobError)?;
+
         if Sha256Digest::parse(hash).is_err()
             || self.image.len() > 512
             || self.image.bytes().any(|b| b.is_ascii_whitespace())
@@ -161,6 +183,7 @@ impl JobInputs {
         {
             return Err(JobError);
         }
+
         Ok(())
     }
 }
@@ -184,6 +207,7 @@ pub enum JobState {
     /// Infrastructure uncertainty exhausted safe recovery.
     Inconclusive,
 }
+
 impl JobState {
     /// True only for states that cannot transition again.
     pub fn terminal(self) -> bool {
@@ -192,6 +216,7 @@ impl JobState {
             Self::Completed | Self::NotEligible | Self::Inconclusive
         )
     }
+
     /// Checks the state graph. RUNNING -> QUEUED additionally requires repository retry/cleanup checks.
     pub fn transition(self, next: Self) -> Result<Self, JobError> {
         if matches!(
@@ -213,6 +238,7 @@ impl JobState {
         }
     }
 }
+
 /// Attempt history; evidence-ready closes worker execution authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -230,6 +256,7 @@ pub enum AttemptState {
     /// Lease expired; no target failure is inferred.
     Lost,
 }
+
 /// Persisted failure category, separate from policy eligibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -272,6 +299,7 @@ mod tests {
                 assert!(state.transition(next).is_err());
             }
         }
+
         assert!(JobState::Queued.transition(JobState::Completed).is_err());
         assert!(JobState::Running.transition(JobState::Signing).is_err());
         assert!(JobState::Running.transition(JobState::Evaluating).is_ok());

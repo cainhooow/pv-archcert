@@ -19,34 +19,42 @@ impl WorkspaceId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
+
     /// Accepts only canonical lowercase RFC 4122 UUID v4 text.
     pub fn parse(text: &str) -> Result<Self, MaterializationError> {
         let id = Uuid::parse_str(text).map_err(|_| MaterializationError::InvalidWorkspaceId)?;
+
         if id.get_version_num() != 4
             || id.get_variant() != uuid::Variant::RFC4122
             || id.to_string() != text
         {
             return Err(MaterializationError::InvalidWorkspaceId);
         }
+
         Ok(Self(id))
     }
 }
+
 impl Default for WorkspaceId {
     fn default() -> Self {
         Self::new()
     }
 }
+
 impl Display for WorkspaceId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         Display::fmt(&self.0, f)
     }
 }
+
 impl TryFrom<String> for WorkspaceId {
     type Error = MaterializationError;
+
     fn try_from(value: String) -> Result<Self, Self::Error> {
         Self::parse(&value)
     }
 }
+
 impl From<WorkspaceId> for String {
     fn from(value: WorkspaceId) -> Self {
         value.to_string()
@@ -75,6 +83,7 @@ pub struct MaterializationLimits {
     /// Maximum directories beneath the workspace root.
     pub max_directories: u64,
 }
+
 impl Default for MaterializationLimits {
     fn default() -> Self {
         Self {
@@ -182,6 +191,7 @@ pub enum MaterializationState {
     /// Workspace was explicitly deleted; this does not claim secure erasure.
     Destroyed,
 }
+
 impl MaterializationState {
     /// Enforces forward-only transitions and explicit destruction from any live state.
     pub fn advance(self, next: Self) -> Result<Self, MaterializationError> {
@@ -205,8 +215,10 @@ mod tests {
     #[test]
     fn workspace_identity_is_opaque_and_canonical() -> Result<(), MaterializationError> {
         let id = WorkspaceId::new();
+
         assert_eq!(WorkspaceId::parse(&id.to_string())?, id);
         assert_ne!(id, WorkspaceId::new());
+
         for invalid in [
             "../escape",
             "/tmp/source",
@@ -218,8 +230,10 @@ mod tests {
                 Err(MaterializationError::InvalidWorkspaceId)
             );
         }
+
         Ok(())
     }
+
     #[test]
     fn only_verified_sealed_source_reaches_handoff() -> Result<(), MaterializationError> {
         use MaterializationState::*;
@@ -243,8 +257,10 @@ mod tests {
                 .advance(Destroyed)?,
             Destroyed
         );
+
         Ok(())
     }
+
     #[test]
     fn malformed_source_and_internal_failures_stay_distinct() {
         assert_ne!(

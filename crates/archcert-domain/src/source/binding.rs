@@ -1,4 +1,5 @@
 //! Versioned, credential-free source identity after controlled external resolution.
+
 use super::*;
 
 /// Verified external identity bound into a resolved source. This is metadata, not
@@ -29,6 +30,7 @@ pub enum ResolvedDependency {
         binding: Box<SourceBinding>,
     },
 }
+
 impl ResolvedDependency {
     /// Original external source path.
     pub fn path(&self) -> &SourcePath {
@@ -51,11 +53,13 @@ enum Binding {
         dependencies: Vec<ResolvedDependency>,
     },
 }
+
 /// Immutable identity recipe containing only original/dependency identities.
 /// Verifiers combine this with an independently reconstructed content manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SourceBinding(Binding);
+
 impl Default for SourceBinding {
     fn default() -> Self {
         Self(Binding::ManifestV1)
@@ -66,11 +70,13 @@ fn field(out: &mut Vec<u8>, value: &[u8]) {
     out.extend_from_slice(&(value.len() as u64).to_be_bytes());
     out.extend_from_slice(value);
 }
+
 struct Budget {
     entries: u64,
     bindings: u64,
     bytes: u64,
 }
+
 impl SourceBinding {
     /// Source canonicalization version. Schema 1 remains byte-for-byte unchanged.
     pub fn schema_version(&self) -> u32 {
@@ -79,6 +85,7 @@ impl SourceBinding {
             Binding::ResolvedV2 { .. } => 2,
         }
     }
+
     /// Original pointer/gitlink source, absent for ordinary schema-1 source.
     pub fn original(&self) -> Option<&SourceIdentity> {
         match &self.0 {
@@ -86,6 +93,7 @@ impl SourceBinding {
             Binding::ResolvedV2 { original, .. } => Some(original),
         }
     }
+
     /// Verified external dependency metadata, never credentials or acquisition locators.
     pub fn dependencies(&self) -> &[ResolvedDependency] {
         match &self.0 {
@@ -93,16 +101,20 @@ impl SourceBinding {
             Binding::ResolvedV2 { dependencies, .. } => dependencies,
         }
     }
+
     pub(super) fn resolved(
         original: &SourceSnapshot,
         mut dependencies: Vec<ResolvedDependency>,
         files: &[SourceFile],
     ) -> Result<Self, SourceError> {
         original.verify(&original.identity().snapshot_sha256)?;
+
         if original.external().is_empty() || dependencies.len() != original.external().len() {
             return Err(SourceError::IncompleteExternalSource);
         }
+
         dependencies.sort_by(|a, b| a.path().cmp(b.path()));
+
         for (external, dependency) in original.external().iter().zip(&dependencies) {
             let matches = match (external, dependency) {
                 (
@@ -125,10 +137,12 @@ impl SourceBinding {
                 ) => path == p && commit == &identity.commit,
                 _ => false,
             };
+
             if !matches {
                 return Err(SourceError::SnapshotDigestMismatch);
             }
         }
+
         let replacement_paths: BTreeMap<_, _> = dependencies
             .iter()
             .map(|d| (d.path().as_str(), d))
@@ -138,6 +152,7 @@ impl SourceBinding {
             .iter()
             .map(|f| (f.path().as_str(), f))
             .collect();
+
         for file in files {
             if file.path().as_str().match_indices('/').any(|(end, _)| {
                 matches!(
@@ -147,9 +162,11 @@ impl SourceBinding {
             }) {
                 continue;
             }
+
             let previous = original_files
                 .get(file.path().as_str())
                 .ok_or(SourceError::SnapshotDigestMismatch)?;
+
             if previous.mode() != file.mode()
                 || (!replacement_paths.contains_key(file.path().as_str())
                     && previous.bytes() != file.bytes())
@@ -157,7 +174,9 @@ impl SourceBinding {
                 return Err(SourceError::SnapshotDigestMismatch);
             }
         }
+
         let final_paths: std::collections::BTreeSet<_> = files.iter().map(|f| f.path()).collect();
+
         for file in original.files() {
             if !replacement_paths.contains_key(file.path().as_str())
                 && !final_paths.contains(file.path())
@@ -165,6 +184,7 @@ impl SourceBinding {
                 return Err(SourceError::SnapshotDigestMismatch);
             }
         }
+
         let binding = Self(Binding::ResolvedV2 {
             original: original.identity().clone(),
             dependencies,
@@ -172,14 +192,18 @@ impl SourceBinding {
         binding.digest(&SourceManifest::new(
             files.iter().map(SourceFile::manifest_entry).collect(),
         )?)?;
+
         Ok(binding)
     }
+
     /// Reconstructs the canonical source preimage after validating dependency
     /// coverage, child manifests, path collisions and finite recursive work.
     pub fn canonical_bytes(&self, manifest: &SourceManifest) -> Result<Vec<u8>, SourceError> {
         self.digest(manifest)?;
+
         Ok(self.encode(manifest))
     }
+
     /// Hashes a freshly reconstructed manifest under the accepted source recipe.
     /// No timestamp, credential, mutable ref, endpoint or policy enters the hash.
     pub fn digest(&self, manifest: &SourceManifest) -> Result<Sha256Digest, SourceError> {
@@ -193,6 +217,7 @@ impl SourceBinding {
             0,
         )
     }
+
     fn verify_manifest(
         &self,
         manifest: &SourceManifest,
@@ -202,14 +227,17 @@ impl SourceBinding {
         if depth > 32 {
             return Err(SourceError::LimitExceeded(ResourceLimit::TreeDepth));
         }
+
         budget.entries = budget
             .entries
             .saturating_add(manifest.entries().len() as u64);
         let bytes = manifest.canonical_bytes();
         budget.bytes = budget.bytes.saturating_add(bytes.len() as u64);
+
         if budget.entries > 25_000 || budget.bytes > 256 * 1024 * 1024 {
             return Err(SourceError::LimitExceeded(ResourceLimit::ObjectWorkBytes));
         }
+
         if let Binding::ResolvedV2 {
             original,
             dependencies,
@@ -220,17 +248,23 @@ impl SourceBinding {
             {
                 return Err(SourceError::SnapshotDigestMismatch);
             }
+
             budget.bindings = budget.bindings.saturating_add(dependencies.len() as u64);
+
             if budget.bindings > 10_000 {
                 return Err(SourceError::LimitExceeded(ResourceLimit::Files));
             }
+
             let mut prior = None;
             let mut names = Vec::new();
+
             for dependency in dependencies {
                 let path = dependency.path();
+
                 if prior.is_some_and(|p: &SourcePath| p >= path) {
                     return Err(SourceError::PathCollision);
                 }
+
                 prior = Some(path);
                 names.push(ManifestEntry::new(
                     path.clone(),
@@ -239,12 +273,14 @@ impl SourceBinding {
                     0,
                 ));
             }
+
             SourceManifest::new(names)?;
             let entries: BTreeMap<_, _> = manifest
                 .entries()
                 .iter()
                 .map(|e| (e.path().as_str(), e))
                 .collect();
+
             if manifest
                 .entries()
                 .iter()
@@ -252,12 +288,14 @@ impl SourceBinding {
             {
                 return Err(SourceError::IncompleteExternalSource);
             }
+
             for dependency in dependencies {
                 match dependency {
                     ResolvedDependency::Lfs { path, sha256, size } => {
                         let file = entries
                             .get(path.as_str())
                             .ok_or(SourceError::SnapshotDigestMismatch)?;
+
                         if !matches!(file.mode(), SourceMode::File | SourceMode::Executable)
                             || file.content_sha256() != sha256
                             || file.size() != *size
@@ -276,8 +314,10 @@ impl SourceBinding {
                         {
                             return Err(SourceError::SnapshotDigestMismatch);
                         }
+
                         let prefix = format!("{}/", path.as_str());
                         let mut children = Vec::new();
+
                         for (_, entry) in entries.range(prefix.as_str()..) {
                             let Some(relative) = entry.path().as_str().strip_prefix(&prefix) else {
                                 break;
@@ -289,7 +329,9 @@ impl SourceBinding {
                                 entry.size(),
                             ));
                         }
+
                         let child = SourceManifest::new(children)?;
+
                         if child
                             .entries()
                             .iter()
@@ -303,8 +345,10 @@ impl SourceBinding {
                 }
             }
         }
+
         Ok(digest_bytes(&self.encode(manifest)))
     }
+
     fn encode(&self, manifest: &SourceManifest) -> Vec<u8> {
         let Binding::ResolvedV2 {
             original,
@@ -318,8 +362,10 @@ impl SourceBinding {
         field(&mut out, original.tree.as_str().as_bytes());
         field(&mut out, original.snapshot_sha256.as_str().as_bytes());
         let mut bindings = Vec::new();
+
         for dependency in dependencies {
             let mut binding = Vec::new();
+
             match dependency {
                 ResolvedDependency::Lfs { path, sha256, size } => {
                     binding.push(1);
@@ -343,24 +389,32 @@ impl SourceBinding {
                     field(&mut binding, identity.snapshot_sha256.as_str().as_bytes());
                 }
             }
+
             bindings.push(binding);
         }
+
         bindings.sort();
         out.extend_from_slice(&(bindings.len() as u64).to_be_bytes());
+
         for binding in bindings {
             field(&mut out, &binding);
         }
+
         field(&mut out, &manifest.canonical_bytes());
         out
     }
+
     pub(super) fn covers(&self, path: &SourcePath) -> bool {
         self.covers_text(path.as_str())
     }
+
     fn covers_text(&self, path: &str) -> bool {
         let dependencies = self.dependencies();
+
         if let Ok(index) = dependencies.binary_search_by(|d| d.path().as_str().cmp(path)) {
             return matches!(dependencies[index], ResolvedDependency::Lfs { .. });
         }
+
         for (end, _) in path.match_indices('/') {
             if let Ok(index) =
                 dependencies.binary_search_by(|d| d.path().as_str().cmp(&path[..end]))
@@ -371,6 +425,7 @@ impl SourceBinding {
                 return binding.covers_text(&path[end + 1..]);
             }
         }
+
         false
     }
 }
