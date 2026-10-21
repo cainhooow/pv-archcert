@@ -350,7 +350,7 @@ impl JobRepository for PostgresJobRepository {
     async fn create(&self, request: CreateJob) -> Result<CertificationJob> {
         let i = &request.inputs;
         i.validate()?;
-        if i.policy.id == archcert_application::ironcrest::IRONCREST_CONTROLLED_POLICY_ID {
+        if archcert_application::ironcrest::requires_reviewed_chain(&i.policy.id) {
             return Err(JobStoreError::Precondition);
         }
         let mut tx = self.pool.begin().await.map_err(db)?;

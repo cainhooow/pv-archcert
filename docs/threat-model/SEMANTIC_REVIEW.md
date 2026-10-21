@@ -86,3 +86,12 @@ of provider-reported response completeness. Request identity binds the package,
 packaging policy and all immutable inputs; create-only request recovery rejects
 substitution. Historical strict context semantics remain unchanged. Partial bounded
 review leaves excluded context unreviewed and cannot establish whole-source coverage.
+
+ADR 0047 adds a distinct Rust registry/profile. The fixed authority test checks
+named Rust dependency closures and source mount immutability within rootless OCI.
+The target cannot choose its implementation, repetition, runtime or provider. Cargo
+metadata is untrusted; finite byte/package/edge/runtime limits and iterative closure
+avoid recursive graph expansion. Renaming a layer can escape name-based scrutiny;
+this is an explicit scope limitation, not whole-program architecture proof. The
+image, toolchain, Python and offline caches remain trusted authority provisioning.
+All issuance choke points recognize the new Rust policy's reviewed prerequisite.

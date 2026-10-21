@@ -223,3 +223,198 @@ fn oversized_strings_and_references_cannot_expand_the_package() -> R {
     assert_eq!(body["excluded"]["excerpt_bytes"], s.total_bytes() - 4096);
     Ok(())
 }
+
+#[tokio::test]
+async fn rust_challenge_is_distinct_fixed_and_cannot_accept_commands_or_settlement() -> R {
+    use archcert_application::{challenges::*, validation::*};
+    let s = snapshot(ProjectId::new(), 1)?;
+    let k = engine()?.extract(&s, &[], None)?;
+    let i = analyze_impact(&k, None)?;
+    let request = prepare(&s, &k, &i, JobId::new(), b"rust-profile", 1024 * 1024)?;
+    let mut response = SemanticReviewResponse {
+        schema: 1,
+        request_sha256: request.artifact().digest().clone(),
+        complete: true,
+        items: vec![],
+        proposed_challenges: vec![],
+    };
+    let accept = |response: &SemanticReviewResponse| -> R<SemanticReviewArtifact> {
+        Ok(SemanticReviewArtifact::accept(
+            &request,
+            Ok(ReviewerOutput {
+                reported: ReviewerSelection::replay(),
+                bytes: serde_json::to_vec(response)?,
+                truncated: false,
+            }),
+            1700000001,
+        )?)
+    };
+    let authority = AuthorityConfiguration::development(vec![(
+        "rust-workspace-v1".into(),
+        format!("rust@sha256:{}", "d".repeat(64)),
+    )])?;
+    let registry = AuthorityChallengeRegistry::rust_workspace()?;
+    let profile = authority.profile("rust-workspace-v1")?;
+    let plan = registry.plan(&request, &accept(&response)?, profile)?;
+    assert_eq!(
+        plan.challenges()[0].required_step().id,
+        RUST_ARCHITECTURE_STEP
+    );
+    let step = plan.challenges()[0].required_step();
+    assert_eq!(step.command.program(), "python3");
+    assert_eq!(&step.command.args()[..2], &["-I", "-c"]);
+    assert!(step.command.args()[2].contains("def check(metadata)"));
+    assert_eq!(step.command.args()[3], "1");
+    assert_ne!(
+        registry.artifact().digest(),
+        AuthorityChallengeRegistry::controlled()?
+            .artifact()
+            .digest()
+    );
+    response.proposed_challenges.push(ChallengeProposal {
+        id: "illegal".into(),
+        challenge_template_id: IDEMPOTENCY_TEMPLATE.into(),
+        parameters: ChallengeParameters { repetitions: 3 },
+        reason: "Untrusted choice".into(),
+        related_authority_id: "bounded-test-policy".into(),
+    });
+    assert!(
+        registry
+            .plan(&request, &accept(&response)?, profile)
+            .is_err()
+    );
+    response.proposed_challenges[0].challenge_template_id = RUST_ARCHITECTURE_TEMPLATE.into();
+    response.proposed_challenges[0].parameters.repetitions = 2;
+    assert!(
+        registry
+            .plan(&request, &accept(&response)?, profile)
+            .is_err()
+    );
+    let injected = br#"{"repetitions":1,"command":"sh -c arbitrary"}"#;
+    assert!(serde_json::from_slice::<ChallengeParameters>(injected).is_err());
+    assert_eq!(
+        profile.network_policy(),
+        archcert_domain::execution::NetworkPolicy::Denied
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn bounded_review_rejects_every_immutable_scope_and_packaging_substitution() -> R {
+    use archcert_domain::knowledge::KnowledgeScope;
+    let project = ProjectId::new();
+    let job = JobId::new();
+    let make = |variant: usize| -> R<SemanticReviewRequest> {
+        let project = if variant == 2 {
+            ProjectId::new()
+        } else {
+            project
+        };
+        let s = snapshot(project, if variant == 1 { 2 } else { 1 })?;
+        let baseline = snapshot(project, 1)?;
+        let selected = if variant == 6 || variant == 7 {
+            Some(SelectedBaseline::accepted(
+                &baseline,
+                "Authority-selected exact baseline".into(),
+            )?)
+        } else {
+            None
+        };
+        let bundles = if variant == 8 {
+            vec![AuthorityKnowledgeBundle::approve(
+                "different-authority".into(),
+                "1".into(),
+                KnowledgeScope::Project(project),
+                vec![],
+            )?]
+        } else {
+            vec![]
+        };
+        let extractor = if variant == 5 {
+            KnowledgeEngine::new(vec![], KnowledgeLimits::default())?
+        } else {
+            engine()?
+        };
+        let k = extractor.extract(&s, &bundles, selected.as_ref())?;
+        let baseline_knowledge = if selected.is_some() {
+            Some(
+                if variant == 7 {
+                    KnowledgeEngine::new(vec![], KnowledgeLimits::default())?
+                } else {
+                    engine()?
+                }
+                .extract(&baseline, &bundles, None)?,
+            )
+        } else {
+            None
+        };
+        let i = analyze_impact(&k, baseline_knowledge.as_ref())?;
+        let policy = PolicyPin {
+            id: if variant == 3 { "policy-b" } else { "policy-a" }.into(),
+            version: "1".into(),
+            sha256: digest_bytes(POLICY),
+        };
+        let limit = if variant == 4 {
+            1024 * 1024 - 1
+        } else {
+            1024 * 1024
+        };
+        Ok(SemanticReviewRequest::prepare_bounded(
+            ReviewContext {
+                job,
+                source: &s,
+                knowledge: &k,
+                impact: &i,
+                bundles: &bundles,
+                policy: &policy,
+                policy_bytes: POLICY,
+                authority_profile_sha256: digest_bytes(if variant == 9 {
+                    b"profile-b"
+                } else {
+                    b"profile-a"
+                }),
+                observations: &[],
+                claims: &[],
+            },
+            ReviewerSelection::replay(),
+            SemanticLimits {
+                request_bytes: limit,
+                ..SemanticLimits::default()
+            },
+            SemanticPackagingPolicy::rust_controlled().with_request_limit(limit)?,
+        )?)
+    };
+    let original = make(0)?;
+    let response = serde_json::to_vec(&SemanticReviewResponse {
+        schema: 1,
+        request_sha256: original.artifact().digest().clone(),
+        complete: true,
+        items: vec![],
+        proposed_challenges: vec![],
+    })?;
+    let reviewer = ReplayReviewer::new(original.artifact().digest().clone(), response)?;
+    let accepted =
+        SemanticReviewArtifact::accept(&original, reviewer.review(&original).await, 1700000001)?;
+    for variant in 1..=9 {
+        let changed = make(variant)?;
+        assert_ne!(
+            changed.package().ok_or("package")?.artifact().digest(),
+            original.package().ok_or("original")?.artifact().digest(),
+            "variant {variant}"
+        );
+        assert!(
+            reviewer.review(&changed).await.is_err(),
+            "variant {variant}"
+        );
+        assert!(
+            SemanticReviewArtifact::restore(
+                &changed,
+                accepted.artifact().bytes(),
+                accepted.artifact().digest()
+            )
+            .is_err(),
+            "variant {variant}"
+        );
+    }
+    Ok(())
+}

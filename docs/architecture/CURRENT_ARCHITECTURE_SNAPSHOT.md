@@ -386,3 +386,17 @@ unchanged 1 MiB ceiling. Historical direct-embedding preparation is preserved.
 The immutable request role is also the package persistence/recovery checkpoint;
 provider responses bind that exact request. Partial acceptance requires a new
 explicit authority profile and grants no deterministic proof or complete coverage.
+
+## Controlled Rust authority
+
+[ADR 0047](../adr/0047-rust-controlled-authority.md) introduces the distinct
+`rust-workspace-review-v1` authority profile, `rust-workspace-v1` execution family
+and `archcert-rust-controlled-v1` deterministic policy. They require local replay,
+explicitly bounded partial context, ordinary authority-selected Rust checks and a
+fixed Rust dependency/source-immutability challenge. The authority-owned guard
+runs offline Cargo metadata within OCI and checks named layer dependency closures;
+it does not execute repository scripts as its implementation. Exact registry pins
+select pending requirements and accepted challenge steps throughout the durable
+lifecycle. Controller, issuer and storage all enforce the reviewed prerequisite.
+Schema-2 manifests bind the package through a schema-2 REQUEST only for the new
+Rust policy. Existing Python profile/policy/manifest identities are unchanged.

@@ -10,6 +10,12 @@ const IDEMPOTENCY_TEST: &str = include_str!("challenges/idempotency.py");
 pub const IDEMPOTENCY_TEMPLATE: &str = "idempotency-replay-v1";
 /// Fixed appended authority step; collision with a target/base step rejects.
 pub const IDEMPOTENCY_STEP: &str = "ironcrest-idempotency";
+/// Separate generic Rust trust regression, never the settlement template.
+pub const RUST_ARCHITECTURE_TEMPLATE: &str = "rust-inward-architecture-v1";
+/// Fixed authority-only appended Rust step.
+pub const RUST_ARCHITECTURE_STEP: &str = "rust-trust-architecture";
+/// Exact authority test bytes, passed as literal argv inside OCI.
+const RUST_ARCHITECTURE_TEST: &str = include_str!("challenges/rust_architecture.py");
 
 /// Registry categories are vocabulary, not a promise of generic executability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -17,6 +23,8 @@ pub const IDEMPOTENCY_STEP: &str = "ironcrest-idempotency";
 pub enum ChallengeKind {
     /// Concurrent final-state checks; not implemented by the initial template.
     Concurrency,
+    /// Bounded Rust layer dependency closure and source immutability.
+    ArchitectureGuard,
     /// Bounded replay with an authority final-state assertion.
     IdempotencyReplay,
     /// Fault injection; requires a separately approved domain-specific template.
@@ -44,7 +52,12 @@ impl RuntimeChallenge {
     /// New mandatory authority step, constrained by the existing execution profile.
     pub fn required_step(&self) -> AuthorityRequiredStep {
         AuthorityRequiredStep {
-            id: IDEMPOTENCY_STEP.into(),
+            id: if self.template_id == RUST_ARCHITECTURE_TEMPLATE {
+                RUST_ARCHITECTURE_STEP
+            } else {
+                IDEMPOTENCY_STEP
+            }
+            .into(),
             profile: self.profile.clone(),
             command: self.command.clone(),
             evidence: EvidenceCategory::Test,
@@ -60,6 +73,7 @@ impl RuntimeChallenge {
 #[derive(Debug)]
 pub struct AuthorityChallengeRegistry {
     artifact: CanonicalArtifact,
+    rust: bool,
 }
 impl AuthorityChallengeRegistry {
     /// Operator-selected versioned registry; not loaded from a target filename.
@@ -72,7 +86,68 @@ impl AuthorityChallengeRegistry {
                 "contract":"/source/settlement.py: settle(database_path, idempotency_key, amount); ledger(key TEXT, amount INTEGER)"}]}),
             65536,
         )?;
-        Ok(Self { artifact })
+        Ok(Self {
+            artifact,
+            rust: false,
+        })
+    }
+    /// Explicit authority Rust registry; no target discovery or shell proposals.
+    pub fn rust_workspace() -> Result<Self, KnowledgeError> {
+        let artifact = CanonicalArtifact::freeze(
+            &serde_json::json!({
+                "schema":1,"kind":"ARCHCERT_CHALLENGE_REGISTRY","id":"rust-workspace-challenges-v1","version":"1.0.0",
+                "templates":[{"id":RUST_ARCHITECTURE_TEMPLATE,"version":"1.0.0","kind":ChallengeKind::ArchitectureGuard,
+                    "profile":"rust-workspace-v1","program":"python3","private_test_sha256":digest_bytes(RUST_ARCHITECTURE_TEST.as_bytes()),
+                    "minimum_repetitions":1,"maximum_repetitions":1,"default_required_repetitions":1,
+                    "contract":"bounded offline Cargo closure; named *-domain/*-application exclude transport/provider/signing; *-semantic excludes signing; read-only /source"}]
+            }),
+            65536,
+        )?;
+        Ok(Self {
+            artifact,
+            rust: true,
+        })
+    }
+    /// Reconstruct only a supported exact authority registry identity.
+    pub fn from_digest(digest: &Sha256Digest) -> Result<Self, KnowledgeError> {
+        for registry in [Self::controlled()?, Self::rust_workspace()?] {
+            if registry.artifact().digest() == digest {
+                return Ok(registry);
+            }
+        }
+        Err(KnowledgeError::BindingMismatch)
+    }
+    /// Required template and bounded parameters are authority-owned.
+    pub fn requirement(
+        &self,
+        review: &SemanticReviewArtifact,
+    ) -> Result<(&'static str, u16), KnowledgeError> {
+        let (template, min, max, mut repetitions) = if self.rust {
+            (RUST_ARCHITECTURE_TEMPLATE, 1, 1, 1)
+        } else {
+            (IDEMPOTENCY_TEMPLATE, 2, 8, 3)
+        };
+        for proposal in &review
+            .response()
+            .ok_or(KnowledgeError::Invalid)?
+            .proposed_challenges
+        {
+            if proposal.challenge_template_id != template
+                || !(min..=max).contains(&proposal.parameters.repetitions)
+            {
+                return Err(KnowledgeError::Invalid);
+            }
+            repetitions = repetitions.max(proposal.parameters.repetitions);
+        }
+        Ok((template, repetitions))
+    }
+    /// Required execution step for this exact registry.
+    pub fn required_step_id(&self) -> &'static str {
+        if self.rust {
+            RUST_ARCHITECTURE_STEP
+        } else {
+            IDEMPOTENCY_STEP
+        }
     }
     /// Canonical authority registry identity, never an AI-selected runtime identity.
     pub fn artifact(&self) -> &CanonicalArtifact {
@@ -87,37 +162,42 @@ impl AuthorityChallengeRegistry {
         profile: &AuthorityExecutionProfile,
     ) -> Result<ChallengePlan, KnowledgeError> {
         if semantic_gate(request, Some(review)) != SemanticGateDecision::Continue
-            || profile.id() != "python"
+            || profile.id()
+                != if self.rust {
+                    "rust-workspace-v1"
+                } else {
+                    "python"
+                }
         {
             return Err(KnowledgeError::Invalid);
         }
-        let response = review.response().ok_or(KnowledgeError::Invalid)?;
-        let mut repetitions = 3;
-        for proposal in &response.proposed_challenges {
-            if proposal.challenge_template_id != IDEMPOTENCY_TEMPLATE
-                || !(2..=8).contains(&proposal.parameters.repetitions)
-            {
-                return Err(KnowledgeError::Invalid);
-            }
-            repetitions = repetitions.max(proposal.parameters.repetitions);
-        }
+        let (template, repetitions) = self.requirement(review)?;
+        let test = if self.rust {
+            RUST_ARCHITECTURE_TEST
+        } else {
+            IDEMPOTENCY_TEST
+        };
         let command = ExecutionCommand::new(
             "python3".into(),
             vec![
                 "-I".into(),
                 "-c".into(),
-                IDEMPOTENCY_TEST.into(),
+                test.into(),
                 repetitions.to_string(),
             ],
             "/work".into(),
         )
         .map_err(|_| KnowledgeError::Invalid)?;
         let challenge = RuntimeChallenge {
-            template_id: IDEMPOTENCY_TEMPLATE.into(),
+            template_id: template.into(),
             version: "1.0.0".into(),
-            kind: ChallengeKind::IdempotencyReplay,
+            kind: if self.rust {
+                ChallengeKind::ArchitectureGuard
+            } else {
+                ChallengeKind::IdempotencyReplay
+            },
             parameters: ChallengeParameters { repetitions },
-            private_test_sha256: digest_bytes(IDEMPOTENCY_TEST.as_bytes()),
+            private_test_sha256: digest_bytes(test.as_bytes()),
             profile: profile.id().into(),
             image: profile.image().into(),
             command,

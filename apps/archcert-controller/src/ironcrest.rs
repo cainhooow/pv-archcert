@@ -154,7 +154,8 @@ pub async fn command(state: &ControlPlane, command: IroncrestCommand) -> Result<
             println!(
                 "{}",
                 serde_json::json!({"session":prepared.id,"request_sha256":prepared.request.artifact().digest(),
-                "binding":prepared.request.binding(),"reviewer":prepared.request.selection()})
+                "binding":prepared.request.binding(),"reviewer":prepared.request.selection(),"measurements":prepared.measurements,
+                "package_sha256":prepared.request.package().map(|p|p.artifact().digest()),"coverage":prepared.request.package().map(|p|p.coverage())})
             );
         }
         IroncrestCommand::Review(args) => {

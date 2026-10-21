@@ -92,3 +92,9 @@ bind evidence and is rejected. Retaining the complete deterministic manifest cos
 some metadata duplication while making historical semantics explicit. Consumers
 must dispatch on manifest schema and must not interpret unknown versions as 1.
 Existing certificate vectors continue to verify with their original public keys.
+
+ADR 0047 adds a separate Rust policy whose REQUEST role has artifact schema 2 and
+embeds the ADR 0046 semantic package/digest. This is an explicit new producer
+contract under the existing manifest schema 2; the eight-role order is unchanged.
+Historical policies still require schema-1 REQUEST references. No historical
+manifest bytes, certificate payloads or verification interpretation change.

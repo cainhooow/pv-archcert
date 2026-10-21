@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+"""Test the fixed authority guard's trust invariant without executing target code."""
+from pathlib import Path
+import runpy
+
+ROOT = Path(__file__).resolve().parent.parent
+check = runpy.run_path(str(ROOT / 'crates/archcert-application/src/challenges/rust_architecture.py'))['check']
+
+
+def metadata(forbidden=None, semantic=False):
+    names = ['sample-semantic' if semantic else 'sample-application', 'sample-domain', forbidden or 'serde']
+    return dict(packages=[dict(id=name, name=name) for name in names], workspace_members=names[:2],
+                resolve=dict(nodes=[dict(id=names[0], dependencies=[names[1]] * 20),
+                                    dict(id=names[1], dependencies=[names[2]]),
+                                    dict(id=names[2], dependencies=[names[1]])]))
+
+
+assert check(metadata()) == 2
+for name in ['prost', 'prost-types', 'tonic', 'sqlx-core', 'async-openai', 'ed25519-dalek', 'archcert-crypto']:
+    try:
+        check(metadata(name))
+    except ValueError as error:
+        assert 'forbidden inward dependency' in str(error), error
+    else:
+        raise AssertionError('forbidden transitive dependency accepted: ' + name)
+try:
+    check(metadata('ed25519-dalek', semantic=True))
+except ValueError:
+    pass
+else:
+    raise AssertionError('semantic package acquired signing dependency')
+print('Rust authority guard: allowed closure/cycles/references pass; transport/provider/signing closures reject')

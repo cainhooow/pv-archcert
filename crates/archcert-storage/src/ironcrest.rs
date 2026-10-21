@@ -364,7 +364,7 @@ pub(super) async fn require_reviewed_issuance(
     .await
     .map_err(db)?;
     if !present {
-        return if job.inputs.policy.id == IRONCREST_CONTROLLED_POLICY_ID {
+        return if archcert_application::ironcrest::requires_reviewed_chain(&job.inputs.policy.id) {
             Err(JobStoreError::Precondition)
         } else {
             Ok(())
@@ -377,7 +377,7 @@ pub(super) async fn require_reviewed_issuance(
             .await
             .map_err(db)?;
     let Some(binding) = binding else {
-        return if job.inputs.policy.id == IRONCREST_CONTROLLED_POLICY_ID {
+        return if archcert_application::ironcrest::requires_reviewed_chain(&job.inputs.policy.id) {
             Err(JobStoreError::Precondition)
         } else {
             Ok(())

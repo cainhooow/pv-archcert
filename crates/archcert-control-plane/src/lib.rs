@@ -50,6 +50,9 @@ pub struct AuthorityGrant {
     /// Explicit new-profile opt-in. Target requests cannot override this selection.
     #[serde(default)]
     pub ironcrest: bool,
+    /// Authority-only lower request bound for Rust; exact policy/profile digest changes.
+    #[serde(default)]
+    pub semantic_request_bytes: Option<usize>,
     /// Authority-only accepted baseline. None explicitly requires full review.
     #[serde(default)]
     pub ironcrest_baseline: Option<SourceSubmissionId>,
@@ -97,7 +100,11 @@ impl ControlPlaneConfiguration {
         }
         for (index, g) in config.grants.iter().enumerate() {
             resolve_authority_plan(&g.profile, &g.image, &g.authority_toml)?;
-            if (g.ironcrest && g.profile != "python")
+            if (g.ironcrest && !["python", "rust-workspace-v1"].contains(&g.profile.as_str()))
+                || (g.semantic_request_bytes.is_some()
+                    && (!g.ironcrest || g.profile != "rust-workspace-v1"))
+                || g.semantic_request_bytes
+                    .is_some_and(|bytes| bytes == 0 || bytes > 1024 * 1024)
                 || (!g.ironcrest && g.ironcrest_baseline.is_some())
                 || !(1..=3).contains(&g.maximum_attempts)
                 || config.grants[..index].iter().any(|p| {
@@ -301,6 +308,7 @@ mod tests {
                     .into(),
                 maximum_attempts: 2,
                 ironcrest: false,
+                semantic_request_bytes: None,
                 ironcrest_baseline: None,
             }],
         };

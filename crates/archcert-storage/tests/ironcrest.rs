@@ -82,11 +82,15 @@ async fn ironcrest_response_publication_recovery_reuses_accepted_provider_work()
         base_plan_sha256: inputs.plan_sha256.clone(),
         authority_profile_sha256: profile.digest().clone(),
         extractor_registry_sha256: digest_bytes(&canonical_bytes(&knowledge.body().extractors)?),
-        challenge_registry_sha256: digest_bytes(b"challenge-registry"),
+        challenge_registry_sha256:
+            archcert_application::challenges::AuthorityChallengeRegistry::controlled()?
+                .artifact()
+                .digest()
+                .clone(),
         authority_bundles: vec![],
     };
     let prepare = |id| {
-        SemanticReviewRequest::prepare(
+        SemanticReviewRequest::prepare_bounded(
             ReviewContext {
                 job: id,
                 source: &source,
@@ -101,6 +105,7 @@ async fn ironcrest_response_publication_recovery_reuses_accepted_provider_work()
             },
             ReviewerSelection::replay(),
             SemanticLimits::default(),
+            SemanticPackagingPolicy::rust_controlled(),
         )
     };
     let reviewer = CountingSemanticReviewer(AtomicUsize::new(0));
@@ -133,7 +138,32 @@ async fn ironcrest_response_publication_recovery_reuses_accepted_provider_work()
     workflow
         .prepare(&request, &knowledge, &impact, &profile)
         .await?;
-    let accepted = workflow.review_or_restore(&request, &reviewer).await?;
+    let package_digest = request
+        .package()
+        .ok_or("package")?
+        .artifact()
+        .digest()
+        .clone();
+    // Controller restart after the embedded package/request becomes AVAILABLE.
+    let reconstituted = prepare(id)?;
+    assert_eq!(
+        reconstituted
+            .package()
+            .ok_or("recovered package")?
+            .artifact()
+            .digest(),
+        &package_digest
+    );
+    assert_eq!(
+        reconstituted.artifact().digest(),
+        request.artifact().digest()
+    );
+    workflow
+        .prepare(&reconstituted, &knowledge, &impact, &profile)
+        .await?;
+    let accepted = workflow
+        .review_or_restore(&reconstituted, &reviewer)
+        .await?;
     assert_eq!(reviewer.0.load(Ordering::SeqCst), 1);
     assert_eq!(
         workflow.persist_gate(&request, &accepted).await?,
@@ -627,6 +657,16 @@ async fn ironcrest_admission_freezes_exact_plan_transactionally_and_rejects_repl
         repo.create(CreateJob {
             inputs: f.inputs.clone(),
             idempotency: IdempotencyKey::parse("forbidden-direct-ironcrest".into())?
+        })
+        .await
+        .is_err()
+    );
+    let mut rust_inputs = f.inputs.clone();
+    rust_inputs.policy.id = RUST_CONTROLLED_POLICY_ID.into();
+    assert!(
+        repo.create(CreateJob {
+            inputs: rust_inputs,
+            idempotency: IdempotencyKey::parse("forbidden-direct-rust".into())?
         })
         .await
         .is_err()

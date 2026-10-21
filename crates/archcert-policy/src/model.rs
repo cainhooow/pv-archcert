@@ -45,6 +45,25 @@ pub fn ironcrest_controlled_bundle() -> Result<PolicyBundle, PolicyError> {
     Ok(bundle)
 }
 
+/// Distinct Rust policy identity requiring the reviewed bounded context chain.
+pub use archcert_application::ironcrest::RUST_CONTROLLED_POLICY_ID;
+/// Independently canonicalized Rust policy SHA-256.
+pub const RUST_CONTROLLED_POLICY_SHA256: &str =
+    "7d62950af054c3eb6a12585153a7fb7e5f2ec6850b683c6d4e56098eda0e691e";
+/// Loads explicit Rust workspace requirements without altering historical policies.
+pub fn rust_controlled_bundle() -> Result<PolicyBundle, PolicyError> {
+    let bundle = PolicyBundle::read(
+        include_str!("../../../policies/archcert-rust-controlled-v1.toml").as_bytes(),
+    )?;
+    if bundle.identity().id != RUST_CONTROLLED_POLICY_ID
+        || bundle.identity().version != "1.0.0"
+        || bundle.identity().sha256.as_str() != RUST_CONTROLLED_POLICY_SHA256
+    {
+        return Err(PolicyError::SelectionMismatch);
+    }
+    Ok(bundle)
+}
+
 /// Policy input or authority-selection error. Errors never yield eligibility.
 #[derive(Debug, Error)]
 pub enum PolicyError {
@@ -312,6 +331,26 @@ mod ironcrest_tests {
         assert_eq!(
             current.identity().sha256.as_str(),
             IRONCREST_CONTROLLED_POLICY_SHA256
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod rust_profile_tests {
+    use super::*;
+    #[test]
+    fn rust_policy_has_a_distinct_fixed_identity_and_preserves_historical_policy()
+    -> Result<(), PolicyError> {
+        let rust = rust_controlled_bundle()?;
+        assert_eq!(rust.identity().id, RUST_CONTROLLED_POLICY_ID);
+        assert_eq!(
+            rust.identity().sha256.as_str(),
+            RUST_CONTROLLED_POLICY_SHA256
+        );
+        assert_ne!(
+            rust.identity().sha256,
+            ironcrest_controlled_bundle()?.identity().sha256
         );
         Ok(())
     }

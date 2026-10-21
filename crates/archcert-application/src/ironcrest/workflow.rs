@@ -231,23 +231,16 @@ impl IroncrestWorkflow<'_> {
         let decision = semantic_gate(request, Some(review));
         let mut required_challenges = Vec::new();
         if decision == SemanticGateDecision::Continue {
-            let mut repetitions = 3;
-            for proposal in &review
-                .response()
-                .ok_or(JobStoreError::Precondition)?
-                .proposed_challenges
-            {
-                if proposal.challenge_template_id != crate::challenges::IDEMPOTENCY_TEMPLATE
-                    || !(2..=8).contains(&proposal.parameters.repetitions)
-                {
-                    return Err(JobStoreError::Precondition);
-                }
-                repetitions = repetitions.max(proposal.parameters.repetitions);
-            }
+            let registry = crate::challenges::AuthorityChallengeRegistry::from_digest(
+                &session.pin.challenge_registry_sha256,
+            )
+            .map_err(|_| JobStoreError::Precondition)?;
+            let (template, repetitions) = registry
+                .requirement(review)
+                .map_err(|_| JobStoreError::Precondition)?;
             let identity = serde_json::json!({
                 "registry_sha256":session.pin.challenge_registry_sha256,
-                "template_id":crate::challenges::IDEMPOTENCY_TEMPLATE,"version":"1.0.0",
-                "parameters":{"repetitions":repetitions}
+                "template_id":template,"version":"1.0.0","parameters":{"repetitions":repetitions}
             });
             required_challenges.push(serde_json::json!({
                 "identity":identity,

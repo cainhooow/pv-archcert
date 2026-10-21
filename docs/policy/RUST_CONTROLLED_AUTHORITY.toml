@@ -1,0 +1,44 @@
+# Operator-selected recipe, copied outside target data before provisioning.
+# Image must provide Rust, rustfmt, Clippy, cargo-deny, Python 3 and offline crates.
+# The cargo launcher must pin RUSTDOCFLAGS=-D warnings and writable target storage.
+schema = 1
+[project]
+name = "Rust workspace controlled engineering validation"
+[execution]
+profile = "rust-workspace-v1"
+[[execution.commands]]
+name = "fmt"
+program = "cargo"
+args = ["fmt", "--check"]
+evidence = "TYPECHECK"
+working_directory = "/source"
+[[execution.commands]]
+name = "typecheck"
+program = "cargo"
+args = ["check", "--workspace", "--all-targets", "--all-features", "--locked", "--offline"]
+evidence = "TYPECHECK"
+working_directory = "/source"
+[[execution.commands]]
+name = "clippy"
+program = "cargo"
+args = ["clippy", "--workspace", "--all-targets", "--all-features", "--locked", "--offline", "--", "-D", "warnings"]
+evidence = "TYPECHECK"
+working_directory = "/source"
+[[execution.commands]]
+name = "test"
+program = "cargo"
+args = ["test", "--workspace", "--locked", "--offline"]
+evidence = "TEST"
+working_directory = "/source"
+[[execution.commands]]
+name = "build"
+program = "cargo"
+args = ["doc", "--workspace", "--no-deps", "--locked", "--offline"]
+evidence = "BUILD"
+working_directory = "/source"
+[[execution.commands]]
+name = "deny"
+program = "cargo"
+args = ["deny", "--disable-fetch", "check"]
+evidence = "BUILD"
+working_directory = "/source"

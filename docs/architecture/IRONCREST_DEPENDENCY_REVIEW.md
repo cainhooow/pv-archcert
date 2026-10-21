@@ -86,3 +86,10 @@ ordered standard-library collections. No dependency, network, provider SDK or
 parser changes are introduced. Selection performs finite scans/sorts over existing
 extractor bounds and bounded per-item serialization. Canonical artifacts remain
 unchanged; package/request identities reuse existing canonical JSON and SHA-256.
+
+The distinct ADR 0047 Rust profile reuses the existing runner and adds an
+application-owned Python standard-library challenge, offline Cargo metadata and
+explicit Rust tooling requirements in the operator image. Its versioned budgets
+are separate from historical families. No workspace dependency or lockfile update
+is needed. Image/toolchain/offline cache provenance remains authority-owned and
+must be retained with each real run; guard checks do not attest toolchain honesty.

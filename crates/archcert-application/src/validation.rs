@@ -169,6 +169,7 @@ fn development_programs(id: &str) -> Result<Vec<String>, PlanError> {
     let programs: &[&str] = match id {
         "python" => &["python3"],
         "rust" => &["cargo", "rustc"],
+        "rust-workspace-v1" => &["cargo", "rustc", "python3"],
         "node" => &["node", "npm", "pnpm", "corepack"],
         _ => return Err(PlanError::UnknownProfile(id.into())),
     };
@@ -223,9 +224,14 @@ impl AuthorityConfiguration {
         let mut profiles = Vec::new();
         for (id, image) in images {
             let programs = development_programs(&id)?;
+            let limits = if id == "rust-workspace-v1" {
+                rust_workspace_limits()
+            } else {
+                ExecutionLimits::default()
+            };
             profiles.push(AuthorityExecutionProfile::new(
-                ExecutionProfile::new(id, image, programs, ExecutionLimits::default())?,
-                ExecutionLimits::default(),
+                ExecutionProfile::new(id, image, programs, limits)?,
+                limits,
             )?);
         }
         Self::new(profiles, vec![])
@@ -474,5 +480,17 @@ impl ValidationObservation {
             fact,
         })
         .collect())
+    }
+}
+
+/// Versioned authority Rust workspace budgets; historical catalog limits are unchanged.
+pub fn rust_workspace_limits() -> ExecutionLimits {
+    ExecutionLimits {
+        timeout_ms: 900_000,
+        cpu_millis: 2000,
+        memory_bytes: 8 * 1024 * 1024 * 1024,
+        pids: 256,
+        scratch_bytes: 6 * 1024 * 1024 * 1024,
+        ..ExecutionLimits::default()
     }
 }

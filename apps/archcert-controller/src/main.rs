@@ -371,6 +371,8 @@ async fn persist(
 fn policy(inputs: &JobInputs) -> Result<archcert_policy::PolicyBundle> {
     let bundle = if inputs.policy.id == archcert_policy::IRONCREST_CONTROLLED_POLICY_ID {
         archcert_policy::ironcrest_controlled_bundle()?
+    } else if inputs.policy.id == archcert_policy::RUST_CONTROLLED_POLICY_ID {
+        archcert_policy::rust_controlled_bundle()?
     } else {
         archcert_policy::development_bundle()?
     };
@@ -458,20 +460,21 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
         .context("durable evidence missing")?;
     let result = decode_result(&state.artifacts.get(job.inputs.project, evidence).await?)?;
     result.validate(id, attempt.id, &job.inputs)?;
-    let ironcrest = if job.inputs.policy.id == archcert_policy::IRONCREST_CONTROLLED_POLICY_ID {
-        let admission = ironcrest::restore_admission(state, job.inputs.project, id).await?;
-        let workflow = archcert_application::ironcrest::IroncrestWorkflow {
-            repository: &state.repository,
-            artifacts: state.artifacts.as_ref(),
+    let ironcrest =
+        if archcert_application::ironcrest::requires_reviewed_chain(&job.inputs.policy.id) {
+            let admission = ironcrest::restore_admission(state, job.inputs.project, id).await?;
+            let workflow = archcert_application::ironcrest::IroncrestWorkflow {
+                repository: &state.repository,
+                artifacts: state.artifacts.as_ref(),
+            };
+            let challenges = workflow
+                .record_challenges(&admission, &job, &result)
+                .await?;
+            checkpoint(args, "challenge");
+            Some(challenges)
+        } else {
+            None
         };
-        let challenges = workflow
-            .record_challenges(&admission, &job, &result)
-            .await?;
-        checkpoint(args, "challenge");
-        Some(challenges)
-    } else {
-        None
-    };
     checkpoint(args, "before-evaluation");
     let source = state.source(&job.inputs)?;
     let plan = pinned_plan(&job.inputs)?;

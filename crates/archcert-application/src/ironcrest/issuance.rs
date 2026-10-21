@@ -1,7 +1,7 @@
 //! Deterministic challenge evidence and a narrow Ironcrest issuance prerequisite.
 use super::*;
 use crate::{
-    challenges::IDEMPOTENCY_STEP,
+    challenges::AuthorityChallengeRegistry,
     jobs::CertificationJob,
     knowledge::{CanonicalArtifact, canonical_bytes},
     worker::WorkerResult,
@@ -114,10 +114,13 @@ impl IroncrestWorkflow<'_> {
             }
             self.artifacts.get(job.inputs.project, reference).await?;
         }
+        let registry =
+            AuthorityChallengeRegistry::from_digest(&admission.pin().challenge_registry_sha256)
+                .map_err(|_| JobStoreError::Precondition)?;
         let challenge = result
             .steps
             .iter()
-            .find(|s| s.step == IDEMPOTENCY_STEP)
+            .find(|s| s.step == registry.required_step_id())
             .ok_or(JobStoreError::Precondition)?;
         let satisfied = challenge.source_cleaned
             && challenge.sandbox_cleaned

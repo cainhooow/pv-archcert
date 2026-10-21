@@ -240,7 +240,11 @@ impl EvidenceManifest {
             R::ChallengeResult,
         ];
         for ((role, reference), expected) in binding.roles.iter().zip(expected) {
-            let schema = if matches!(role, R::Gate | R::ChallengePlan) {
+            let schema = if matches!(role, R::Gate | R::ChallengePlan)
+                || (*role == R::Request
+                    && binding.pin.policy.id
+                        == archcert_application::ironcrest::RUST_CONTROLLED_POLICY_ID)
+            {
                 2
             } else {
                 1

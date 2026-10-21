@@ -22,6 +22,7 @@ pub const IRONCREST_PROFILE_VERSION: &str = "1.1.0";
 #[derive(Debug)]
 pub struct IroncrestAuthorityProfile {
     artifact: CanonicalArtifact,
+    packaging: Option<crate::semantic::SemanticPackagingPolicy>,
     policy: PolicyPin,
     extractor_registry: Sha256Digest,
     authority_bundles: Vec<Sha256Digest>,
@@ -65,11 +66,71 @@ impl IroncrestAuthorityProfile {
         )?;
         Ok(Self {
             artifact,
+            packaging: None,
             policy,
             extractor_registry,
             authority_bundles,
             challenge_registry,
         })
+    }
+    /// Separate Rust authority identity; the fixture-specific Python profile is unchanged.
+    pub fn rust_workspace(
+        policy: PolicyPin,
+        extractor_registry: Sha256Digest,
+        authority_bundles: Vec<Sha256Digest>,
+        registry: &AuthorityChallengeRegistry,
+    ) -> Result<Self, KnowledgeError> {
+        Self::rust_workspace_with_packaging(
+            policy,
+            extractor_registry,
+            authority_bundles,
+            registry,
+            crate::semantic::SemanticPackagingPolicy::rust_controlled(),
+        )
+    }
+    /// Authority may provision a stricter packaging budget; its exact identity is pinned.
+    pub fn rust_workspace_with_packaging(
+        policy: PolicyPin,
+        extractor_registry: Sha256Digest,
+        authority_bundles: Vec<Sha256Digest>,
+        registry: &AuthorityChallengeRegistry,
+        packaging: crate::semantic::SemanticPackagingPolicy,
+    ) -> Result<Self, KnowledgeError> {
+        if policy.id != RUST_CONTROLLED_POLICY_ID
+            || registry.artifact().digest()
+                != AuthorityChallengeRegistry::rust_workspace()?
+                    .artifact()
+                    .digest()
+        {
+            return Err(KnowledgeError::BindingMismatch);
+        }
+        let challenge_registry = registry.artifact().digest().clone();
+        let artifact = CanonicalArtifact::freeze(
+            &serde_json::json!({
+                "schema":1,"kind":"ARCHCERT_RUST_AUTHORITY_PROFILE","id":RUST_PROFILE_ID,"version":"1.0.0",
+                "language":"rust","policy":policy,"semantic_required":true,"reviewer":ReviewerSelection::replay(),
+                "extractor_registry_sha256":extractor_registry,"authority_bundles":authority_bundles,
+                "packager_version":crate::semantic::PACKAGER_VERSION,"packaging_policy":packaging,"packaging_policy_sha256":packaging.digest()?,
+                "challenge_registry_sha256":challenge_registry,"gate_algorithm":IRONCREST_GATE_ALGORITHM,
+                "required_challenges":[{"template_id":crate::challenges::RUST_ARCHITECTURE_TEMPLATE,"minimum_repetitions":1}],
+                "execution_profile":"rust-workspace-v1","resource_limits":crate::validation::rust_workspace_limits(),
+                "network":"DENIED","external_disclosure":"DENIED","knowledge_limits":KnowledgeLimits::default(),
+                "semantic_limits":SemanticLimits{request_bytes:packaging.request_limit(),..SemanticLimits::default()},"coverage_acceptance":"EXPLICIT_PARTIAL_ENGINEERING_REVIEW_NO_COMPLETE_SOURCE_CLAIM"
+            }),
+            65536,
+        )?;
+        Ok(Self {
+            artifact,
+            packaging: Some(packaging),
+            policy,
+            extractor_registry,
+            authority_bundles,
+            challenge_registry,
+        })
+    }
+    /// New explicit packaging policy, absent for historical Python profiles.
+    pub fn packaging_policy(&self) -> Option<&crate::semantic::SemanticPackagingPolicy> {
+        self.packaging.as_ref()
     }
     /// Canonical profile bytes and identity, retained as immutable evidence.
     pub fn artifact(&self) -> &CanonicalArtifact {
@@ -77,7 +138,15 @@ impl IroncrestAuthorityProfile {
     }
     /// Fixed mandatory semantic bounds.
     pub fn semantic_limits(&self) -> SemanticLimits {
-        SemanticLimits::default()
+        SemanticLimits {
+            request_bytes: self
+                .packaging
+                .as_ref()
+                .map_or(SemanticLimits::default().request_bytes, |p| {
+                    p.request_limit()
+                }),
+            ..SemanticLimits::default()
+        }
     }
     /// Fixed passive knowledge bounds.
     pub fn knowledge_limits(&self) -> KnowledgeLimits {
@@ -103,6 +172,13 @@ impl IroncrestAuthorityProfile {
     /// A request cannot weaken mandatory review, limits, disclosure or provider.
     pub fn validate_request(&self, request: &SemanticReviewRequest) -> Result<(), JobStoreError> {
         let b = request.binding();
+        match (&self.packaging, request.package()) {
+            (Some(policy), Some(package))
+                if policy.digest().map_err(|_| JobStoreError::Invalid)?
+                    == *package.policy_digest() => {}
+            (None, None) => {}
+            _ => return Err(JobStoreError::Precondition),
+        }
         if b.policy != self.policy
             || b.authority_profile_sha256 != *self.artifact.digest()
             || b.authority_bundles != self.authority_bundles
@@ -139,6 +215,29 @@ pub fn controlled_settlement_knowledge(
     )
 }
 
+/// Distinct Rust authority profile, never a historical profile reinterpretation.
+pub const RUST_PROFILE_ID: &str = "rust-workspace-review-v1";
+/// Separate Rust deterministic policy requires the Rust trust challenge.
+pub const RUST_CONTROLLED_POLICY_ID: &str = "archcert-rust-controlled-v1";
+/// Policies requiring the durable reviewed chain in addition to deterministic evaluation.
+pub fn requires_reviewed_chain(id: &str) -> bool {
+    [IRONCREST_CONTROLLED_POLICY_ID, RUST_CONTROLLED_POLICY_ID].contains(&id)
+}
+
+/// Authority-scoped Rust trust invariant. No repository text can select or edit it.
+pub fn controlled_rust_knowledge(
+    project: ProjectId,
+    policy: Sha256Digest,
+) -> Result<crate::knowledge::AuthorityKnowledgeBundle, KnowledgeError> {
+    use archcert_domain::knowledge::*;
+    crate::knowledge::AuthorityKnowledgeBundle::approve("rust-trust-boundaries".into(),"1.0.0".into(),KnowledgeScope::Project(project),vec![AuthorityKnowledgeEntry {
+        id:"RUST-INWARD-TRUST-001".into(),version:"1.0.0".into(),kind:AuthorityEntryKind::Invariant,scope:KnowledgeScope::Project(project),
+        severity:KnowledgeSeverity::Critical,authority:"archcert-controlled-authority".into(),
+        description:"Named domain/application layers exclude generated transport/provider/signing dependencies; semantic packages exclude signing authority. Source remains read-only. Cargo metadata closure is bounded structural evidence, not proof of arbitrary behavior.".into(),
+        origin:"Rust authority trust contract v1".into(),approval:ApprovalState::Approved,supersedes:None,paths:vec![],policy_sha256:vec![policy],
+    }])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,6 +265,43 @@ mod tests {
             challenge_registry_sha256: digest_bytes(b"unselected"),
             authority_bundles: vec![],
         })
+    }
+    #[test]
+    fn rust_profile_has_distinct_authority_limits_registry_and_packaging()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut pin = pin()?;
+        pin.policy.id = RUST_CONTROLLED_POLICY_ID.into();
+        let registry = AuthorityChallengeRegistry::rust_workspace()?;
+        let profile = IroncrestAuthorityProfile::rust_workspace(
+            pin.policy.clone(),
+            pin.extractor_registry_sha256.clone(),
+            vec![],
+            &registry,
+        )?;
+        pin.authority_profile_sha256 = profile.artifact().digest().clone();
+        pin.challenge_registry_sha256 = registry.artifact().digest().clone();
+        profile.validate_pin(&pin)?;
+        let body: serde_json::Value = serde_json::from_slice(profile.artifact().bytes())?;
+        assert_eq!(body["id"], RUST_PROFILE_ID);
+        assert_eq!(body["external_disclosure"], "DENIED");
+        assert_eq!(body["network"], "DENIED");
+        assert_eq!(body["semantic_required"], true);
+        assert_eq!(
+            body["packaging_policy"]["maximum_request_bytes"],
+            1024 * 1024
+        );
+        assert!(profile.packaging_policy().is_some());
+        assert!(
+            IroncrestAuthorityProfile::rust_workspace(
+                pin.policy.clone(),
+                pin.extractor_registry_sha256.clone(),
+                vec![],
+                &AuthorityChallengeRegistry::controlled()?
+            )
+            .is_err()
+        );
+        assert!(requires_reviewed_chain(RUST_CONTROLLED_POLICY_ID));
+        Ok(())
     }
     #[test]
     fn profile_is_versioned_and_binds_every_authority_selection()

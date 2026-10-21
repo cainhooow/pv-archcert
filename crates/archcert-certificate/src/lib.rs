@@ -278,7 +278,7 @@ impl CertificateDraft {
         key: PublicKey,
         ironcrest: Option<&archcert_application::ironcrest::IroncrestIssuanceEvidence>,
     ) -> Result<Self, CertificateError> {
-        if context.bundle.identity().id == archcert_policy::IRONCREST_CONTROLLED_POLICY_ID
+        if archcert_application::ironcrest::requires_reviewed_chain(&context.bundle.identity().id)
             && ironcrest.is_none()
         {
             return Err(CertificateError::EvidenceBindingMismatch);

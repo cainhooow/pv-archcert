@@ -368,3 +368,16 @@ binaries or isolate a malicious same-UID authority process. See
 [Ravenport dependency review](RAVENPORT_DEPENDENCY_REVIEW.md) and
 [operations](RAVENPORT_OPERATIONS.md). No new cryptographic canonicalization,
 network signer/RPC, broker, production KMS or custom encryption is introduced.
+
+## Pre-Genesis bounded Rust review
+
+ADRs 0046–0047 add no third-party Rust dependency or version change. Application
+owns package selection and exact canonical identities; existing serde and ordered
+collections implement the finite projection. The new Rust execution family requires
+an authority-approved immutable image with Rust/rustfmt/Clippy, cargo-deny, Python 3
+and offline crates/advisory data. These tools and their launcher enter the execution
+TCB through explicit image provisioning, not target configuration. The authority
+challenge uses Python's standard library and offline Cargo metadata in OCI. Its
+named dependency-closure checks do not establish arbitrary-code architecture safety.
+No signing/provider/runtime credential is added to target execution, and no
+Stoneward-qualified mechanism or native qualification claim changes.
