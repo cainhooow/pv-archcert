@@ -78,3 +78,11 @@ Real rootless controlled challenges and source-to-certificate/crash regressions
 exercise this composition. No Stoneward runner, worker, fencing, reconciliation or
 cleanup implementation changed, so no native Linux requalification was required.
 This does not establish a broader qualified execution platform or production keys.
+
+## Bounded semantic packaging
+
+ADR 0046 adds application-owned projection using existing serde/serde_json and
+ordered standard-library collections. No dependency, network, provider SDK or
+parser changes are introduced. Selection performs finite scans/sorts over existing
+extractor bounds and bounded per-item serialization. Canonical artifacts remain
+unchanged; package/request identities reuse existing canonical JSON and SHA-256.

@@ -374,3 +374,15 @@ not changed. New policy data, issuance prerequisites and manifest construction s
 above that qualified execution boundary. Relevant real OCI challenges were rerun;
 no changed Stoneward mechanism required native Linux requalification. The existing
 exact qualified platform and its limitations remain as previously documented.
+
+## Bounded semantic context
+
+[ADR 0046](../adr/0046-bounded-semantic-packaging.md) separates complete immutable
+knowledge/impact artifacts from the semantic reviewer projection. Application owns
+a versioned authority-only packager and explicit FULL_CONTEXT, PARTIAL_ACCEPTABLE,
+INSUFFICIENT_CONTEXT classifications. Schema-2 requests contain a canonical package,
+its digest, omission counts/reasons and exact serialized byte accounting under the
+unchanged 1 MiB ceiling. Historical direct-embedding preparation is preserved.
+The immutable request role is also the package persistence/recovery checkpoint;
+provider responses bind that exact request. Partial acceptance requires a new
+explicit authority profile and grants no deterministic proof or complete coverage.

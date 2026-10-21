@@ -87,6 +87,11 @@ impl IroncrestWorkflow<'_> {
         request: &SemanticReviewRequest,
         reviewer: &dyn SemanticReviewer,
     ) -> Result<SemanticReviewArtifact, JobStoreError> {
+        if !request.context_sufficient()
+            || request.artifact().bytes().len() > request.limits().request_bytes
+        {
+            return Err(JobStoreError::Precondition);
+        }
         let binding = request.binding();
         let session = self
             .repository

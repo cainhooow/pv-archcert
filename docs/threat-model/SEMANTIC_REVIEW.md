@@ -75,3 +75,14 @@ under semantic CLEAR produces NOT_ELIGIBLE without reading signer/public-key fil
 These results support implemented capability and recovery boundaries; they do not
 prove model honesty, exactly-once external inference, general test adequacy,
 host power-loss durability or resistance to a compromised authority host.
+
+ADR 0046 adds an application-owned bounded context projection without truncating
+canonical knowledge/impact evidence. Authority policy fixes selection predicates,
+count/excerpt/request ceilings and partial-context acceptability. Repository prose
+cannot raise limits, supply a digest, remove omissions or assign priority. Mandatory
+policy/authority material overflow fails before a request/provider invocation.
+Packages retain category counts and SEMANTIC_CONTEXT_PARTIAL evidence, independent
+of provider-reported response completeness. Request identity binds the package,
+packaging policy and all immutable inputs; create-only request recovery rejects
+substitution. Historical strict context semantics remain unchanged. Partial bounded
+review leaves excluded context unreviewed and cannot establish whole-source coverage.
