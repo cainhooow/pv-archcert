@@ -1,6 +1,9 @@
 //! Trusted durable orchestration. Execution runs in a separate credential-free process.
+
 mod ironcrest;
+
 mod runtime;
+
 use anyhow::{Context, Result, ensure};
 use archcert_application::{
     artifacts::ImmutableArtifactStore,
@@ -23,6 +26,7 @@ struct Args {
     #[command(subcommand)]
     command: Command,
 }
+
 #[derive(Subcommand)]
 enum Command {
     /// Durable pre-admission Ironcrest lifecycle under explicit authority controls.
@@ -56,6 +60,7 @@ enum Command {
         attempt: String,
     },
 }
+
 #[derive(clap::Args)]
 struct RunArgs {
     #[arg(long)]
@@ -84,17 +89,21 @@ struct RunArgs {
     #[arg(long)]
     hold_checkpoint: bool,
 }
+
 fn checkpoint(args: &RunArgs, stage: &str) {
     if args.stop_after.as_deref() == Some(stage) {
         eprintln!("Controlled Ravenport interruption after {stage}");
+
         if args.hold_checkpoint {
             loop {
                 std::thread::park();
             }
         }
+
         std::process::exit(75);
     }
 }
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -103,6 +112,7 @@ async fn main() -> Result<()> {
         ControlPlaneConfiguration::load(&args.config)?,
     )
     .await?;
+
     match args.command {
         Command::Ironcrest { command } => ironcrest::command(&state, command).await?,
         Command::Doctor => {
@@ -116,6 +126,7 @@ async fn main() -> Result<()> {
             minimum_age_seconds,
         } => {
             let project: archcert_domain::ProjectId = project.parse()?;
+
             ensure!(
                 state
                     .configuration
@@ -124,6 +135,7 @@ async fn main() -> Result<()> {
                     .any(|g| g.project == project),
                 "project is not provisioned for this authority"
             );
+
             println!(
                 "{}",
                 serde_json::to_string_pretty(&state.artifacts.reconcile_staging(
@@ -137,8 +149,12 @@ async fn main() -> Result<()> {
             let blocked = runtime::all(&state, &args).await?;
             println!(
                 "{}",
-                serde_json::json!({"blocked":blocked,"applied":args.apply})
+                serde_json::json!({
+                    "blocked": blocked,
+                    "applied": args.apply
+                })
             );
+
             ensure!(
                 !blocked || !args.apply,
                 "runtime reconciliation remains blocked"
@@ -181,10 +197,12 @@ async fn main() -> Result<()> {
                     recover: true,
                     job: None,
                 };
+
                 ensure!(
                     !runtime::all(&state, &startup).await?,
                     "startup reconciliation is blocked; no new execution admitted"
                 );
+
                 if let Some(id) = state.repository.continuations().await?.first().copied() {
                     resume(&state, id, &args).await?;
                     println!(
@@ -193,8 +211,10 @@ async fn main() -> Result<()> {
                     );
                     return Ok(());
                 }
+
                 let runtime = runtime::runtime(&args)?;
                 let binding = runtime::binding(&runtime, &root)?;
+
                 if let Some(assignment) = state
                     .repository
                     .claim(&args.worker_id, args.lease_seconds)
@@ -227,6 +247,7 @@ async fn main() -> Result<()> {
                     archcert_runner::ExecutionGateRoot::open(&root)?
                         .lock(id, assignment.lease.attempt)?
                         .revoke()?;
+
                     if args.stop_after.as_deref() == Some("staging") {
                         let reference = ArtifactReference {
                             sha256: digest_bytes(&bytes),
@@ -245,6 +266,7 @@ async fn main() -> Result<()> {
                             .await?;
                         checkpoint(&args, "staging");
                     }
+
                     let reference = persist(
                         &state,
                         &assignment.job,
@@ -270,8 +292,10 @@ async fn main() -> Result<()> {
             }
         }
     }
+
     Ok(())
 }
+
 async fn execute(
     state: &ControlPlane,
     lease: &Lease,
@@ -283,11 +307,13 @@ async fn execute(
             && args.worker_binary.canonicalize()? == args.worker_binary,
         "worker executable must be an explicit canonical authority path"
     );
+
     use std::os::unix::fs::DirBuilderExt;
     let workspace = args.workspace_root.join(work.attempt.to_string());
     archcert_materialization::AuthorityWorkspaceRoot::open(&args.workspace_root)?;
     std::fs::DirBuilder::new().mode(0o700).create(&workspace)?;
     let runtime_root = runtime::state_root(args)?;
+
     let mut child = tokio::process::Command::new(&args.worker_binary)
         .env_clear()
         .env("TMPDIR", &workspace)
@@ -304,6 +330,7 @@ async fn execute(
         .stderr(Stdio::null())
         .kill_on_drop(true)
         .spawn()?;
+
     // No controller environment, database URL, object capability or signer path is inherited.
     let input = encode_assignment(work)?;
     let mut stdin = child.stdin.take().context("worker stdin")?;
@@ -311,6 +338,7 @@ async fn execute(
         stdin.write_all(&input).await?;
         stdin.shutdown().await
     });
+
     let stdout = child.stdout.take().context("worker stdout")?;
     let reader = tokio::spawn(async move {
         let mut bytes = Vec::new();
@@ -320,25 +348,37 @@ async fn execute(
             .await?;
         Ok::<_, std::io::Error>(bytes)
     });
+
     let mut ticker = tokio::time::interval(Duration::from_secs(u64::from(args.lease_seconds / 3)));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let deadline = tokio::time::sleep(Duration::from_secs(3500));
     tokio::pin!(deadline);
+
     let status = loop {
         tokio::select! {
-            status=child.wait()=>break status?,
-            _=ticker.tick()=>{state.repository.renew(lease,args.lease_seconds).await?;},
-            _=&mut deadline=>{child.kill().await?;anyhow::bail!("worker deadline exceeded; cleanup confirmation required");}
+            status = child.wait() => break status?,
+            _ = ticker.tick() => {
+                state.repository.renew(lease, args.lease_seconds).await?;
+            },
+            _ = &mut deadline => {
+                child.kill().await?;
+
+                anyhow::bail!("worker deadline exceeded; cleanup confirmation required");
+            }
         }
     };
+
     writer.await??;
     let bytes = reader.await??;
+
     ensure!(
         status.success() && bytes.len() <= MAX_RESULT_BYTES,
         "worker failed; lease recovery requires cleanup confirmation"
     );
+
     Ok(bytes)
 }
+
 async fn persist(
     state: &ControlPlane,
     job: &CertificationJob,
@@ -352,22 +392,29 @@ async fn persist(
         schema: 1,
         producer: "archcert-controller-v1/0.1.0".into(),
     };
+
     state
         .repository
         .stage_artifact(job.id, attempt, kind, &reference)
         .await?;
+
     state
         .artifacts
         .put(job.inputs.project, &reference, bytes)
         .await?;
+
     let retained = state.artifacts.get(job.inputs.project, &reference).await?;
+
     ensure!(retained == bytes, "artifact publication mismatch");
+
     state
         .repository
         .artifact_available(job.id, attempt, kind, &reference)
         .await?;
+
     Ok(reference)
 }
+
 fn policy(inputs: &JobInputs) -> Result<archcert_policy::PolicyBundle> {
     let bundle = if inputs.policy.id == archcert_policy::IRONCREST_CONTROLLED_POLICY_ID {
         archcert_policy::ironcrest_controlled_bundle()?
@@ -377,19 +424,23 @@ fn policy(inputs: &JobInputs) -> Result<archcert_policy::PolicyBundle> {
         archcert_policy::development_bundle()?
     };
     let p = bundle.identity();
+
     ensure!(
         p.id == inputs.policy.id
             && p.version == inputs.policy.version
             && p.sha256 == inputs.policy.sha256,
         "pinned policy is unavailable; never substitute latest policy"
     );
+
     Ok(bundle)
 }
+
 fn observations(
     result: &WorkerResult,
     plan: &archcert_application::validation::ValidationPlan,
 ) -> Result<Vec<ValidationObservation>> {
     let mut observations = Vec::new();
+
     for (step, record) in plan.steps().iter().zip(&result.steps) {
         if let Some(e) = &record.evidence {
             observations.extend(ValidationObservation::from_execution(plan, step, e)?);
@@ -413,8 +464,10 @@ fn observations(
             });
         }
     }
+
     Ok(observations)
 }
+
 fn issuance_failure_category(error: &archcert_certificate::CertificateError) -> FailureCategory {
     match error {
         archcert_certificate::CertificateError::Signing(_)
@@ -424,19 +477,23 @@ fn issuance_failure_category(error: &archcert_certificate::CertificateError) -> 
         _ => FailureCategory::VerificationFailure,
     }
 }
+
 async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
     checkpoint(args, "evidence");
     let mut job = state.repository.get(id).await?;
+
     ensure!(
         matches!(job.state, JobState::Evaluating | JobState::Signing),
         "job has no continuation"
     );
+
     if let Some(attempt) = job.attempts.last()
         && let Some(bound) = &attempt.runtime
         && bound.cleanup != RuntimeCleanupState::Succeeded
     {
         let root = runtime::state_root(args)?;
         let runtime = runtime::runtime(args)?;
+
         ensure!(
             runtime::one(
                 state,
@@ -451,8 +508,10 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
                 == RuntimeCleanupState::Succeeded,
             "durable evidence retained; runtime cleanup must finish before continuation"
         );
+
         job = state.repository.get(id).await?;
     }
+
     let attempt = job.attempts.last().context("attempt missing")?;
     let evidence = attempt
         .evidence
@@ -460,6 +519,7 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
         .context("durable evidence missing")?;
     let result = decode_result(&state.artifacts.get(job.inputs.project, evidence).await?)?;
     result.validate(id, attempt.id, &job.inputs)?;
+
     let ironcrest =
         if archcert_application::ironcrest::requires_reviewed_chain(&job.inputs.policy.id) {
             let admission = ironcrest::restore_admission(state, job.inputs.project, id).await?;
@@ -475,6 +535,7 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
         } else {
             None
         };
+
     checkpoint(args, "before-evaluation");
     let source = state.source(&job.inputs)?;
     let plan = pinned_plan(&job.inputs)?;
@@ -493,6 +554,7 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
         .iter()
         .filter_map(|s| s.evidence.clone())
         .collect();
+
     let evaluation = archcert_policy::evaluate(
         &bundle,
         bundle.identity(),
@@ -507,6 +569,7 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
             )?,
         },
     )?;
+
     let clean = result
         .steps
         .iter()
@@ -522,7 +585,9 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
     } else {
         EvaluationDecision::NotEligible
     };
+
     let bytes = archcert_evidence::canonical_bytes(&evaluation)?;
+
     if job.evaluation.is_none() {
         let reference = persist(state, &job, None, "EVALUATION", &bytes).await?;
         state
@@ -539,13 +604,17 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
                 job.evaluation.as_ref().context("evaluation missing")?,
             )
             .await?;
+
         ensure!(stored == bytes, "durable evaluation mismatch");
     }
+
     if decision != EvaluationDecision::Eligible {
         return Ok(());
     }
+
     let key =
         PublicKey::from_hex(std::str::from_utf8(&read_private(&args.public_key, 1024)?)?.trim())?;
+
     // A durable prepared issuance fixes time/key/payload across all crash boundaries.
     let issued_at = job.issuance.as_ref().map_or(
         std::time::SystemTime::now()
@@ -553,6 +622,7 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
             .as_secs(),
         |i| i.issued_at,
     );
+
     checkpoint(args, "before-signing");
     let ironcrest_evidence = ironcrest.map(|e| e.for_issuance()).transpose()?;
     let context = IssuanceContext {
@@ -579,11 +649,13 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
     } else {
         CertificateDraft::prepare(context, Some(evaluation), metadata, key.clone())?
     };
+
     let issuance = PreparedIssuance {
         certificate_sha256: draft.certificate().digest().clone(),
         signing_key_id: key.key_id().as_str().into(),
         issued_at,
     };
+
     persist(
         state,
         &job,
@@ -592,6 +664,7 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
         draft.evidence_bundle().canonical_bytes(),
     )
     .await?;
+
     persist(
         state,
         &job,
@@ -600,8 +673,10 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
         draft.manifest().canonical_bytes(),
     )
     .await?;
+
     state.repository.prepare_issuance(id, &issuance).await?;
     checkpoint(args, "prepared");
+
     let signer = match archcert_crypto::local::LocalDevelopmentSigner::load(&args.development_key) {
         Ok(signer) => signer,
         Err(e) => {
@@ -612,6 +687,7 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
             return Err(e.into());
         }
     };
+
     let issued = match draft.issue(&signer) {
         Ok(issued) => issued,
         Err(e) => {
@@ -622,11 +698,14 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
             return Err(e.into());
         }
     };
+
     checkpoint(args, "signed");
     let envelope = issued.envelope().to_json()?;
     issued.envelope().verify(&key)?;
+
     let reference = persist(state, &job, None, "CERTIFICATE", &envelope).await?;
     checkpoint(args, "certificate-upload");
+
     let value: serde_json::Value = serde_json::from_slice(&envelope)?;
     let certificate = PersistedCertificate {
         issuance,
@@ -637,7 +716,9 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
             .into(),
         verified: true,
     };
+
     state.repository.complete(id, &certificate).await?;
+
     Ok(())
 }
 

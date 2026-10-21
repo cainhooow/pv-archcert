@@ -1,4 +1,5 @@
 //! Authority composition for pre-admission Ironcrest sessions. No signing/runtime.
+
 use super::*;
 use archcert_application::{
     challenges::AuthorityChallengeRegistry, ironcrest::*, knowledge::*, semantic::*,
@@ -24,6 +25,7 @@ pub struct PreparedIroncrestReview {
     /// Authority registry only.
     pub registry: AuthorityChallengeRegistry,
 }
+
 impl PreparedIroncrestReview {
     /// Borrow original authority objects for immutable application admission.
     pub fn admission_context<'a>(
@@ -42,6 +44,7 @@ impl PreparedIroncrestReview {
         }
     }
 }
+
 fn authority(
     project: ProjectId,
     policy: &PolicyPin,
@@ -69,20 +72,24 @@ fn authority(
         })(project, policy.sha256.clone())
         .map_err(|_| JobStoreError::Invalid)?,
     ];
+
     let registry = (if rust {
         AuthorityChallengeRegistry::rust_workspace
     } else {
         AuthorityChallengeRegistry::controlled
     })()
     .map_err(|_| JobStoreError::Invalid)?;
+
     let mut identities: Vec<_> = bundles
         .iter()
         .map(|b| b.artifact().digest().clone())
         .collect();
     identities.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+
     let extractor_registry = engine
         .registry_digest()
         .map_err(|_| JobStoreError::Invalid)?;
+
     let profile = if rust {
         let packaging = SemanticPackagingPolicy::rust_controlled()
             .with_request_limit(request_bound.unwrap_or(1024 * 1024))
@@ -103,8 +110,10 @@ fn authority(
         )
     }
     .map_err(|_| JobStoreError::Invalid)?;
+
     Ok((engine, bundles, registry, profile))
 }
+
 fn policy_pin(rust: bool) -> Result<PolicyPin, JobStoreError> {
     let bundle = (if rust {
         archcert_policy::rust_controlled_bundle
@@ -113,12 +122,14 @@ fn policy_pin(rust: bool) -> Result<PolicyPin, JobStoreError> {
     })()
     .map_err(|_| JobStoreError::Invalid)?;
     let p = bundle.identity();
+
     Ok(PolicyPin {
         id: p.id.clone(),
         version: p.version.clone(),
         sha256: p.sha256.clone(),
     })
 }
+
 impl ControlPlane {
     /// Authenticated source selection before any private source/knowledge lookup.
     /// The caller supplies source and scope only; provider/profile/baseline/challenge
@@ -132,6 +143,7 @@ impl ControlPlane {
         id: JobId,
     ) -> Result<IroncrestSession, JobStoreError> {
         let grant = self.configuration.grant_for(&actor, project, &repository)?;
+
         if !grant.ironcrest
             || !self
                 .repository
@@ -140,6 +152,7 @@ impl ControlPlane {
         {
             return Err(JobStoreError::Unauthorized);
         }
+
         let reader =
             archcert_gateway::AcceptedSubmissionReader::open(&self.configuration.source_store)
                 .map_err(|_| JobStoreError::Unavailable)?;
@@ -147,20 +160,25 @@ impl ControlPlane {
             .load(&submission)
             .map_err(|_| JobStoreError::Invalid)?
             .snapshot;
+
         if source.project() != project || source.repository() != &repository {
             return Err(JobStoreError::Unauthorized);
         }
+
         source
             .require_complete()
             .map_err(|_| JobStoreError::Invalid)?;
+
         let baseline = if let Some(submission) = &grant.ironcrest_baseline {
             let base = reader
                 .load(submission)
                 .map_err(|_| JobStoreError::Invalid)?
                 .snapshot;
+
             if base.project() != project || base.repository() != &repository {
                 return Err(JobStoreError::Unauthorized);
             }
+
             base.require_complete()
                 .map_err(|_| JobStoreError::Invalid)?;
             self.repository.register_source(submission, &base).await?;
@@ -171,14 +189,17 @@ impl ControlPlane {
         } else {
             None
         };
+
         let rust = grant.profile == "rust-workspace-v1";
         let policy = policy_pin(rust)?;
         let (engine, bundles, registry, profile) =
             authority(project, &policy, rust, grant.semantic_request_bytes)?;
         let plan = resolve_authority_plan(&grant.profile, &grant.image, &grant.authority_toml)?;
+
         self.repository
             .register_source(&submission, &source)
             .await?;
+
         let pin = IroncrestSessionPin {
             project,
             repository,
@@ -201,6 +222,7 @@ impl ControlPlane {
         profile.validate_pin(&pin)?;
         self.repository.open_session(id, &pin).await
     }
+
     /// Restore authority-selected source/baseline/profile without consulting target
     /// configuration or mutable refs. Changed authority versions/recipes fail closed.
     pub async fn prepare_ironcrest(
@@ -209,10 +231,12 @@ impl ControlPlane {
         id: JobId,
     ) -> Result<PreparedIroncrestReview, JobStoreError> {
         let session = self.repository.review_session(project, id).await?;
+
         let pin = &session.pin;
         let grant = self
             .configuration
             .grant_for(&pin.actor, project, &pin.repository)?;
+
         if !grant.ironcrest
             || !self
                 .repository
@@ -221,11 +245,14 @@ impl ControlPlane {
         {
             return Err(JobStoreError::Unauthorized);
         }
+
         let rust = grant.profile == "rust-workspace-v1";
         let policy = policy_pin(rust)?;
+
         if policy != pin.policy {
             return Err(JobStoreError::Precondition);
         }
+
         let (engine, bundles, registry, profile) =
             authority(project, &policy, rust, grant.semantic_request_bytes)?;
         profile.validate_pin(pin)?;
@@ -244,6 +271,7 @@ impl ControlPlane {
         };
         archcert_application::worker::pinned_plan(&base_inputs)?;
         let source = self.source(&base_inputs)?;
+
         let baseline = if let Some(base) = &pin.baseline {
             let mut inputs = base_inputs.clone();
             inputs.submission = base.submission.clone();
@@ -252,6 +280,7 @@ impl ControlPlane {
         } else {
             None
         };
+
         let selected = baseline
             .as_ref()
             .map(|s| {
@@ -262,6 +291,7 @@ impl ControlPlane {
             })
             .transpose()
             .map_err(|_| JobStoreError::Invalid)?;
+
         let extraction_started = std::time::Instant::now();
         let baseline_knowledge = baseline
             .as_ref()
@@ -272,10 +302,12 @@ impl ControlPlane {
             .extract(&source, &bundles, selected.as_ref())
             .map_err(|_| JobStoreError::Invalid)?;
         let extraction_millis = extraction_started.elapsed().as_millis();
+
         let impact_started = std::time::Instant::now();
         let impact = analyze_impact(&knowledge, baseline_knowledge.as_ref())
             .map_err(|_| JobStoreError::Invalid)?;
         let impact_millis = impact_started.elapsed().as_millis();
+
         let packaging_started = std::time::Instant::now();
         let bundle = (if rust {
             archcert_policy::rust_controlled_bundle
@@ -308,10 +340,18 @@ impl ControlPlane {
         }
         .map_err(|_| JobStoreError::Invalid)?;
         profile.validate_request(&request)?;
-        let measurements = serde_json::json!({"source_files":source.files().len(),"knowledge_bytes":knowledge.artifact().bytes().len(),
-            "impact_bytes":impact.artifact().bytes().len(),"package_bytes":request.package().map(|p|p.artifact().bytes().len()),
-            "request_bytes":request.artifact().bytes().len(),"extraction_millis":extraction_millis,"impact_millis":impact_millis,
-            "packaging_millis":packaging_started.elapsed().as_millis()});
+
+        let measurements = serde_json::json!({
+            "source_files": source.files().len(),
+            "knowledge_bytes": knowledge.artifact().bytes().len(),
+            "impact_bytes": impact.artifact().bytes().len(),
+            "package_bytes": request.package().map(|p| p.artifact().bytes().len()),
+            "request_bytes": request.artifact().bytes().len(),
+            "extraction_millis": extraction_millis,
+            "impact_millis": impact_millis,
+            "packaging_millis": packaging_started.elapsed().as_millis()
+        });
+
         Ok(PreparedIroncrestReview {
             measurements,
             id,

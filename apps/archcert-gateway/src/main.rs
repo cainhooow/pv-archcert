@@ -1,4 +1,5 @@
 //! Restricted OpenSSH forced command. Source reception never creates a job.
+
 use anyhow::{Context, Result};
 use archcert_domain::ingress::{DeviceKeyId, SourceSubmissionId};
 use archcert_gateway::DevelopmentSubmissionStore;
@@ -15,6 +16,7 @@ struct Cli {
     #[command(subcommand)]
     command: Command,
 }
+
 #[derive(Subcommand)]
 enum Command {
     /// Exports source-only v1 Protobuf observations to stdout (not canonical bytes).
@@ -51,10 +53,12 @@ enum Command {
         submission: String,
     },
 }
+
 struct DeadlineInput {
     input: std::io::Stdin,
     deadline: Instant,
 }
+
 impl Read for DeadlineInput {
     fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
         use rustix::event::{PollFd, PollFlags, Timespec, poll};
@@ -67,15 +71,18 @@ impl Read for DeadlineInput {
             tv_nsec: i64::from(remaining.subsec_nanos()),
         };
         let mut fds = [PollFd::new(&self.input, PollFlags::IN)];
+
         if poll(&mut fds, Some(&timeout))? == 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 "receive deadline",
             ));
         }
+
         self.input.read(out)
     }
 }
+
 fn run() -> Result<()> {
     match Cli::parse().command {
         Command::ExportProto { store, submission } => {
@@ -125,8 +132,10 @@ fn run() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&source.evidence)?);
         }
     }
+
     Ok(())
 }
+
 fn main() {
     if run().is_err() {
         eprintln!("NORTHGATE: source receive or inspection failed");

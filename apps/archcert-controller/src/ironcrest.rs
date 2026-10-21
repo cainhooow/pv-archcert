@@ -1,4 +1,5 @@
 //! Thin trusted CLI composition for application-owned durable review/admission.
+
 use anyhow::{Result, ensure};
 use archcert_application::{ironcrest::*, semantic::*};
 use archcert_control_plane::{ControlPlane, read_private};
@@ -17,6 +18,7 @@ pub enum IroncrestCommand {
     /// Inspect scoped durable review metadata without invoking a reviewer.
     Show(SessionArgs),
 }
+
 #[derive(Args)]
 pub struct OpenArgs {
     #[arg(long)]
@@ -30,6 +32,7 @@ pub struct OpenArgs {
     #[arg(long)]
     token_file: PathBuf,
 }
+
 #[derive(Args)]
 pub struct SessionArgs {
     #[arg(long)]
@@ -43,6 +46,7 @@ pub struct SessionArgs {
     #[arg(long)]
     hold_checkpoint: bool,
 }
+
 #[derive(Args)]
 pub struct ReviewArgs {
     #[arg(long)]
@@ -58,22 +62,27 @@ pub struct ReviewArgs {
     #[arg(long)]
     hold_checkpoint: bool,
 }
+
 fn checkpoint(selected: Option<&str>, stage: &str, hold: bool) {
     if selected == Some(stage) {
         eprintln!("Controlled Ironcrest interruption after {stage}");
+
         if hold {
             loop {
                 std::thread::park();
             }
         }
+
         std::process::exit(75);
     }
 }
+
 struct ClaimCheckpoint<'a> {
     inner: &'a dyn SemanticReviewer,
     stop: Option<&'a str>,
     hold: bool,
 }
+
 #[async_trait::async_trait]
 impl SemanticReviewer for ClaimCheckpoint<'_> {
     async fn review(
@@ -84,6 +93,7 @@ impl SemanticReviewer for ClaimCheckpoint<'_> {
         self.inner.review(request).await
     }
 }
+
 pub async fn command(state: &ControlPlane, command: IroncrestCommand) -> Result<()> {
     match command {
         IroncrestCommand::Open(args) => {
@@ -102,9 +112,10 @@ pub async fn command(state: &ControlPlane, command: IroncrestCommand) -> Result<
                 .await?;
             println!(
                 "{}",
-                serde_json::to_string_pretty(
-                    &serde_json::json!({"review_recovery":session.review_recovery(),"session":session})
-                )?
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "review_recovery": session.review_recovery(),
+                    "session": session
+                }))?
             );
         }
         IroncrestCommand::Show(args) => {
@@ -119,9 +130,10 @@ pub async fn command(state: &ControlPlane, command: IroncrestCommand) -> Result<
             )?;
             println!(
                 "{}",
-                serde_json::to_string_pretty(
-                    &serde_json::json!({"review_recovery":session.review_recovery(),"session":session})
-                )?
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "review_recovery": session.review_recovery(),
+                    "session": session
+                }))?
             );
         }
         IroncrestCommand::Prepare(args) => {
@@ -147,15 +159,22 @@ pub async fn command(state: &ControlPlane, command: IroncrestCommand) -> Result<
                             _ => "unsupported",
                         };
                         checkpoint(args.stop_after.as_deref(), stage, args.hold_checkpoint);
+
                         Ok(())
                     },
                 )
                 .await?;
             println!(
                 "{}",
-                serde_json::json!({"session":prepared.id,"request_sha256":prepared.request.artifact().digest(),
-                "binding":prepared.request.binding(),"reviewer":prepared.request.selection(),"measurements":prepared.measurements,
-                "package_sha256":prepared.request.package().map(|p|p.artifact().digest()),"coverage":prepared.request.package().map(|p|p.coverage())})
+                serde_json::json!({
+                    "session": prepared.id,
+                    "request_sha256": prepared.request.artifact().digest(),
+                    "binding": prepared.request.binding(),
+                    "reviewer": prepared.request.selection(),
+                    "measurements": prepared.measurements,
+                    "package_sha256": prepared.request.package().map(|p|p.artifact().digest()),
+                    "coverage": prepared.request.package().map(|p|p.coverage())
+                })
             );
         }
         IroncrestCommand::Review(args) => {
@@ -195,28 +214,42 @@ pub async fn command(state: &ControlPlane, command: IroncrestCommand) -> Result<
             checkpoint(args.stop_after.as_deref(), "review", args.hold_checkpoint);
             let decision = workflow.persist_gate(&prepared.request, &review).await?;
             checkpoint(args.stop_after.as_deref(), "gate", args.hold_checkpoint);
+
             if decision == SemanticGateDecision::Block
                 || semantic_gate(&prepared.request, Some(&review)) != SemanticGateDecision::Continue
             {
                 println!(
                     "{}",
-                    serde_json::json!({"session":prepared.id,"semantic_gate":decision,
-                    "status":if decision==SemanticGateDecision::Block {"SEMANTIC_BLOCK"} else {"INCONCLUSIVE"},"certificate":"NOT_ISSUED"})
+                    serde_json::json!({
+                        "session": prepared.id,
+                        "semantic_gate": decision,
+                        "status": if decision == SemanticGateDecision::Block {
+                            "SEMANTIC_BLOCK"
+                        } else {
+                            "INCONCLUSIVE"
+                        },
+                        "certificate": "NOT_ISSUED"
+                    })
                 );
                 return Ok(());
             }
+
             let admission = workflow
                 .freeze_admission(prepared.admission_context(&review))
                 .await?;
             checkpoint(args.stop_after.as_deref(), "plan", args.hold_checkpoint);
             let job = state.repository.admit_reviewed(&admission).await?;
             checkpoint(args.stop_after.as_deref(), "admitted", args.hold_checkpoint);
+
             ensure!(job.id == prepared.id, "reserved Ironcrest job changed");
+
             println!("{}", serde_json::to_string_pretty(&job)?);
         }
     }
+
     Ok(())
 }
+
 /// Restore accepted semantic evidence and immutable plan without a provider call.
 pub async fn restore_admission(
     state: &ControlPlane,
@@ -235,5 +268,6 @@ pub async fn restore_admission(
         .freeze_admission(prepared.admission_context(&review))
         .await?;
     state.repository.admitted_review(&admission).await?;
+
     Ok(admission)
 }

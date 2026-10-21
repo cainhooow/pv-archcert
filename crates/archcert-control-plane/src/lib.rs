@@ -1,5 +1,7 @@
 //! Trusted admission/read composition. No execution or signing capability.
+
 mod ironcrest;
+
 use archcert_application::{jobs::*, worker::resolve_authority_plan};
 use archcert_domain::{
     ProjectId,
@@ -9,6 +11,7 @@ use archcert_domain::{
 };
 use archcert_storage::{PostgresJobRepository, artifacts::FilesystemArtifactStore};
 pub use ironcrest::PreparedIroncrestReview;
+
 use serde::Deserialize;
 use std::{
     io::Read,
@@ -16,6 +19,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+
 /// Operator configuration. No candidate-controlled path or authorization fallback.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,6 +31,7 @@ pub struct ControlPlaneConfiguration {
     /// Explicit development principals and scope/authority mappings.
     pub grants: Vec<AuthorityGrant>,
 }
+
 /// Development authority provisioned outside source and target workspaces.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -57,22 +62,27 @@ pub struct AuthorityGrant {
     #[serde(default)]
     pub ironcrest_baseline: Option<SourceSubmissionId>,
 }
+
 /// Reads an existing private owned regular authority file without symlink following.
 pub fn read_private(path: &Path, maximum: u64) -> Result<Vec<u8>, JobStoreError> {
     if !path.is_absolute() || path.canonicalize().map_err(|_| JobStoreError::Invalid)? != path {
         return Err(JobStoreError::Invalid);
     }
+
     let parent = path.parent().ok_or(JobStoreError::Invalid)?;
     let p = std::fs::metadata(parent).map_err(|_| JobStoreError::Invalid)?;
+
     if p.uid() != rustix::process::geteuid().as_raw() || p.mode() & 0o077 != 0 {
         return Err(JobStoreError::Invalid);
     }
+
     let file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32)
         .open(path)
         .map_err(|_| JobStoreError::Invalid)?;
     let m = file.metadata().map_err(|_| JobStoreError::Invalid)?;
+
     if !m.is_file()
         || m.nlink() != 1
         || m.uid() != rustix::process::geteuid().as_raw()
@@ -81,25 +91,32 @@ pub fn read_private(path: &Path, maximum: u64) -> Result<Vec<u8>, JobStoreError>
     {
         return Err(JobStoreError::Invalid);
     }
+
     let mut bytes = Vec::new();
     file.take(maximum + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| JobStoreError::Unavailable)?;
+
     if bytes.len() as u64 > maximum {
         return Err(JobStoreError::Invalid);
     }
+
     Ok(bytes)
 }
+
 impl ControlPlaneConfiguration {
     /// Loads strict bounded private operator JSON. Does not migrate or grant database rights.
     pub fn load(path: &Path) -> Result<Self, JobStoreError> {
         let config: Self = serde_json::from_slice(&read_private(path, 1024 * 1024)?)
             .map_err(|_| JobStoreError::Invalid)?;
+
         if config.grants.is_empty() || config.grants.len() > 128 {
             return Err(JobStoreError::Invalid);
         }
+
         for (index, g) in config.grants.iter().enumerate() {
             resolve_authority_plan(&g.profile, &g.image, &g.authority_toml)?;
+
             if (g.ironcrest && !["python", "rust-workspace-v1"].contains(&g.profile.as_str()))
                 || (g.semantic_request_bytes.is_some()
                     && (!g.ironcrest || g.profile != "rust-workspace-v1"))
@@ -118,13 +135,16 @@ impl ControlPlaneConfiguration {
                 return Err(JobStoreError::Invalid);
             }
         }
+
         Ok(config)
     }
+
     /// Authenticates a development bearer token. Missing/unknown credentials reject.
     pub fn authenticate(&self, token: &str) -> Result<GitActorId, JobStoreError> {
         if token.len() < 32 || token.len() > 256 || !token.bytes().all(|b| b.is_ascii_graphic()) {
             return Err(JobStoreError::Unauthorized);
         }
+
         let hash = digest_bytes(token.as_bytes());
         self.grants
             .iter()
@@ -132,6 +152,7 @@ impl ControlPlaneConfiguration {
             .map(|g| g.actor.clone())
             .ok_or(JobStoreError::Unauthorized)
     }
+
     /// Returns only an explicit actor/project/repository grant.
     pub fn grant_for(
         &self,
@@ -145,6 +166,7 @@ impl ControlPlaneConfiguration {
             .ok_or(JobStoreError::Unauthorized)
     }
 }
+
 /// Control-plane runtime composition, independently restartable from execution/signing.
 pub struct ControlPlane {
     /// Transactional state adapter. Internal authority access only.
@@ -154,6 +176,7 @@ pub struct ControlPlane {
     /// Explicit development authority settings.
     pub configuration: ControlPlaneConfiguration,
 }
+
 impl ControlPlane {
     /// Connects existing migrated metadata and private storage; performs no DDL/provisioning.
     pub async fn connect(
@@ -164,12 +187,14 @@ impl ControlPlane {
         let artifacts = Arc::new(FilesystemArtifactStore::open_unencrypted_development(
             &configuration.artifact_root,
         )?);
+
         Ok(Self {
             repository,
             artifacts,
             configuration,
         })
     }
+
     /// Explicit operator provisioning of allowed scopes; never run from target/API requests.
     pub async fn provision(&self) -> Result<(), JobStoreError> {
         for grant in &self.configuration.grants {
@@ -177,8 +202,10 @@ impl ControlPlane {
                 .grant(grant.project, &grant.repository, &grant.actor)
                 .await?;
         }
+
         Ok(())
     }
+
     /// Loads independently checked accepted source under a known authority reference.
     pub fn source(&self, inputs: &JobInputs) -> Result<SourceSnapshot, JobStoreError> {
         let store =
@@ -187,18 +214,22 @@ impl ControlPlane {
         let accepted = store
             .load(&inputs.submission)
             .map_err(|_| JobStoreError::Invalid)?;
+
         if accepted.snapshot.project() != inputs.project
             || accepted.snapshot.repository() != &inputs.repository
             || accepted.snapshot.identity() != &inputs.source
         {
             return Err(JobStoreError::Invalid);
         }
+
         accepted
             .snapshot
             .require_complete()
             .map_err(|_| JobStoreError::Invalid)?;
+
         Ok(accepted.snapshot)
     }
+
     /// Authorizes scope before source lookup, pins all inputs, then durably admits work.
     pub async fn submit(
         &self,
@@ -209,9 +240,11 @@ impl ControlPlane {
         key: IdempotencyKey,
     ) -> Result<CertificationJob, JobStoreError> {
         let grant = self.configuration.grant_for(&actor, project, &repository)?;
+
         if grant.ironcrest {
             return Err(JobStoreError::Precondition);
         }
+
         if !self
             .repository
             .authorized(project, &repository, &actor)
@@ -219,6 +252,7 @@ impl ControlPlane {
         {
             return Err(JobStoreError::Unauthorized);
         }
+
         let accepted = {
             let store =
                 archcert_gateway::AcceptedSubmissionReader::open(&self.configuration.source_store)
@@ -227,9 +261,11 @@ impl ControlPlane {
                 .load(&submission)
                 .map_err(|_| JobStoreError::Invalid)?
         };
+
         if accepted.snapshot.project() != project || accepted.snapshot.repository() != &repository {
             return Err(JobStoreError::Unauthorized);
         }
+
         accepted
             .snapshot
             .require_complete()
@@ -265,6 +301,7 @@ impl ControlPlane {
             })
             .await
     }
+
     /// Reads durable state only after actor scope authorization. Existence alone grants nothing.
     pub async fn status(
         &self,
@@ -274,6 +311,7 @@ impl ControlPlane {
         let job = self.repository.get(id).await?;
         self.configuration
             .grant_for(actor, job.inputs.project, &job.inputs.repository)?;
+
         if !self
             .repository
             .authorized(job.inputs.project, &job.inputs.repository, actor)
@@ -281,6 +319,7 @@ impl ControlPlane {
         {
             return Err(JobStoreError::Unauthorized);
         }
+
         Ok(job)
     }
 }
@@ -312,6 +351,7 @@ mod tests {
                 ironcrest_baseline: None,
             }],
         };
+
         assert_eq!(configuration.authenticate(token)?, actor);
         assert!(configuration.authenticate("").is_err());
         assert!(
@@ -329,14 +369,18 @@ mod tests {
                 .grant_for(&actor, ProjectId::new(), &repository)
                 .is_err()
         );
+
         let other = GitActorId::parse(JobId::new().to_string())?;
+
         assert!(
             configuration
                 .grant_for(&other, project, &repository)
                 .is_err()
         );
+
         Ok(())
     }
+
     #[test]
     fn authority_configuration_rejects_symlink_and_public_files()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -347,13 +391,19 @@ mod tests {
         let file = root.join("authority.json");
         std::fs::write(&file, b"{}")?;
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644))?;
+
         assert!(read_private(&file, 1024).is_err());
+
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600))?;
+
         assert_eq!(read_private(&file, 1024)?, b"{}");
+
         let link = root.join("link");
         std::os::unix::fs::symlink(&file, &link)?;
+
         assert!(read_private(&link, 1024).is_err());
         assert!(ControlPlaneConfiguration::load(&file).is_err());
+
         Ok(())
     }
 }

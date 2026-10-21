@@ -63,6 +63,7 @@ struct CertifyArgs {
     #[arg(long)]
     output: PathBuf,
 }
+
 struct CertificationOptions {
     key: PathBuf,
     public_key: PathBuf,
@@ -159,6 +160,7 @@ enum SourceCommand {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
     match cli.command {
         Command::Source { command } => source_command(command),
         Command::ConfigCheck { file } => config_check(&file),
@@ -202,6 +204,7 @@ fn source_command(command: SourceCommand) -> Result<()> {
                 &submission,
             )?)?;
             println!("{}", serde_json::to_string_pretty(&source.evidence)?);
+
             Ok(())
         }
         SourceCommand::Inspect {
@@ -220,6 +223,7 @@ fn source_command(command: SourceCommand) -> Result<()> {
             };
             let gateway = LocalGitGateway::new(repository, repository_path);
             let mut store = MemorySourceStore::default();
+
             match ingest_source(&gateway, &mut store, submission, SourceLimits::default()) {
                 Ok(result) => {
                     if let Some(root) = materialize_under {
@@ -232,6 +236,7 @@ fn source_command(command: SourceCommand) -> Result<()> {
                         use archcert_materialization::{
                             AuthorityWorkspaceRoot, UnixSourceMaterializer,
                         };
+
                         let materializer =
                             UnixSourceMaterializer::new(AuthorityWorkspaceRoot::open(&root)?);
                         let request = MaterializationRequest {
@@ -247,9 +252,10 @@ fn source_command(command: SourceCommand) -> Result<()> {
                             Err(failure) => {
                                 eprintln!(
                                     "{}",
-                                    serde_json::to_string_pretty(
-                                        &serde_json::json!({"events": failure.events, "cleanup": failure.cleanup})
-                                    )?
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "events": failure.events,
+                                        "cleanup": failure.cleanup
+                                    }))?
                                 );
                                 return Err(failure.into());
                             }
@@ -258,9 +264,15 @@ fn source_command(command: SourceCommand) -> Result<()> {
                         println!(
                             "{}",
                             serde_json::to_string_pretty(&serde_json::json!({
-                                "source": result.evidence, "materialization": prepared.evidence, "events": prepared.events,
-                                "destruction": {"workspace": destruction.workspace, "status": destruction.status,
-                                    "destroyed_at": destruction.destroyed_at, "event": destruction.event},
+                                "source": result.evidence,
+                                "materialization": prepared.evidence,
+                                "events": prepared.events,
+                                "destruction": {
+                                    "workspace": destruction.workspace,
+                                    "status": destruction.status,
+                                    "destroyed_at": destruction.destroyed_at,
+                                    "event": destruction.event
+                                },
                             }))?
                         );
                     } else {
@@ -272,6 +284,7 @@ fn source_command(command: SourceCommand) -> Result<()> {
                     return Err(rejection.into());
                 }
             }
+
             Ok(())
         }
     }
@@ -287,15 +300,19 @@ fn read_project_configuration(
 ) -> Result<archcert_application::configuration::ProjectConfiguration> {
     let input =
         fs::File::open(file).with_context(|| format!("failed to open {}", file.display()))?;
+
     Ok(archcert_application::configuration::ProjectConfiguration::read(input)?)
 }
 
 fn config_check(file: &PathBuf) -> Result<()> {
     let config = read_project_configuration(file)?;
+
     if let Some(request) = config.execution_request() {
         archcert_application::validation::check_development_request(request)?;
     }
+
     println!("configuration request valid: {}", config.name());
+
     Ok(())
 }
 
@@ -375,7 +392,9 @@ fn run_command(
         None
     };
     let plan = authority.resolve(project_request)?;
+
     anyhow::ensure!(!plan.steps().is_empty(), "no execution steps requested");
+
     let runtime = RuntimeConfiguration {
         docker_executable: args.docker,
         docker_endpoint: args.endpoint,
@@ -399,10 +418,12 @@ fn run_command(
         )?;
         let accepted =
             source_store.load(&archcert_domain::ingress::SourceSubmissionId::parse(&id)?)?;
+
         anyhow::ensure!(
             accepted.snapshot.project() == project && accepted.snapshot.repository() == &repository,
             "submission scope mismatch"
         );
+
         let snapshot = store.retain(accepted.snapshot)?;
         let evidence = SourceEvidence {
             submission: SourceSubmission {
@@ -445,10 +466,12 @@ fn run_command(
             SourceLimits::default(),
         )?
     };
+
     anyhow::ensure!(
         source.snapshot.identity().snapshot_sha256 == Sha256Digest::parse(args.snapshot)?,
         "source identity mismatch"
     );
+
     let materializer =
         UnixSourceMaterializer::new(AuthorityWorkspaceRoot::open(&runtime.workspace_root)?);
     let mut results = Vec::new();
@@ -456,6 +479,7 @@ fn run_command(
     let mut successful = true;
     let mut all_observations = Vec::new();
     let mut expected_executions = Vec::new();
+
     for step in plan.steps() {
         let prepared = materialize_source(
             &store,
@@ -469,6 +493,7 @@ fn run_command(
                 limits: MaterializationLimits::default(),
             },
         )?;
+
         let execution = match step.execution_request(prepared.runner_input) {
             Ok(request) => runner.execute(request),
             Err(error) => Err(ExecutionFailure {
@@ -478,12 +503,14 @@ fn run_command(
                 events: vec![],
             }),
         };
+
         // Control plane always attempts source cleanup, including source-bound request failure.
         let source_cleanup = prepared.cleanup.destroy();
         successful &= source_cleanup.is_ok()
             && execution.as_ref().is_ok_and(|r| {
                 r.evidence.outcome == ExecutionOutcome::Completed && r.evidence.exit_code == Some(0)
             });
+
         match &execution {
             Ok(r) => execution_records.push(r.evidence.clone()),
             Err(f) => {
@@ -492,6 +519,7 @@ fn run_command(
                 }
             }
         }
+
         let bound_execution = match &execution {
             Ok(result) => result.evidence.execution,
             Err(failure) => failure
@@ -505,6 +533,7 @@ fn run_command(
             step: step.id().into(),
             execution: bound_execution,
         });
+
         let mut observations = match &execution {
             Ok(result) => Some(ValidationObservation::from_execution(
                 &plan,
@@ -517,6 +546,7 @@ fn run_command(
                 .map(|evidence| ValidationObservation::from_execution(&plan, step, evidence))
                 .transpose()?,
         };
+
         if observations.is_none() {
             observations = Some(vec![ValidationObservation {
                 schema: 1,
@@ -536,15 +566,31 @@ fn run_command(
                 },
             }]);
         }
+
         if let Some(observed) = &observations {
             all_observations.extend(observed.clone());
         }
+
         results.push(serde_json::json!({
-            "step":step.id(), "origin":step.origin(), "observations":observations,
-            "execution":match &execution {Ok(result)=>serde_json::to_value(result)?,Err(failure)=>serde_json::to_value(failure)?},
-            "source_cleanup":match &source_cleanup {Ok(receipt)=>serde_json::json!({"status":receipt.status,"workspace":receipt.workspace}),Err(error)=>serde_json::json!({"error":error})},
+            "step": step.id(),
+            "origin": step.origin(),
+            "observations": observations,
+            "execution": match &execution {
+                Ok(result) => serde_json::to_value(result)?,
+                Err(failure) => serde_json::to_value(failure)?,
+            },
+            "source_cleanup": match &source_cleanup {
+                Ok(receipt) => serde_json::json!({
+                    "status": receipt.status,
+                    "workspace": receipt.workspace,
+                }),
+                Err(error) => serde_json::json!({
+                    "error": error,
+                }),
+            },
         }));
     }
+
     let evaluation = if evaluate_policy {
         Some(archcert_policy::evaluate(
             &policy,
@@ -562,11 +608,22 @@ fn run_command(
     } else {
         None
     };
+
     let report = serde_json::json!({
-        "kind":if evaluate_policy {"UNSIGNED POLICY EVALUATION"} else {"ENGINEERING_EXECUTION_EVIDENCE"},
-        "notice":"NOT A CERTIFICATE", "certificate":"NOT ISSUED", "source":source.evidence,
-        "plan":plan, "expected_executions":expected_executions, "steps":results, "evaluation":evaluation,
+        "kind": if evaluate_policy {
+            "UNSIGNED POLICY EVALUATION"
+        } else {
+            "ENGINEERING_EXECUTION_EVIDENCE"
+        },
+        "notice": "NOT A CERTIFICATE",
+        "certificate": "NOT ISSUED",
+        "source": source.evidence,
+        "plan": plan,
+        "expected_executions": expected_executions,
+        "steps": results,
+        "evaluation": evaluation,
     });
+
     if let Some(options) = certification {
         // All execute calls and source cleanup attempts have ended. Refuse issuance
         // after any execution/cleanup failure; private keys have not been loaded.
@@ -581,13 +638,17 @@ fn run_command(
                 successful,
                 "execution or cleanup failed; CERTIFICATE NOT ISSUED"
             );
+
             let e = evaluation.context("missing evaluation")?;
+
             anyhow::ensure!(
                 e.eligibility
                     == archcert_policy::CertificationEligibility::EligibleForCertification,
                 "evaluation not eligible; CERTIFICATE NOT ISSUED"
             );
+
             let key = read_public_key(&options.public_key)?;
+
             let draft = archcert_certificate::CertificateDraft::prepare(
                 archcert_certificate::IssuanceContext {
                     source: &source.snapshot,
@@ -607,6 +668,7 @@ fn run_command(
                 },
                 key.clone(),
             )?;
+
             fs::write(
                 options.output.join("evidence-bundle.json"),
                 draft.evidence_bundle().canonical_bytes(),
@@ -619,6 +681,7 @@ fn run_command(
                 options.output.join("canonical-certificate.json"),
                 draft.certificate().bytes(),
             )?;
+
             // This is the first private-key operation in certify, after the complete
             // eligibility/integrity/reference gate and after target destruction.
             let issued = issue_development(draft, &options.key)?;
@@ -633,21 +696,27 @@ fn run_command(
                 options.output.join("signature.hex"),
                 envelope["signature"].as_str().context("signature")?,
             )?;
+
             let verified = issued.verification().report();
             fs::write(
                 options.output.join("verification.json"),
                 serde_json::to_vec_pretty(&verified)?,
             )?;
+
             Ok(verified)
         })();
+
         match issuance {
             Ok(verified) => {
                 println!("{}", serde_json::to_string_pretty(&verified)?);
                 return Ok(());
             }
             Err(error) => {
-                let rejection = serde_json::json!({"certificate":"CERTIFICATE NOT ISSUED",
-                    "eligibility":report["evaluation"]["eligibility"],"reason":error.to_string()});
+                let rejection = serde_json::json!({
+                    "certificate": "CERTIFICATE NOT ISSUED",
+                    "eligibility": report["evaluation"]["eligibility"],
+                    "reason": error.to_string()
+                });
                 fs::write(
                     options.output.join("rejection.json"),
                     serde_json::to_vec_pretty(&rejection)?,
@@ -657,11 +726,14 @@ fn run_command(
             }
         }
     }
+
     println!("{}", serde_json::to_string_pretty(&report)?);
+
     anyhow::ensure!(
         successful,
         "development execution did not complete successfully with cleanup"
     );
+
     Ok(())
 }
 
@@ -674,34 +746,42 @@ fn read_public_key(path: &std::path::Path) -> Result<archcert_crypto::PublicKey>
     use std::io::Read;
     let mut bytes = Vec::new();
     fs::File::open(path)?.take(66).read_to_end(&mut bytes)?;
+
     let text = std::str::from_utf8(&bytes)?;
+
     Ok(archcert_crypto::PublicKey::from_hex(
         text.strip_suffix('\n').unwrap_or(text),
     )?)
 }
+
 fn verify_command(certificate: &std::path::Path, public_key: &std::path::Path) -> Result<()> {
     let result = (|| -> Result<_> {
         let key = read_public_key(public_key)?;
         let envelope =
             archcert_certificate::CertificateEnvelope::read(fs::File::open(certificate)?)?;
+
         Ok(envelope.verify(&key)?.report())
     })();
+
     match result {
         Ok(report) => {
             println!("{}", serde_json::to_string_pretty(&report)?);
+
             Ok(())
         }
         Err(error) => {
             println!(
                 "{}",
-                serde_json::to_string_pretty(
-                    &serde_json::json!({"status":"VERIFICATION FAILED","reason":error.to_string()})
-                )?
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "status": "VERIFICATION FAILED",
+                    "reason": error.to_string()
+                }))?
             );
             Err(error)
         }
     }
 }
+
 fn validate_authority_paths(args: &CertifyArgs) -> Result<()> {
     let git = fs::canonicalize(
         args.run
@@ -715,26 +795,33 @@ fn validate_authority_paths(args: &CertifyArgs) -> Result<()> {
     } else {
         &git
     };
+
     let workspace = fs::canonicalize(&args.run.workspace_root)?;
+
     for path in [&args.development_key, &args.public_key, &args.output] {
         let parent = fs::canonicalize(
             path.parent()
                 .context("explicit authority parent required")?,
         )?;
+
         anyhow::ensure!(
             !parent.starts_with(source_root) && !parent.starts_with(&workspace),
             "authority key and output paths must be outside source and materialization roots"
         );
+
         if path.exists() {
             let resolved = fs::canonicalize(path)?;
+
             anyhow::ensure!(
                 !resolved.starts_with(source_root) && !resolved.starts_with(&workspace),
                 "authority path resolves inside source or materialization root"
             );
         }
     }
+
     Ok(())
 }
+
 #[cfg(unix)]
 fn development_keygen(private_key: &std::path::Path, public_key: &std::path::Path) -> Result<()> {
     use std::io::Write;
@@ -743,25 +830,31 @@ fn development_keygen(private_key: &std::path::Path, public_key: &std::path::Pat
         .create_new(true)
         .open(public_key)?;
     let key = archcert_crypto::local::LocalDevelopmentSigner::generate(private_key)?;
+
     public_file.write_all(key.to_hex().as_bytes())?;
     println!(
         "DEVELOPMENT ONLY / NOT PRODUCTION KEY MANAGEMENT; signing key ID {}",
         key.key_id().as_str()
     );
+
     Ok(())
 }
+
 #[cfg(not(unix))]
 fn development_keygen(_: &std::path::Path, _: &std::path::Path) -> Result<()> {
     anyhow::bail!("development keys require Unix")
 }
+
 #[cfg(unix)]
 fn issue_development(
     draft: archcert_certificate::CertificateDraft,
     path: &std::path::Path,
 ) -> Result<archcert_certificate::IssuedCertificate> {
     let signer = archcert_crypto::local::LocalDevelopmentSigner::load(path)?;
+
     Ok(draft.issue(&signer)?)
 }
+
 #[cfg(not(unix))]
 fn issue_development(
     _: archcert_certificate::CertificateDraft,

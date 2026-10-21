@@ -1,4 +1,5 @@
 //! Leased execution process. No database, object-store or signing credentials.
+
 use anyhow::{Result, ensure};
 use archcert_application::{
     execution::SandboxRunner,
@@ -20,6 +21,7 @@ use std::{
     io::{Read, Write},
     path::PathBuf,
 };
+
 #[derive(Parser)]
 struct Args {
     #[arg(long)]
@@ -33,19 +35,23 @@ struct Args {
     #[command(subcommand)]
     command: Option<Command>,
 }
+
 #[derive(Subcommand)]
 enum Command {
     /// Observes runtime prerequisites without accepting an assignment or starting a target.
     Doctor,
 }
+
 fn main() -> Result<()> {
     let args = Args::parse();
+
     if matches!(args.command, Some(Command::Doctor)) {
         let runner = DockerRootlessRunner::new(DockerRuntime::new(args.docker, args.endpoint)?);
         let observed = runner.verify_environment()?;
         println!("{}", serde_json::to_string(&observed)?);
         return Ok(());
     }
+
     let workspace_root = args.workspace_root.ok_or_else(|| {
         anyhow::anyhow!("--workspace-root is required when executing an assignment")
     })?;
@@ -53,22 +59,26 @@ fn main() -> Result<()> {
     std::io::stdin()
         .take(MAX_ASSIGNMENT_BYTES as u64 + 1)
         .read_to_end(&mut bytes)?;
+
     let assignment = decode_assignment(&bytes)?;
     let inputs = &assignment.inputs;
     let snapshot = read_snapshot(
         assignment.source_artifact.as_slice(),
         SourceLimits::default(),
     )?;
+
     ensure!(
         snapshot.project() == inputs.project
             && snapshot.repository() == &inputs.repository
             && snapshot.identity() == &inputs.source,
         "assignment source binding mismatch"
     );
+
     snapshot.require_complete()?;
     let plan = pinned_plan(inputs)?;
     let mut store = MemorySourceStore::default();
     store.retain(snapshot)?;
+
     let materializer = UnixSourceMaterializer::new(AuthorityWorkspaceRoot::open(&workspace_root)?);
     let runner = DockerRootlessRunner::for_attempt(
         DockerRuntime::new(args.docker, args.endpoint)?,
@@ -78,7 +88,9 @@ fn main() -> Result<()> {
         assignment.job,
         assignment.attempt,
     );
+
     let mut steps = Vec::new();
+
     for step in plan.steps() {
         let prepared = materialize_source(
             &store,
@@ -103,7 +115,9 @@ fn main() -> Result<()> {
                         events: vec![],
                     }),
                 };
+
                 let source_cleaned = prepared.cleanup.destroy().is_ok();
+
                 match execution {
                     Ok(result) => StepResult {
                         step: step.id().into(),
@@ -134,6 +148,7 @@ fn main() -> Result<()> {
         };
         steps.push(record);
     }
+
     let result = WorkerResult {
         schema: 1,
         job: assignment.job,
@@ -143,7 +158,10 @@ fn main() -> Result<()> {
         producer: "archcert-worker-v1/0.1.0".into(),
         steps,
     };
+
     result.validate(assignment.job, assignment.attempt, inputs)?;
+
     std::io::stdout().write_all(&encode_result(&result)?)?;
+
     Ok(())
 }
