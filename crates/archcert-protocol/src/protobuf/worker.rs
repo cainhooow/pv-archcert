@@ -1,4 +1,5 @@
 //! Bounded worker wire adapters. Transport parsing creates no execution authority.
+
 use super::{ConversionError as E, execution::v1 as p};
 use archcert_application::worker as a;
 use archcert_domain::jobs::*;
@@ -6,11 +7,14 @@ use prost::Message;
 fn required<T>(v: Option<T>) -> Result<T, E> {
     v.ok_or(E("worker required field"))
 }
+
 fn invalid(_: impl std::fmt::Debug) -> E {
     E("worker contract")
 }
+
 impl TryFrom<p::WorkerAssignment> for a::WorkerAssignment {
     type Error = E;
+
     fn try_from(w: p::WorkerAssignment) -> Result<Self, E> {
         if w.contract_version != 1
             || w.source_artifact.is_empty()
@@ -18,6 +22,7 @@ impl TryFrom<p::WorkerAssignment> for a::WorkerAssignment {
         {
             return Err(E("worker version/size"));
         }
+
         let inputs = JobInputs {
             project: required(w.project)?.try_into()?,
             repository: required(w.repository)?.try_into()?,
@@ -36,6 +41,7 @@ impl TryFrom<p::WorkerAssignment> for a::WorkerAssignment {
             maximum_attempts: u16::try_from(w.maximum_attempts).map_err(invalid)?,
         };
         a::pinned_plan(&inputs).map_err(invalid)?;
+
         Ok(Self {
             job: JobId::parse(&w.job_id).map_err(invalid)?,
             attempt: AttemptId::parse(&w.attempt_id).map_err(invalid)?,
@@ -44,11 +50,14 @@ impl TryFrom<p::WorkerAssignment> for a::WorkerAssignment {
         })
     }
 }
+
 impl TryFrom<&a::WorkerAssignment> for p::WorkerAssignment {
     type Error = E;
+
     fn try_from(w: &a::WorkerAssignment) -> Result<Self, E> {
         let i = &w.inputs;
         a::pinned_plan(i).map_err(invalid)?;
+
         Ok(Self {
             contract_version: 1,
             job_id: w.job.to_string(),
@@ -70,23 +79,29 @@ impl TryFrom<&a::WorkerAssignment> for p::WorkerAssignment {
         })
     }
 }
+
 /// Encodes checked pinned work for a private authority-owned process pipe.
 pub fn encode_assignment(w: &a::WorkerAssignment) -> Result<Vec<u8>, E> {
     let bytes = p::WorkerAssignment::try_from(w)?.encode_to_vec();
+
     if bytes.len() > a::MAX_ASSIGNMENT_BYTES {
         return Err(E("assignment size"));
     }
+
     Ok(bytes)
 }
+
 /// Decodes bounded pinned work. Source artifact validation remains independently required.
 pub fn decode_assignment(bytes: &[u8]) -> Result<a::WorkerAssignment, E> {
     if bytes.len() > a::MAX_ASSIGNMENT_BYTES {
         return Err(E("assignment size"));
     }
+
     p::WorkerAssignment::decode(bytes)
         .map_err(invalid)?
         .try_into()
 }
+
 /// Serializes existing operational evidence in a typed, versioned worker envelope.
 pub fn encode_result(w: &a::WorkerResult) -> Result<Vec<u8>, E> {
     let executions = w
@@ -117,23 +132,29 @@ pub fn encode_result(w: &a::WorkerResult) -> Result<Vec<u8>, E> {
         executions,
     }
     .encode_to_vec();
+
     if bytes.len() > a::MAX_RESULT_BYTES {
         return Err(E("result size"));
     }
+
     Ok(bytes)
 }
+
 /// Decodes bounded operational records. Caller must validate against the actual leased job.
 pub fn decode_result(bytes: &[u8]) -> Result<a::WorkerResult, E> {
     if bytes.len() > a::MAX_RESULT_BYTES {
         return Err(E("result size"));
     }
+
     let w = p::WorkerResult::decode(bytes).map_err(invalid)?;
+
     if w.contract_version != 1
         || w.executions.len() > 160
         || w.producer != "archcert-worker-v1/0.1.0"
     {
         return Err(E("result version/producer"));
     }
+
     let steps = w
         .executions
         .into_iter()
@@ -141,6 +162,7 @@ pub fn decode_result(bytes: &[u8]) -> Result<a::WorkerResult, E> {
             if s.step_id.is_empty() || s.step_id.len() > 128 {
                 return Err(E("step ID"));
             }
+
             Ok(a::StepResult {
                 step: s.step_id,
                 execution: s.execution_id.try_into().map_err(invalid)?,
@@ -154,6 +176,7 @@ pub fn decode_result(bytes: &[u8]) -> Result<a::WorkerResult, E> {
             })
         })
         .collect::<Result<Vec<_>, E>>()?;
+
     Ok(a::WorkerResult {
         schema: 1,
         job: JobId::parse(&w.job_id).map_err(invalid)?,

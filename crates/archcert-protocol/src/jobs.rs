@@ -1,4 +1,5 @@
 //! Durable HTTP DTOs map transport-independent application read models.
+
 use archcert_application::jobs::{CertificationJob, RuntimeCleanupState};
 use archcert_domain::{
     ProjectId, SourceIdentity,
@@ -18,6 +19,7 @@ pub struct CreateCertificationRequest {
     /// Existing immutable accepted source submission.
     pub source_submission: SourceSubmissionId,
 }
+
 /// Public durable status without credentials, internal paths or command recipes.
 #[derive(Serialize)]
 pub struct CertificationJobResponse {
@@ -34,6 +36,7 @@ pub struct CertificationJobResponse {
     /// Canonical payload digest only after verified persisted issuance.
     pub certificate_sha256: Option<archcert_domain::Sha256Digest>,
 }
+
 /// Safe attempt status projection.
 #[derive(Serialize)]
 pub struct AttemptResponse {
@@ -50,6 +53,7 @@ pub struct AttemptResponse {
     /// Irreversible execution revocation, separate from target verdict semantics.
     pub execution_fenced: bool,
 }
+
 impl From<CertificationJob> for CertificationJobResponse {
     fn from(j: CertificationJob) -> Self {
         Self {
