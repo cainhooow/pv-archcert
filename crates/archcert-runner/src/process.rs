@@ -1,4 +1,5 @@
 //! Nonblocking bounded subprocess I/O. Only the trusted runtime CLI runs locally.
+
 use archcert_domain::{
     Sha256Digest,
     execution::{CapturedStream, ExecutionError as Error, TerminationReason},
@@ -19,6 +20,7 @@ pub(crate) struct Capture {
     prefix: u64,
     eof: bool,
 }
+
 impl Capture {
     pub(crate) fn new(limit: u64, prefix: u64) -> Self {
         Self {
@@ -30,9 +32,11 @@ impl Capture {
             eof: false,
         }
     }
+
     fn read(&mut self, pipe: &mut impl Read) -> Result<bool, Error> {
         // Fixed work per iteration prevents a flooding stream starving deadline/stderr checks.
         let mut buf = [0u8; 8192];
+
         for _ in 0..8 {
             match pipe.read(&mut buf) {
                 Ok(0) => {
@@ -45,6 +49,7 @@ impl Capture {
                     let retain =
                         (self.prefix.saturating_sub(self.excerpt.len() as u64) as usize).min(n);
                     self.excerpt.extend_from_slice(&buf[..retain]);
+
                     if self.bytes > self.limit {
                         return Ok(true);
                     }
@@ -54,8 +59,10 @@ impl Capture {
                 Err(_) => return Err(Error::RuntimeFailure),
             }
         }
+
         Ok(self.bytes > self.limit)
     }
+
     pub(crate) fn finish(self) -> Result<CapturedStream, Error> {
         Ok(CapturedStream {
             sha256: Sha256Digest::parse(hex::encode(self.hash.finalize()))
@@ -77,6 +84,7 @@ pub(crate) struct ProcessOutput {
 
 /// Child guard prevents ordinary errors/panic abandoning the local runtime client.
 struct ChildGuard(std::process::Child);
+
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -105,10 +113,12 @@ pub(crate) fn run(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
     let mut child = ChildGuard(command.spawn().map_err(|_| Error::RuntimeFailure)?);
     let mut stdout = child.0.stdout.take().ok_or(Error::RuntimeFailure)?;
     let mut stderr = child.0.stderr.take().ok_or(Error::RuntimeFailure)?;
     let mut stdin = child.0.stdin.take();
+
     fcntl_setfl(
         &stdout,
         fcntl_getfl(&stdout).map_err(|_| Error::RuntimeFailure)? | OFlags::NONBLOCK,
@@ -119,6 +129,7 @@ pub(crate) fn run(
         fcntl_getfl(&stderr).map_err(|_| Error::RuntimeFailure)? | OFlags::NONBLOCK,
     )
     .map_err(|_| Error::RuntimeFailure)?;
+
     if let Some(pipe) = &stdin {
         fcntl_setfl(
             pipe,
@@ -126,6 +137,7 @@ pub(crate) fn run(
         )
         .map_err(|_| Error::RuntimeFailure)?;
     }
+
     let mut out = Capture::new(policy.stdout, policy.prefix.min(policy.stdout));
     let mut err = Capture::new(policy.stderr, policy.prefix.min(policy.stderr));
     let started = Instant::now();
@@ -133,6 +145,7 @@ pub(crate) fn run(
     let mut drain_deadline = None;
     let mut written = 0;
     let mut status = None;
+
     loop {
         let stdout_limit = if !out.eof {
             out.read(&mut stdout)?
@@ -144,8 +157,10 @@ pub(crate) fn run(
         } else {
             false
         };
+
         if let Some(pipe) = &mut stdin {
             let end = (written + 65536).min(input.len());
+
             match pipe.write(&input[written..end]) {
                 Ok(n) => written += n,
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
@@ -154,13 +169,16 @@ pub(crate) fn run(
                     stdin = None;
                 }
             }
+
             if written == input.len() {
                 stdin = None;
             }
         }
+
         if status.is_none() {
             status = child.0.try_wait().map_err(|_| Error::RuntimeFailure)?;
         }
+
         // A completed client still needs pipe EOF. A runtime client closing stdin
         // early is not successful transfer, even if it reports exit zero.
         if trigger.is_none() {
@@ -173,6 +191,7 @@ pub(crate) fn run(
             } else {
                 None
             };
+
             if trigger.is_some() {
                 // Outside the target: kill the entire container before detaching the client.
                 terminate();
@@ -180,19 +199,24 @@ pub(crate) fn run(
                 drain_deadline = Some(Instant::now() + Duration::from_secs(2));
             }
         }
+
         if status.is_some() && out.eof && err.eof {
             break;
         }
+
         if drain_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             let _ = child.0.kill();
             status = child.0.wait().ok();
             break;
         }
+
         std::thread::sleep(Duration::from_millis(2));
     }
+
     if written != input.len() && trigger.is_none() {
         return Err(Error::RuntimeFailure);
     }
+
     Ok(ProcessOutput {
         code: status.and_then(|s| s.code()),
         stdout: out.finish()?,
@@ -209,27 +233,38 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let bytes = b"\x1b[2Jbinary\xfflong";
         let mut capture = Capture::new(100, 3);
+
         assert!(!capture.read(&mut &bytes[..])?);
+
         let captured = capture.finish()?;
+
         assert_eq!(
             captured.sha256,
             archcert_domain::source::digest_bytes(bytes)
         );
         assert_eq!(captured.excerpt, &bytes[..3]);
         assert!(captured.truncated && captured.complete);
+
         let json = serde_json::to_string(&captured)?;
+
         assert!(!json.contains('\x1b'));
+
         Ok(())
     }
+
     #[test]
     fn output_budget_is_explicit_and_incomplete_hash_never_claims_full_stream() -> Result<(), Error>
     {
         let mut capture = Capture::new(2, 1);
+
         assert!(capture.read(&mut &b"flood"[..])?);
+
         let stream = capture.finish()?;
+
         assert_eq!(stream.observed_bytes, 5);
         assert!(stream.truncated);
         assert!(!stream.complete);
+
         Ok(())
     }
 }

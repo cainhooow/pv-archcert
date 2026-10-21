@@ -42,12 +42,14 @@ fn now() -> Result<u64, Error> {
         .map(|d| d.as_secs())
         .map_err(|_| Error::InternalMaterializationFailure)
 }
+
 fn mode(bits: u32) -> Mode {
     // Only private constant permission masks enter this helper. RawMode differs
     // between Unix platforms (for example u16 on macOS and u32 on Linux).
     #[allow(clippy::unnecessary_cast)]
     Mode::from_raw_mode(bits as _)
 }
+
 fn directory(parent: &impl AsFd, name: impl rustix::path::Arg) -> Result<File, Error> {
     fs::openat(parent, name, DIRECTORY_FLAGS, Mode::empty())
         .map(File::from)
@@ -57,6 +59,7 @@ fn directory(parent: &impl AsFd, name: impl rustix::path::Arg) -> Result<File, E
 /// Validated authority-only location. No arbitrary destination path enters runner input.
 #[derive(Debug)]
 pub struct WorkspaceLocation(PathBuf);
+
 impl WorkspaceLocation {
     /// Diagnostic/control-plane location only; runtime operations use anchored descriptors.
     pub fn as_path(&self) -> &Path {
@@ -72,6 +75,7 @@ pub struct AuthorityWorkspaceRoot {
     directory: Arc<File>,
     location: PathBuf,
 }
+
 impl AuthorityWorkspaceRoot {
     /// Removes one authority-created attempt subtree after durable execution revocation.
     /// The caller must hold the attempt gate; this method grants no runtime authority.
@@ -81,6 +85,7 @@ impl AuthorityWorkspaceRoot {
         attempt: archcert_domain::jobs::AttemptId,
     ) -> Result<(), Error> {
         let name = attempt.to_string();
+
         match fs::statat(&self.directory, &name, AtFlags::SYMLINK_NOFOLLOW) {
             Err(rustix::io::Errno::NOENT) => return Ok(()),
             Err(_) => return Err(Error::CleanupFailed),
@@ -89,32 +94,40 @@ impl AuthorityWorkspaceRoot {
             }
             _ => {}
         }
+
         let root = directory(&self.directory, &name)?;
         let node = Node::of(&root)?;
+
         if node.device != Node::of(&self.directory)?.device {
             return Err(Error::CleanupFailed);
         }
+
         let mut remaining = 100_000;
         let mut owned = BTreeSet::new();
         recovery_directories(&root, node.device, &mut owned, &mut remaining, 0)?;
         let mut remaining = 100_000;
         delete_contents(&root, node.device, &owned, &mut remaining, 0)?;
+
         if Node::at(&self.directory, OsStr::new(&name))? != node {
             return Err(Error::CleanupFailed);
         }
+
         fs::unlinkat(&self.directory, &name, AtFlags::REMOVEDIR)
             .map_err(|_| Error::CleanupFailed)?;
         self.directory.sync_all().map_err(|_| Error::CleanupFailed)
     }
+
     /// Requires an explicit absolute directory owned by the current effective UID,
     /// with exact mode 0700. No HOME/TMPDIR/configuration is consulted.
     pub fn open(path: &Path) -> Result<Self, Error> {
         if !path.is_absolute() {
             return Err(Error::UnsafeDestination);
         }
+
         let mut fd = File::from(
             fs::open("/", DIRECTORY_FLAGS, Mode::empty()).map_err(|_| Error::UnsafeDestination)?,
         );
+
         for part in path.components() {
             match part {
                 Component::RootDir => {}
@@ -124,12 +137,15 @@ impl AuthorityWorkspaceRoot {
                 _ => return Err(Error::UnsafeDestination),
             }
         }
+
         let metadata = fd.metadata().map_err(|_| Error::UnsafeDestination)?;
+
         if metadata.uid() != rustix::process::geteuid().as_raw()
             || metadata.mode() & 0o7777 != 0o700
         {
             return Err(Error::UnsafeDestination);
         }
+
         Ok(Self {
             directory: Arc::new(fd),
             location: path.to_owned(),
@@ -145,33 +161,43 @@ fn recovery_directories(
     depth: u32,
 ) -> Result<(), Error> {
     let metadata = root.metadata().map_err(|_| Error::CleanupFailed)?;
+
     if depth > 128
         || metadata.uid() != rustix::process::geteuid().as_raw()
         || metadata.dev() != device
     {
         return Err(Error::CleanupFailed);
     }
+
     owned.insert(Node::of(root)?);
+
     for entry in Dir::read_from(root).map_err(|_| Error::CleanupFailed)? {
         let entry = entry.map_err(|_| Error::CleanupFailed)?;
         let name = entry.file_name();
+
         if name.to_bytes() == b"." || name.to_bytes() == b".." {
             continue;
         }
+
         *remaining = remaining.checked_sub(1).ok_or(Error::CleanupFailed)?;
         let stat =
             fs::statat(root, name, AtFlags::SYMLINK_NOFOLLOW).map_err(|_| Error::CleanupFailed)?;
+
         if stat.st_dev as u64 != device {
             return Err(Error::CleanupFailed);
         }
+
         if FileType::from_raw_mode(stat.st_mode) == FileType::Directory {
             let child = directory(root, name)?;
+
             if Node::of(&child)? != Node::at(root, OsStr::from_bytes(name.to_bytes()))? {
                 return Err(Error::CleanupFailed);
             }
+
             recovery_directories(&child, device, owned, remaining, depth + 1)?;
         }
     }
+
     Ok(())
 }
 
@@ -182,18 +208,22 @@ struct Node {
     // POSIX entry type (S_IFMT), independent of permission changes during sealing.
     kind: u64,
 }
+
 impl Node {
     fn of(file: &File) -> Result<Self, Error> {
         let m = file.metadata().map_err(|_| Error::VerificationFailed)?;
+
         Ok(Self {
             device: m.dev(),
             inode: m.ino(),
             kind: m.mode() as u64 & 0o170000,
         })
     }
+
     fn at(parent: &File, name: &OsStr) -> Result<Self, Error> {
         let stat = fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
             .map_err(|_| Error::MaterializationIntegrityMismatch)?;
+
         Ok(Self {
             device: stat.st_dev as u64,
             inode: stat.st_ino as u64,
@@ -214,22 +244,27 @@ pub struct MaterializedDirectory {
     directories: BTreeSet<String>,
     limits: MaterializationLimits,
 }
+
 impl MaterializedSource for MaterializedDirectory {
     fn workspace(&self) -> WorkspaceId {
         self.workspace
     }
+
     fn identity(&self) -> &archcert_domain::SourceIdentity {
         &self.identity
     }
 }
+
 impl archcert_application::materialization::VerifiedSourceExport for MaterializedDirectory {
     fn source_binding(&self) -> archcert_domain::source::SourceBinding {
         self.binding.clone()
     }
+
     fn verified_files(&self) -> Result<Vec<SourceFile>, Error> {
         MaterializedDirectory::verified_files(self)
     }
 }
+
 impl MaterializedDirectory {
     /// Reconstructs owned source bytes through the held descriptor immediately before
     /// sandbox transfer. Never reopens a diagnostic path or follows source symlinks.
@@ -246,6 +281,7 @@ impl MaterializedDirectory {
             budget: Budget::new(self.limits),
         };
         walk.visit(&self.directory, "", 0)?;
+
         if walk.directories != self.directories
             || self
                 .binding
@@ -255,6 +291,7 @@ impl MaterializedDirectory {
         {
             return Err(Error::MaterializationIntegrityMismatch);
         }
+
         self.directory_fd()?;
         walk.files.ok_or(Error::VerificationFailed)
     }
@@ -265,6 +302,7 @@ impl MaterializedDirectory {
         if self.destroyed.load(Ordering::Acquire) {
             return Err(Error::InvalidStateTransition);
         }
+
         Ok(self.directory.as_fd())
     }
 }
@@ -294,15 +332,18 @@ pub struct WorkspaceLease {
     cleanup_budget: u64,
     owned_directories: BTreeSet<Node>,
 }
+
 impl WorkspaceLease {
     /// Authority diagnostic location; no runtime file operation relies on this path.
     pub fn location(&self) -> &WorkspaceLocation {
         &self.location
     }
+
     /// Explicit bounded descriptor-relative cleanup. Symlinks are unlinked, never followed.
     /// Failure is observable and must not be interpreted as destruction or secure erasure.
     pub fn destroy(mut self) -> Result<WorkspaceDestruction, Error> {
         self.cleanup()?;
+
         Ok(WorkspaceDestruction {
             workspace: self.id,
             status: MaterializationState::Destroyed,
@@ -310,16 +351,20 @@ impl WorkspaceLease {
             event: MaterializationEvent::WorkspaceDestroyed(self.id),
         })
     }
+
     fn attached(&self) -> Result<(), Error> {
         if Node::at(&self.parent, OsStr::new(&self.id.to_string()))? != self.node {
             return Err(Error::EntryTypeConflict);
         }
+
         Ok(())
     }
+
     fn cleanup(&mut self) -> Result<(), Error> {
         if self.destroyed.load(Ordering::Acquire) {
             return Ok(());
         }
+
         self.attached().map_err(|_| Error::CleanupFailed)?;
         let mut remaining = self.cleanup_budget;
         delete_contents(
@@ -334,9 +379,11 @@ impl WorkspaceLease {
         fs::unlinkat(&self.parent, self.id.to_string(), AtFlags::REMOVEDIR)
             .map_err(|_| Error::CleanupFailed)?;
         self.destroyed.store(true, Ordering::Release);
+
         Ok(())
     }
 }
+
 impl Drop for WorkspaceLease {
     fn drop(&mut self) {
         let _ = self.cleanup();
@@ -353,35 +400,46 @@ fn delete_contents(
     if depth > 128 {
         return Err(Error::CleanupFailed);
     }
+
     fs::fchmod(root, mode(0o700)).map_err(|_| Error::CleanupFailed)?;
+
     for entry in Dir::read_from(root).map_err(|_| Error::CleanupFailed)? {
         let entry = entry.map_err(|_| Error::CleanupFailed)?;
         let name = entry.file_name();
+
         if name.to_bytes() == b"." || name.to_bytes() == b".." {
             continue;
         }
+
         *remaining = remaining.checked_sub(1).ok_or(Error::CleanupFailed)?;
         let stat =
             fs::statat(root, name, AtFlags::SYMLINK_NOFOLLOW).map_err(|_| Error::CleanupFailed)?;
+
         if stat.st_dev as u64 != device {
             return Err(Error::CleanupFailed);
         }
+
         let flags = if FileType::from_raw_mode(stat.st_mode) == FileType::Directory {
             let child = directory(root, name)?;
             let node = Node::of(&child)?;
+
             if node != Node::at(root, OsStr::from_bytes(name.to_bytes()))? {
                 return Err(Error::CleanupFailed);
             }
+
             if !owned.contains(&node) {
                 // Unknown empty directories can be unlinked without chmod or recursion.
                 // Unknown nonempty trees remain for explicit authority intervention.
                 fs::unlinkat(root, name, AtFlags::REMOVEDIR).map_err(|_| Error::CleanupFailed)?;
                 continue;
             }
+
             delete_contents(&child, device, owned, remaining, depth + 1)?;
+
             if node != Node::at(root, OsStr::from_bytes(name.to_bytes()))? {
                 return Err(Error::CleanupFailed);
             }
+
             AtFlags::REMOVEDIR
         } else {
             AtFlags::empty()
@@ -389,6 +447,7 @@ fn delete_contents(
         // No chmod is performed on files: a substituted hardlink must never change host permissions.
         fs::unlinkat(root, name, flags).map_err(|_| Error::CleanupFailed)?;
     }
+
     Ok(())
 }
 
@@ -396,6 +455,7 @@ fn delete_contents(
 pub struct UnixSourceMaterializer {
     root: AuthorityWorkspaceRoot,
 }
+
 impl UnixSourceMaterializer {
     /// Uses an already validated authority workspace root.
     pub fn new(root: AuthorityWorkspaceRoot) -> Self {
@@ -416,6 +476,7 @@ impl UnixSourceMaterializer {
             {
                 return Err(Error::MaterializationIntegrityMismatch);
             }
+
             snapshot
                 .verify(&request.snapshot.identity.snapshot_sha256)
                 .map_err(Error::SnapshotInvalid)?;
@@ -434,9 +495,11 @@ impl UnixSourceMaterializer {
                     MaterializationEvent::Started(id),
                     MaterializationEvent::Rejected(error.clone()),
                 ];
+
                 if cleanup == CleanupStatus::Destroyed {
                     events.push(MaterializationEvent::WorkspaceDestroyed(id));
                 }
+
                 MaterializationFailure {
                     error,
                     events,
@@ -452,6 +515,7 @@ impl UnixSourceMaterializer {
             started_at,
             events: vec![MaterializationEvent::Started(id)],
         };
+
         match pending.write(snapshot) {
             Ok(()) => Ok(pending),
             Err(error) => Err(pending.reject(error)),
@@ -506,14 +570,18 @@ impl UnixSourceMaterializer {
         let checked = (|| {
             fs::fchmod(&lease.root, mode(0o700)).map_err(|_| Error::PermissionApplicationFailed)?;
             lease.attached()?;
+
             for entry in Dir::read_from(&lease.root).map_err(|_| Error::UnsafeDestination)? {
                 let entry = entry.map_err(|_| Error::UnsafeDestination)?;
+
                 if !matches!(entry.file_name().to_bytes(), b"." | b"..") {
                     return Err(Error::DestinationNotEmpty);
                 }
             }
+
             Ok(())
         })();
+
         if let Err(error) = checked {
             let cleanup = if lease.cleanup().is_ok() {
                 CleanupStatus::Destroyed
@@ -522,12 +590,16 @@ impl UnixSourceMaterializer {
             };
             return Err((error, cleanup));
         }
+
         Ok(lease)
     }
 }
+
 impl SourceMaterializer for UnixSourceMaterializer {
     type Source = MaterializedDirectory;
+
     type Cleanup = WorkspaceLease;
+
     fn prepare(
         &self,
         snapshot: &SourceSnapshot,
@@ -540,29 +612,36 @@ impl SourceMaterializer for UnixSourceMaterializer {
 fn checked_path(bytes: &[u8]) -> Result<SourcePath, Error> {
     SourcePath::from_bytes(bytes).map_err(|_| Error::PathEscapeAttempt)
 }
+
 fn preflight(snapshot: &SourceSnapshot, limits: MaterializationLimits) -> Result<(), Error> {
     let mut budget = Budget::new(limits);
     let mut directories = BTreeSet::new();
+
     for file in snapshot.files() {
         let path = checked_path(file.path().as_str().as_bytes())?;
         let parts: Vec<_> = path.as_str().split('/').collect();
         budget.leaf(file.mode(), file.bytes().len() as u64)?;
         budget.depth((parts.len() - 1) as u32)?;
+
         for end in 1..parts.len() {
             directories.insert(parts[..end].join("/"));
+
             if directories.len() as u64 > limits.max_directories {
                 return Err(Error::LimitExceeded(MaterializationBudget::Directories));
             }
         }
+
         if file.mode() == SourceMode::Symlink
             && (file.bytes().is_empty() || file.bytes().contains(&0) || file.bytes().len() > 4096)
         {
             return Err(Error::UnsupportedFilesystemFeature);
         }
     }
+
     if directories.len() as u64 > limits.max_directories {
         return Err(Error::LimitExceeded(MaterializationBudget::Directories));
     }
+
     Ok(())
 }
 
@@ -573,6 +652,7 @@ struct Budget {
     links: u64,
     directories: u64,
 }
+
 impl Budget {
     fn new(limits: MaterializationLimits) -> Self {
         Self {
@@ -583,50 +663,63 @@ impl Budget {
             directories: 0,
         }
     }
+
     fn depth(&self, depth: u32) -> Result<(), Error> {
         if depth > self.limits.source.max_tree_depth.min(128) {
             return Err(Error::LimitExceeded(MaterializationBudget::Depth));
         }
+
         Ok(())
     }
+
     fn directory(&mut self, depth: u32) -> Result<(), Error> {
         self.depth(depth)?;
         self.directories = self
             .directories
             .checked_add(1)
             .ok_or(Error::LimitExceeded(MaterializationBudget::Directories))?;
+
         if self.directories > self.limits.max_directories {
             return Err(Error::LimitExceeded(MaterializationBudget::Directories));
         }
+
         Ok(())
     }
+
     fn leaf(&mut self, mode: SourceMode, size: u64) -> Result<(), Error> {
         self.leaves = self
             .leaves
             .checked_add(1)
             .ok_or(Error::LimitExceeded(MaterializationBudget::Entries))?;
+
         if self.leaves > self.limits.source.max_files {
             return Err(Error::LimitExceeded(MaterializationBudget::Entries));
         }
+
         if size > self.limits.source.max_blob_bytes {
             return Err(Error::LimitExceeded(MaterializationBudget::SingleFile));
         }
+
         self.bytes = self
             .bytes
             .checked_add(size)
             .ok_or(Error::LimitExceeded(MaterializationBudget::Bytes))?;
+
         if self.bytes > self.limits.source.max_total_bytes {
             return Err(Error::LimitExceeded(MaterializationBudget::Bytes));
         }
+
         if mode == SourceMode::Symlink {
             self.links = self
                 .links
                 .checked_add(1)
                 .ok_or(Error::LimitExceeded(MaterializationBudget::Symlinks))?;
+
             if self.links > self.limits.max_symlinks {
                 return Err(Error::LimitExceeded(MaterializationBudget::Symlinks));
             }
         }
+
         Ok(())
     }
 }
@@ -641,6 +734,7 @@ pub struct PendingMaterialization {
     started_at: u64,
     events: Vec<MaterializationEvent>,
 }
+
 impl PendingMaterialization {
     /// Authority-only diagnostic location, useful for phase-specific validation.
     pub fn location(&self) -> &WorkspaceLocation {
@@ -651,11 +745,14 @@ impl PendingMaterialization {
         let mut parent = directory(&self.lease.root, ".")?;
         let components: Vec<_> = path.as_str().split('/').collect();
         let mut prefix = String::new();
+
         for component in &components[..components.len() - 1] {
             if !prefix.is_empty() {
                 prefix.push('/');
             }
+
             prefix.push_str(component);
+
             if !self.directories.contains(&prefix) {
                 fs::mkdirat(&parent, *component, mode(0o700))
                     .map_err(|_| Error::EntryTypeConflict)?;
@@ -663,20 +760,27 @@ impl PendingMaterialization {
                 let node = Node::of(&child)?;
                 self.lease.owned_directories.insert(node);
                 fs::fchmod(&child, mode(0o700)).map_err(|_| Error::PermissionApplicationFailed)?;
+
                 if node.device != self.lease.node.device {
                     return Err(Error::EntryTypeConflict);
                 }
+
                 self.nodes.insert(prefix.clone(), node);
                 self.directories.insert(prefix.clone());
             }
+
             let child = directory(&parent, *component)?;
+
             if self.nodes.get(&prefix) != Some(&Node::of(&child)?) {
                 return Err(Error::EntryTypeConflict);
             }
+
             parent = child;
         }
+
         Ok(parent)
     }
+
     fn write(&mut self, snapshot: &SourceSnapshot) -> Result<(), Error> {
         for file in snapshot.files() {
             let path = checked_path(file.path().as_str().as_bytes())?;
@@ -686,6 +790,7 @@ impl PendingMaterialization {
                 .rsplit('/')
                 .next()
                 .ok_or(Error::PathEscapeAttempt)?;
+
             match file.mode() {
                 SourceMode::File | SourceMode::Executable => {
                     let fd = fs::openat(
@@ -728,8 +833,10 @@ impl PendingMaterialization {
                 SourceMode::Submodule => return Err(Error::SnapshotNotComplete),
             }
         }
+
         self.lease.attached()
     }
+
     fn verify(&self, sealed: bool) -> Result<SourceManifest, Error> {
         self.lease.attached()?;
         let mut walk = Walk {
@@ -743,11 +850,14 @@ impl PendingMaterialization {
         };
         walk.visit(&self.lease.root, "", 0)?;
         self.lease.attached()?;
+
         if walk.directories != self.directories {
             return Err(Error::MaterializationIntegrityMismatch);
         }
+
         let manifest = SourceManifest::new(walk.entries)
             .map_err(|_| Error::MaterializationIntegrityMismatch)?;
+
         if self
             .binding
             .digest(&manifest)
@@ -756,8 +866,10 @@ impl PendingMaterialization {
         {
             return Err(Error::MaterializationIntegrityMismatch);
         }
+
         Ok(manifest)
     }
+
     fn reject(mut self, error: Error) -> MaterializationFailure {
         self.events
             .push(MaterializationEvent::Rejected(error.clone()));
@@ -774,6 +886,7 @@ impl PendingMaterialization {
             cleanup,
         }
     }
+
     /// Independently reconstructs all entries, applies a read-only permission seal,
     /// and reconstructs once more. Any error destroys/rejects rather than issuing input.
     pub fn verify_and_seal(mut self) -> Result<SealedMaterialization, MaterializationFailure> {
@@ -792,6 +905,7 @@ impl PendingMaterialization {
             let sealed_at = now()?;
             self.events
                 .push(MaterializationEvent::Sealed(self.lease.id));
+
             Ok(MaterializationEvidence {
                 snapshot: self.request.snapshot.clone(),
                 workspace: self.lease.id,
@@ -810,6 +924,7 @@ impl PendingMaterialization {
                 limits: self.request.limits,
             })
         })();
+
         match checked {
             Ok(evidence) => Ok(SealedMaterialization {
                 pending: self,
@@ -825,15 +940,18 @@ pub struct SealedMaterialization {
     pending: PendingMaterialization,
     evidence: MaterializationEvidence,
 }
+
 impl SealedMaterialization {
     /// Authority-only location; not included in runner input.
     pub fn location(&self) -> &WorkspaceLocation {
         self.pending.location()
     }
+
     /// Structural verified/sealed evidence before issuance.
     pub fn evidence(&self) -> &MaterializationEvidence {
         &self.evidence
     }
+
     /// Rechecks actual sealed bytes and attachments immediately before issuing input.
     /// Same-UID/root writes after return remain outside the Unix permission guarantee.
     pub fn handoff(
@@ -859,8 +977,10 @@ impl SealedMaterialization {
                 .status
                 .advance(MaterializationState::HandedOff)?;
             self.evidence.handed_off_at = Some(handed_off_at);
+
             Ok(input)
         })();
+
         match checked {
             Ok(runner_input) => {
                 self.pending
@@ -868,6 +988,7 @@ impl SealedMaterialization {
                     .push(MaterializationEvent::RunnerInputIssued(
                         self.pending.lease.id,
                     ));
+
                 Ok(MaterializationResult {
                     runner_input,
                     cleanup: self.pending.lease,
@@ -889,24 +1010,31 @@ struct Walk<'a> {
     directories: BTreeSet<String>,
     budget: Budget,
 }
+
 impl Walk<'_> {
     fn visit(&mut self, root: &File, prefix: &str, depth: u32) -> Result<(), Error> {
         self.budget.depth(depth)?;
         let root_metadata = root.metadata().map_err(|_| Error::VerificationFailed)?;
+
         if root_metadata.mode() & 0o7777 != if self.sealed { 0o500 } else { 0o700 } {
             return Err(Error::MaterializationIntegrityMismatch);
         }
+
         for entry in Dir::read_from(root).map_err(|_| Error::VerificationFailed)? {
             let entry = entry.map_err(|_| Error::VerificationFailed)?;
             let name = entry.file_name();
+
             if matches!(name.to_bytes(), b"." | b"..") {
                 continue;
             }
+
             let component = checked_path(name.to_bytes())?;
+
             // A directory entry must be a single source component, regardless of schema validation.
             if component.as_str().contains('/') {
                 return Err(Error::PathEscapeAttempt);
             }
+
             let path = checked_path(format!("{prefix}{}", component.as_str()).as_bytes())?;
             let stat = fs::statat(root, name, AtFlags::SYMLINK_NOFOLLOW)
                 .map_err(|_| Error::MaterializationIntegrityMismatch)?;
@@ -915,17 +1043,22 @@ impl Walk<'_> {
                 inode: stat.st_ino as u64,
                 kind: stat.st_mode as u64 & 0o170000,
             };
+
             if node.device != self.device || self.nodes.get(path.as_str()) != Some(&node) {
                 return Err(Error::EntryTypeConflict);
             }
+
             let kind = FileType::from_raw_mode(stat.st_mode);
+
             if kind == FileType::Directory {
                 self.budget.directory(depth + 1)?;
                 self.directories.insert(path.as_str().to_owned());
                 let child = directory(root, name)?;
+
                 if Node::of(&child)? != node {
                     return Err(Error::EntryTypeConflict);
                 }
+
                 self.visit(&child, &format!("{}/", path.as_str()), depth + 1)?;
             } else {
                 let (source_mode, bytes) = match kind {
@@ -943,10 +1076,12 @@ impl Walk<'_> {
                             .map_err(|_| Error::EntryTypeConflict)?,
                         );
                         let metadata = file.metadata().map_err(|_| Error::VerificationFailed)?;
+
                         if !metadata.is_file() || metadata.nlink() != 1 || Node::of(&file)? != node
                         {
                             return Err(Error::EntryTypeConflict);
                         }
+
                         let bits = metadata.mode() & 0o7777;
                         let file_mode = match (self.sealed, bits) {
                             (false, 0o600) | (true, 0o400) => SourceMode::File,
@@ -960,6 +1095,7 @@ impl Walk<'_> {
                             .read_to_end(&mut bytes)
                             .map_err(|_| Error::VerificationFailed)?;
                         let after = file.metadata().map_err(|_| Error::VerificationFailed)?;
+
                         if bytes.len() as u64 != metadata.len()
                             || after.len() != metadata.len()
                             || after.mode() != metadata.mode()
@@ -970,6 +1106,7 @@ impl Walk<'_> {
                         {
                             return Err(Error::MaterializationIntegrityMismatch);
                         }
+
                         (file_mode, bytes)
                     }
                     FileType::Symlink => {
@@ -978,9 +1115,11 @@ impl Walk<'_> {
                         let mut target = [0u8; 4097];
                         let len = fs::readlinkat_raw(root, name, &mut target[..])
                             .map_err(|_| Error::VerificationFailed)?;
+
                         if len == target.len() {
                             return Err(Error::UnsupportedFilesystemFeature);
                         }
+
                         self.budget.leaf(SourceMode::Symlink, len as u64)?;
                         (SourceMode::Symlink, target[..len].to_vec())
                     }
@@ -992,14 +1131,17 @@ impl Walk<'_> {
                     digest_bytes(&bytes),
                     bytes.len() as u64,
                 ));
+
                 if let Some(files) = &mut self.files {
                     files.push(SourceFile::new(path.clone(), source_mode, bytes));
                 }
             }
+
             if Node::at(root, OsStr::from_bytes(name.to_bytes()))? != node {
                 return Err(Error::EntryTypeConflict);
             }
         }
+
         Ok(())
     }
 }
@@ -1014,17 +1156,22 @@ fn seal_directory(
     if depth > 128 {
         return Err(Error::SealFailed);
     }
+
     for entry in Dir::read_from(root).map_err(|_| Error::SealFailed)? {
         let entry = entry.map_err(|_| Error::SealFailed)?;
         let name = entry.file_name();
+
         if matches!(name.to_bytes(), b"." | b"..") {
             continue;
         }
+
         *remaining = remaining.checked_sub(1).ok_or(Error::SealFailed)?;
         let component = checked_path(name.to_bytes())?;
+
         if component.as_str().contains('/') {
             return Err(Error::SealFailed);
         }
+
         let path = format!("{prefix}{}", component.as_str());
         let stat =
             fs::statat(root, name, AtFlags::SYMLINK_NOFOLLOW).map_err(|_| Error::SealFailed)?;
@@ -1033,15 +1180,19 @@ fn seal_directory(
             inode: stat.st_ino as u64,
             kind: stat.st_mode as u64 & 0o170000,
         };
+
         if expected.get(&path) != Some(&node) {
             return Err(Error::SealFailed);
         }
+
         match FileType::from_raw_mode(stat.st_mode) {
             FileType::Directory => {
                 let child = directory(root, name)?;
+
                 if Node::of(&child)? != node {
                     return Err(Error::SealFailed);
                 }
+
                 seal_directory(&child, &format!("{path}/"), expected, remaining, depth + 1)?;
             }
             FileType::RegularFile => {
@@ -1055,9 +1206,11 @@ fn seal_directory(
                     .map_err(|_| Error::SealFailed)?,
                 );
                 let metadata = file.metadata().map_err(|_| Error::SealFailed)?;
+
                 if !metadata.is_file() || metadata.nlink() != 1 || Node::of(&file)? != node {
                     return Err(Error::SealFailed);
                 }
+
                 let target = match metadata.mode() & 0o7777 {
                     0o600 => 0o400,
                     0o700 => 0o500,
@@ -1068,10 +1221,12 @@ fn seal_directory(
             FileType::Symlink => {}
             _ => return Err(Error::SealFailed),
         }
+
         if Node::at(root, OsStr::from_bytes(name.to_bytes()))? != node {
             return Err(Error::SealFailed);
         }
     }
+
     fs::fchmod(root, mode(0o500)).map_err(|_| Error::SealFailed)
 }
 
@@ -1100,19 +1255,25 @@ mod tests {
         let authority = AuthorityWorkspaceRoot::open(&path)?;
         authority.destroy_attempt_directory(attempt)?;
         authority.destroy_attempt_directory(attempt)?;
+
         assert!(!tree.exists());
         assert_eq!(std::fs::read(&canary)?, b"host");
+
         let other = archcert_domain::jobs::AttemptId::new();
         std::os::unix::fs::symlink(&path, path.join(other.to_string()))?;
+
         assert!(authority.destroy_attempt_directory(other).is_err());
         assert_eq!(std::fs::read(&canary)?, b"host");
+
         Ok(())
     }
+
     use archcert_domain::{
         GitObjectId, ProjectId,
         materialization::SnapshotReference,
         source::{RepositoryId, SourceFile},
     };
+
     fn snapshot(bytes: Option<&[u8]>) -> Result<SourceSnapshot, Box<dyn std::error::Error>> {
         let files = match bytes {
             Some(bytes) => vec![SourceFile::new(
@@ -1122,6 +1283,7 @@ mod tests {
             )],
             None => vec![],
         };
+
         Ok(SourceSnapshot::seal(
             ProjectId::new(),
             RepositoryId::parse("test/source")?,
@@ -1132,6 +1294,7 @@ mod tests {
             1,
         )?)
     }
+
     fn request(snapshot: &SourceSnapshot) -> MaterializationRequest {
         MaterializationRequest {
             snapshot: SnapshotReference {
@@ -1142,6 +1305,7 @@ mod tests {
             limits: MaterializationLimits::default(),
         }
     }
+
     #[test]
     fn traversal_and_unsupported_separators_are_independently_rejected() {
         for path in [
@@ -1156,11 +1320,13 @@ mod tests {
             assert_eq!(checked_path(path), Err(Error::PathEscapeAttempt));
         }
     }
+
     #[test]
     fn preexisting_destination_is_never_reused_emptied_or_overwritten()
     -> Result<(), Box<dyn std::error::Error>> {
         let temporary = tempfile::tempdir()?;
         let path = temporary.path().canonicalize()?;
+
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
         let materializer = UnixSourceMaterializer::new(AuthorityWorkspaceRoot::open(&path)?);
@@ -1168,18 +1334,22 @@ mod tests {
         let destination = path.join(id.to_string());
         std::fs::create_dir(&destination)?;
         std::fs::write(destination.join("existing"), b"preserve")?;
+
         assert!(matches!(
             materializer.create_workspace(id, MaterializationLimits::default()),
             Err((Error::DestinationNotEmpty, CleanupStatus::NotCreated))
         ));
         assert_eq!(std::fs::read(destination.join("existing"))?, b"preserve");
+
         Ok(())
     }
+
     #[test]
     fn writer_rejects_directory_prepopulation_and_exclusive_file_conflicts()
     -> Result<(), Box<dyn std::error::Error>> {
         let temporary = tempfile::tempdir()?;
         let path = temporary.path().canonicalize()?;
+
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
         let materializer = UnixSourceMaterializer::new(AuthorityWorkspaceRoot::open(&path)?);
@@ -1188,21 +1358,27 @@ mod tests {
         let host = tempfile::tempdir()?;
         std::fs::write(host.path().join("a"), b"host")?;
         std::os::unix::fs::symlink(host.path(), pending.location().as_path().join("dir"))?;
+
         assert!(matches!(
             pending.parent_for(&SourcePath::from_bytes(b"dir/a")?),
             Err(Error::EntryTypeConflict)
         ));
+
         std::os::unix::fs::symlink(
             host.path().join("a"),
             pending.location().as_path().join("a"),
         )?;
+
         assert_eq!(
             pending.write(&snapshot(Some(b"source"))?),
             Err(Error::FileCreationFailed)
         );
         assert_eq!(std::fs::read(host.path().join("a"))?, b"host");
+
         drop(pending);
+
         assert_eq!(std::fs::read(host.path().join("a"))?, b"host");
+
         Ok(())
     }
 }
