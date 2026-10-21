@@ -1,8 +1,12 @@
 # Build only as trusted authority provisioning, never from target-supplied recipe.
 # Context requires explicit reviewed cache/advisory inputs, as documented in README.
 FROM rust@sha256:16113eb5d5c1e25d9359f40115225ce8719997fb0d9a3dab83e921da0308992f
-RUN apt-get update && apt-get install -y --no-install-recommends python3 git ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends python3 git ca-certificates openssh-client openssh-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/ssh/ssh_host_*
+# Workspace SSH regressions run as the existing sandbox uid on loopback only.
+RUN useradd --uid 10001 --no-log-init --no-create-home --shell /bin/sh --password '*' archcert \
+    && mkdir -p /run/sshd && chmod 755 /run/sshd
 RUN rustup component add rustfmt clippy \
     && CARGO_BUILD_JOBS=2 cargo install cargo-deny --version 0.20.2 --locked
 COPY public-cargo-cache.tar.gz /opt/archcert/public-cargo-cache.tar.gz

@@ -2,8 +2,12 @@
 
 This is authority tooling, explicitly selected outside target source. It is never
 discovered as a repository execution request. The base is pinned Rust 1.99.1;
-provisioning installs rustfmt/Clippy, Python 3, Git and cargo-deny 0.20.2. Copy only
-reviewed public Cargo registry/cache/index and RustSec advisory data into a fresh
+provisioning installs rustfmt/Clippy, Python 3, Git, OpenSSH client/server and
+cargo-deny 0.20.2. The controlled ArchCert workspace SSH regressions require those
+tools and a nonprivileged passwd entry for sandbox uid 10001. Their SSH listener is confined to sandbox loopback;
+external network remains denied. Provisioning removes generated SSH host keys;
+each regression creates and destroys its temporary keys. Copy only reviewed public
+Cargo registry/cache/index and RustSec advisory data into a fresh
 private context under ignored target/, together with this Dockerfile and launcher.
 Fetch Linux dependencies with `cargo fetch --locked --target x86_64-unknown-linux-gnu`
 before copying the public cache. Do not copy credentials/configuration from Cargo
@@ -24,9 +28,10 @@ provisioning time is not hermetic image reproduction; the final image digest is
 mandatory evidence. Package repository availability and supply chain remain trusted.
 
 The launcher pins offline Cargo, warnings-denied rustdoc, finite compiler jobs and
-writable /work target output. Cache/toolchain are image-owned read-only data; no
-host bind mount, new runner environment feature or runtime network permission is
-needed. Target build scripts/tests run only under the existing OCI boundary.
+writable /work target output, serialized test processes and /work/tmp for
+executable test fixtures. The existing /tmp mount remains noexec. Cache/toolchain
+are image-owned read-only data; no host bind mount, new runner environment feature
+or runtime network permission is needed. Target build scripts/tests run only under the existing OCI boundary.
 Workspace tests that require live host services remain separate opt-in regressions.
 
 The authority image is a development engineering input, not a Stoneward-qualified
