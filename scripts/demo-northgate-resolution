@@ -15,10 +15,15 @@ module = runpy.run_path(str(ROOT / "scripts/test-northgate"))
 NorthgateFixture, run = module["NorthgateFixture"], module["run"]
 PROJECT, ACTOR = module["PROJECT"], module["ACTOR"]
 BINARY = ROOT / "target/debug/archcert"
-OUTPUT = Path(os.environ.get("ARCHCERT_RESOLUTION_OUTPUT", ROOT / "docs/source-ingress/development/resolved"))
+OUTPUT = Path(
+    os.environ.get("ARCHCERT_RESOLUTION_OUTPUT", ROOT / "docs/source-ingress/development/resolved")
+)
+
 if OUTPUT.exists():
     raise RuntimeError("Refusing to overwrite retained evidence: " + str(OUTPUT))
+
 fixture = NorthgateFixture(ROOT / "target/debug/archcert-gateway")
+
 try:
     repo = fixture.create_repository()
     child = fixture.push(repo)
@@ -29,8 +34,12 @@ try:
     lfs_object = lfs_root / sha256
     lfs_object.write_bytes(payload)
     lfs_object.chmod(0o600)
-    (repo / "external.bin").write_text(f"version https://git-lfs.github.com/spec/v1\noid sha256:{sha256}\nsize {len(payload)}\n")
-    (repo / ".gitmodules").write_text('[submodule "module"]\npath = module\nurl = http://169.254.169.254/latest/meta-data\n')
+    (repo / "external.bin").write_text(
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{sha256}\nsize {len(payload)}\n"
+    )
+    (repo / ".gitmodules").write_text(
+        '[submodule "module"]\npath = module\nurl = http://169.254.169.254/latest/meta-data\n'
+    )
     original_checks = (repo / "checks.py").read_bytes()
     # Every mandatory command actually reads and checks both resolved sources in OCI.
     checks = f'''import hashlib
@@ -40,31 +49,71 @@ assert hashlib.sha256(Path('/source/module/checks.py').read_bytes()).hexdigest()
 '''
     (repo / "checks.py").write_bytes(checks.encode() + original_checks)
     fixture.git(repo, "add", ".gitmodules", "checks.py", "external.bin")
-    fixture.git(repo, "update-index", "--add", "--cacheinfo", f"160000,{child['source']['commit']},module")
+    fixture.git(
+        repo, "update-index", "--add", "--cacheinfo", f"160000,{child['source']['commit']},module"
+    )
     fixture.git(repo, "commit", "-m", "controlled external source")
     before = {s["submission"] for s in fixture.submissions()}
     fixture.git(repo, "push", fixture.endpoint, "HEAD")
     parent = [s for s in fixture.submissions() if s["submission"] not in before][0]
+
     assert parent["status"] == "INCOMPLETE_EXTERNAL_SOURCE"
+
     def reference(source):
-        return {"project": source["project"], "repository": source["repository"], "identity": source["source"]}
+        return {
+            "project": source["project"],
+            "repository": source["repository"],
+            "identity": source["source"],
+        }
+
     config = fixture.authority / "resolution.json"
-    config.write_text(json.dumps({"store": str(fixture.store), "resolver_actor": ACTOR,
-                                 "parent_submission": parent["submission"], "parent": reference(parent),
-                                 "lfs_root": str(lfs_root), "lfs": [{"path": "external.bin", "sha256": sha256, "size": len(payload)}],
-                                 "submodules": [{"path": "module", "submission": child["submission"], "source": reference(child)}]}))
+    config.write_text(
+        json.dumps(
+            {
+                "store": str(fixture.store),
+                "resolver_actor": ACTOR,
+                "parent_submission": parent["submission"],
+                "parent": reference(parent),
+                "lfs_root": str(lfs_root),
+                "lfs": [{"path": "external.bin", "sha256": sha256, "size": len(payload)}],
+                "submodules": [
+                    {
+                        "path": "module",
+                        "submission": child["submission"],
+                        "source": reference(child),
+                    }
+                ],
+            }
+        )
+    )
     config.chmod(0o600)
-    resolved = json.loads(run([fixture.binary, "resolve", parent["submission"], "--config", config]).stdout)
+    resolved = json.loads(
+        run([fixture.binary, "resolve", parent["submission"], "--config", config]).stdout
+    )
+
     assert resolved["source_schema"] == 2 and resolved["completeness"] == "COMPLETE"
     assert resolved["source"]["commit"] == parent["source"]["commit"]
     assert resolved["source"]["tree"] == parent["source"]["tree"]
     assert resolved["source"]["snapshot_sha256"] != parent["source"]["snapshot_sha256"]
+
     # Remove acquisition capability before any source execution is requested.
     lfs_object.unlink()
     lfs_root.rmdir()
     config.unlink()
-    assert json.loads(run([fixture.binary, "show", parent["submission"], "--store", fixture.store]).stdout) == parent
-    assert json.loads(run([fixture.binary, "show", resolved["submission"], "--store", fixture.store]).stdout) == resolved
+
+    assert (
+        json.loads(
+            run([fixture.binary, "show", parent["submission"], "--store", fixture.store]).stdout
+        )
+        == parent
+    )
+    assert (
+        json.loads(
+            run([fixture.binary, "show", resolved["submission"], "--store", fixture.store]).stdout
+        )
+        == resolved
+    )
+
     fixture.server.terminate()
     fixture.server.wait(timeout=10)
     fixture.server = None
@@ -75,49 +124,126 @@ assert hashlib.sha256(Path('/source/module/checks.py').read_bytes()).hexdigest()
     private, public = fixture.authority / "development.der", fixture.authority / "public.hex"
     run([BINARY, "development-keygen", "--private-key", private, "--public-key", public])
     output = fixture.root / "resolved"
-    passed = run([BINARY, "certify", "--source-submission", resolved["submission"], "--source-store", fixture.store,
-                  "--snapshot", resolved["source"]["snapshot_sha256"], "--project", PROJECT,
-                  "--repository", resolved["repository"], "--workspace-root", workspace,
-                  "--profile", "python", "--image", os.environ["ARCHCERT_TEST_IMAGE"],
-                  "--docker", os.environ["ARCHCERT_TEST_DOCKER"], "--endpoint", os.environ["ARCHCERT_TEST_ENDPOINT"],
-                  "--development-key", private, "--public-key", public, "--output", output,
-                  "--authority-config", ROOT / "docs/policy/CONTROLLED_AUTHORITY.toml"])
+    passed = run(
+        [
+            BINARY,
+            "certify",
+            "--source-submission",
+            resolved["submission"],
+            "--source-store",
+            fixture.store,
+            "--snapshot",
+            resolved["source"]["snapshot_sha256"],
+            "--project",
+            PROJECT,
+            "--repository",
+            resolved["repository"],
+            "--workspace-root",
+            workspace,
+            "--profile",
+            "python",
+            "--image",
+            os.environ["ARCHCERT_TEST_IMAGE"],
+            "--docker",
+            os.environ["ARCHCERT_TEST_DOCKER"],
+            "--endpoint",
+            os.environ["ARCHCERT_TEST_ENDPOINT"],
+            "--development-key",
+            private,
+            "--public-key",
+            public,
+            "--output",
+            output,
+            "--authority-config",
+            ROOT / "docs/policy/CONTROLLED_AUTHORITY.toml",
+        ]
+    )
+
     assert json.loads(passed.stdout)["status"] == "CERTIFIED"
     assert not list(workspace.iterdir())
+
     certificate = json.loads((output / "certificate.json").read_text())
+
     assert certificate["payload"]["source"] == resolved["source"]
+
     evidence = json.loads((output / "evidence.json").read_text())
+
     assert evidence["source"]["schema_version"] == 2
+
     binding = evidence["source"]["resolved_binding"]
+
     assert binding["original"] == parent["source"]
+
     # Independent Python canonicalization of the exact resolved filesystem manifest.
     # Schema-2 digest includes original identity and scoped immutable dependencies.
     def field(value):
         value = value.encode() if isinstance(value, str) else value
+
         return len(value).to_bytes(8, "big") + value
-    files = [(".gitmodules", 0o100644, (repo / ".gitmodules").read_bytes()),
-             ("checks.py", 0o100644, (repo / "checks.py").read_bytes()),
-             ("external.bin", 0o100644, payload),
-             ("module/checks.py", 0o100644, original_checks)]
+
+    files = [
+        (".gitmodules", 0o100644, (repo / ".gitmodules").read_bytes()),
+        ("checks.py", 0o100644, (repo / "checks.py").read_bytes()),
+        ("external.bin", 0o100644, payload),
+        ("module/checks.py", 0o100644, original_checks),
+    ]
     manifest = b"ARCHCERT-SOURCE\0\0\0\0\x01" + len(files).to_bytes(8, "big")
+
     for path, mode, data in sorted(files):
-        manifest += field(path) + mode.to_bytes(4, "big") + hashlib.sha256(data).hexdigest().encode() + len(data).to_bytes(8, "big")
-    bindings = [b"\x01" + field("external.bin") + field(sha256) + len(payload).to_bytes(8, "big"),
-                b"\x02" + field("module") + field(PROJECT) + field(child["repository"]) + field(child["source"]["commit"]) + field(child["source"]["tree"]) + field(child["source"]["snapshot_sha256"])]
+        manifest += (
+            field(path)
+            + mode.to_bytes(4, "big")
+            + hashlib.sha256(data).hexdigest().encode()
+            + len(data).to_bytes(8, "big")
+        )
+
+    bindings = [
+        b"\x01" + field("external.bin") + field(sha256) + len(payload).to_bytes(8, "big"),
+        b"\x02"
+        + field("module")
+        + field(PROJECT)
+        + field(child["repository"])
+        + field(child["source"]["commit"])
+        + field(child["source"]["tree"])
+        + field(child["source"]["snapshot_sha256"]),
+    ]
     preimage = b"ARCHCERT-RESOLVED-SOURCE\0\0\0\0\x02"
-    preimage += field(parent["source"]["commit"]) + field(parent["source"]["tree"]) + field(parent["source"]["snapshot_sha256"])
-    preimage += len(bindings).to_bytes(8, "big") + b"".join(field(b) for b in sorted(bindings)) + field(manifest)
+    preimage += (
+        field(parent["source"]["commit"])
+        + field(parent["source"]["tree"])
+        + field(parent["source"]["snapshot_sha256"])
+    )
+    preimage += (
+        len(bindings).to_bytes(8, "big")
+        + b"".join(field(b) for b in sorted(bindings))
+        + field(manifest)
+    )
+
     assert hashlib.sha256(preimage).hexdigest() == resolved["source"]["snapshot_sha256"]
+
     verified = run([BINARY, "verify", output / "certificate.json", "--public-key", public])
+
     assert json.loads(verified.stdout)["status"] == "CERTIFIED"
+
     (output / "offline-verification.json").write_bytes(verified.stdout)
-    for name, source in [("ingress", resolved), ("original-incomplete-ingress", parent), ("child-ingress", child)]:
+
+    for name, source in [
+        ("ingress", resolved),
+        ("original-incomplete-ingress", parent),
+        ("child-ingress", child),
+    ]:
         (output / (name + ".json")).write_text(json.dumps(source, indent=2) + "\n")
+
     (output / "canonical-source.bin").write_bytes(preimage)
     private.unlink()
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(output, OUTPUT)
-    print("Real authenticated pushes -> controlled LFS and exact submodule resolution -> new schema-2 immutable snapshot -> actual OCI checks -> development certificate -> offline verification: passed")
-    print("Acquisition files and SSH service removed before execution; independent Python canonical identity matched: " + resolved["source"]["snapshot_sha256"])
+    print(
+        "Real authenticated pushes -> controlled LFS and exact submodule resolution -> new schema-2 immutable snapshot -> actual OCI checks -> development certificate -> offline verification: passed"
+    )
+    print(
+        "Acquisition files and SSH service removed before execution; independent Python canonical identity matched: "
+        + resolved["source"]["snapshot_sha256"]
+    )
 finally:
     fixture.close()

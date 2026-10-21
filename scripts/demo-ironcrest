@@ -26,12 +26,18 @@ ROOT = Path(__file__).resolve().parent.parent
 F = runpy.run_path(str(ROOT / 'scripts/test-northgate'))
 run, NorthgateFixture = F['run'], F['NorthgateFixture']
 BIN = ROOT / 'target/debug'
-OUTPUT = Path(os.environ.get('ARCHCERT_IRONCREST_OUTPUT', ROOT / 'target/m6/ironcrest-live')).resolve()
+OUTPUT = Path(
+    os.environ.get('ARCHCERT_IRONCREST_OUTPUT', ROOT / 'target/m6/ironcrest-live')
+).resolve()
+
 if OUTPUT.exists():
     raise RuntimeError('Refusing to overwrite retained demonstration output')
+
 OUTPUT.mkdir(mode=0o700, parents=True)
 ENV = dict(os.environ, ARCHCERT_DATABASE_URL=os.environ['ARCHCERT_DATABASE_URL'])
-DOCKER, ENDPOINT, IMAGE = (os.environ[k] for k in ['ARCHCERT_TEST_DOCKER', 'ARCHCERT_TEST_ENDPOINT', 'ARCHCERT_TEST_IMAGE'])
+DOCKER, ENDPOINT, IMAGE = (
+    os.environ[k] for k in ['ARCHCERT_TEST_DOCKER', 'ARCHCERT_TEST_ENDPOINT', 'ARCHCERT_TEST_IMAGE']
+)
 GOOD = '''import sqlite3
 def settle(path, key, amount):
     with sqlite3.connect(path) as connection:
@@ -49,6 +55,7 @@ api = None
 
 def command(argv, ok=True):
     commands.append([str(x) for x in argv])
+
     return run(argv, env=ENV, ok=ok)
 
 
@@ -59,20 +66,31 @@ def crash_command(argv, stage):
     process = subprocess.Popen(argv, env=ENV, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     observed = bytearray()
     deadline = time.monotonic() + 130
+
     try:
         while time.monotonic() < deadline:
             ready, _, _ = select.select([process.stderr], [], [], 1)
+
             if ready:
                 line = process.stderr.readline()
                 observed.extend(line)
+
                 if b'interruption after ' + stage.encode() in line:
                     process.kill()
                     stdout, stderr = process.communicate(timeout=10)
+
                     assert process.returncode == -signal.SIGKILL
-                    return subprocess.CompletedProcess(argv, process.returncode, stdout, bytes(observed) + stderr)
+
+                    return subprocess.CompletedProcess(
+                        argv, process.returncode, stdout, bytes(observed) + stderr
+                    )
+
                 if not line and process.poll() is not None:
                     break
-        raise RuntimeError(f'Controller did not reach checkpoint {stage}: {observed.decode(errors="replace")}')
+
+        raise RuntimeError(
+            f'Controller did not reach checkpoint {stage}: {observed.decode(errors="replace")}'
+        )
     finally:
         if process.poll() is None:
             process.kill()
@@ -86,31 +104,52 @@ def retain(name, value):
 try:
     candidate = fixture.create_repository()
     baseline = fixture.push(candidate)
-    assert baseline['source']['snapshot_sha256'] == '5241a6ce473582f26aa1c6ffab22f9082ecedc26cf11d09a6e641ad79cc5d8af'
+
+    assert (
+        baseline['source']['snapshot_sha256']
+        == '5241a6ce473582f26aa1c6ffab22f9082ecedc26cf11d09a6e641ad79cc5d8af'
+    )
 
     def source(text, message):
         (candidate / 'settlement.py').write_text(text)
         fixture.git(candidate, 'add', 'settlement.py')
         fixture.git(candidate, 'commit', '-m', message)
+
         return fixture.push(candidate)
 
     good = source(GOOD, 'controlled idempotent settlement')
-    blocker = source(GOOD + '# Controlled semantic blocker review scenario.\n', 'controlled blocker review source')
+    blocker = source(
+        GOOD + '# Controlled semantic blocker review scenario.\n',
+        'controlled blocker review source',
+    )
     defective = source(BAD, 'controlled duplicate settlement defect')
     before = {s['submission'] for s in fixture.submissions()}
-    fixture.git(ROOT / 'target/m3-bottle', 'push', f'{fixture.user}@127.0.0.1:company/bottle.git',
-                '8ec5fe29420d14998c0d86885083983eaea8b839:refs/heads/bottle')
+    fixture.git(
+        ROOT / 'target/m3-bottle',
+        'push',
+        f'{fixture.user}@127.0.0.1:company/bottle.git',
+        '8ec5fe29420d14998c0d86885083983eaea8b839:refs/heads/bottle',
+    )
     bottle = [s for s in fixture.submissions() if s['submission'] not in before][0]
-    assert bottle['source']['snapshot_sha256'] == 'e3f098f88ca986831b531f2f055c76513ad55360785d81f5f43c34a4d98c92b0'
+
+    assert (
+        bottle['source']['snapshot_sha256']
+        == 'e3f098f88ca986831b531f2f055c76513ad55360785d81f5f43c34a4d98c92b0'
+    )
+
     objects, workspaces = OUTPUT / 'objects', OUTPUT / 'workspaces'
+
     for p in [objects, workspaces]:
         p.mkdir(mode=0o700)
+
     token = secrets.token_hex(32)
     token_file = fixture.authority / 'token'
     token_file.write_text(token)
     token_file.chmod(0o600)
     private, public = fixture.authority / 'development.der', fixture.authority / 'public.hex'
-    command([BIN / 'archcert', 'development-keygen', '--private-key', private, '--public-key', public])
+    command(
+        [BIN / 'archcert', 'development-keygen', '--private-key', private, '--public-key', public]
+    )
     public.chmod(0o600)
     shutil.copyfile(public, OUTPUT / 'public-key.hex')
     recipe = (ROOT / 'docs/policy/CONTROLLED_AUTHORITY.toml').read_text()
@@ -120,148 +159,327 @@ try:
     config = fixture.authority / 'control-plane.json'
 
     def grant(repository, toml, ironcrest):
-        return dict(project=F['PROJECT'], repository=repository, actor=F['ACTOR'],
-                    token_sha256=hashlib.sha256(token.encode()).hexdigest(), profile='python', image=IMAGE,
-                    authority_toml=toml, maximum_attempts=2, ironcrest=ironcrest,
-                    ironcrest_baseline=baseline['submission'] if ironcrest else None)
+        return dict(
+            project=F['PROJECT'],
+            repository=repository,
+            actor=F['ACTOR'],
+            token_sha256=hashlib.sha256(token.encode()).hexdigest(),
+            profile='python',
+            image=IMAGE,
+            authority_toml=toml,
+            maximum_attempts=2,
+            ironcrest=ironcrest,
+            ironcrest_baseline=baseline['submission'] if ironcrest else None,
+        )
 
-    config.write_text(json.dumps(dict(source_store=str(fixture.store), artifact_root=str(objects), grants=[
-        grant(good['repository'], recipe, True),
-        grant(bottle['repository'], (ROOT / 'docs/runner/BOTTLE_REQUEST.toml').read_text(), False)])))
+    config.write_text(
+        json.dumps(
+            dict(
+                source_store=str(fixture.store),
+                artifact_root=str(objects),
+                grants=[
+                    grant(good['repository'], recipe, True),
+                    grant(
+                        bottle['repository'],
+                        (ROOT / 'docs/runner/BOTTLE_REQUEST.toml').read_text(),
+                        False,
+                    ),
+                ],
+            )
+        )
+    )
     config.chmod(0o600)
     command(['cargo', 'run', '-p', 'archcert-storage', '--example', 'migrate', '--locked'])
     prefix = [BIN / 'archcert-controller', '--config', config]
     command(prefix + ['provision'])
 
     def inspect(session):
-        return json.loads(command(prefix + ['ironcrest', 'show', '--project', F['PROJECT'], '--session', session]).stdout)
+        return json.loads(
+            command(
+                prefix + ['ironcrest', 'show', '--project', F['PROJECT'], '--session', session]
+            ).stdout
+        )
 
     def opened(src):
         session = str(uuid.uuid4())
-        command(prefix + ['ironcrest', 'open', '--project', F['PROJECT'], '--repository', src['repository'],
-                          '--submission', src['submission'], '--session', session, '--token-file', token_file])
+        command(
+            prefix
+            + [
+                'ironcrest',
+                'open',
+                '--project',
+                F['PROJECT'],
+                '--repository',
+                src['repository'],
+                '--submission',
+                src['submission'],
+                '--session',
+                session,
+                '--token-file',
+                token_file,
+            ]
+        )
+
         return session
 
     def prepare(session, stop=None):
         argv = prefix + ['ironcrest', 'prepare', '--project', F['PROJECT'], '--session', session]
+
         if stop:
             argv += ['--stop-after', stop]
+
         r = crash_command(argv, stop) if stop else command(argv)
+
         if stop:
             assert r.returncode == -signal.SIGKILL, (stop, r.stderr)
+
             checkpoints.append(dict(stage=stop, session=session, evidence=inspect(session)))
         else:
             return json.loads(r.stdout)
 
     def response(prepared, block=False):
         path = fixture.authority / (str(uuid.uuid4()) + '.json')
-        path.write_text(json.dumps(dict(schema=1, request_sha256=prepared['request_sha256'], complete=True,
-            items=[dict(id='controlled-blocker', kind='BLOCKING_CONCERN',
-                        text='Controlled authority-relevant concern requiring semantic veto.',
-                        related_authority_ids=[prepared['binding']['authority_bundles'][0] + ':SETTLEMENT-IDEMPOTENCY-001'])] if block else [],
-            proposed_challenges=[] if block else [dict(id='controlled-replay', challenge_template_id='idempotency-replay-v1',
-                parameters=dict(repetitions=5), reason='Check exact ledger cardinality after bounded replay.',
-                related_authority_id=prepared['binding']['authority_bundles'][0] + ':SETTLEMENT-IDEMPOTENCY-001')])))
+        path.write_text(
+            json.dumps(
+                dict(
+                    schema=1,
+                    request_sha256=prepared['request_sha256'],
+                    complete=True,
+                    items=(
+                        [
+                            dict(
+                                id='controlled-blocker',
+                                kind='BLOCKING_CONCERN',
+                                text='Controlled authority-relevant concern requiring semantic veto.',
+                                related_authority_ids=[
+                                    prepared['binding']['authority_bundles'][0]
+                                    + ':SETTLEMENT-IDEMPOTENCY-001'
+                                ],
+                            )
+                        ]
+                        if block
+                        else []
+                    ),
+                    proposed_challenges=(
+                        []
+                        if block
+                        else [
+                            dict(
+                                id='controlled-replay',
+                                challenge_template_id='idempotency-replay-v1',
+                                parameters=dict(repetitions=5),
+                                reason='Check exact ledger cardinality after bounded replay.',
+                                related_authority_id=prepared['binding']['authority_bundles'][0]
+                                + ':SETTLEMENT-IDEMPOTENCY-001',
+                            )
+                        ]
+                    ),
+                )
+            )
+        )
         path.chmod(0o600)
+
         return path
 
     def review(session, replay=None, stop=None, ok=True):
         argv = prefix + ['ironcrest', 'review', '--project', F['PROJECT'], '--session', session]
+
         if replay:
             argv += ['--response-file', replay]
+
         if stop:
             argv += ['--stop-after', stop]
+
         r = crash_command(argv, stop) if stop else command(argv, ok=ok)
+
         if stop:
             assert r.returncode == -signal.SIGKILL, (stop, r.stderr)
+
             checkpoints.append(dict(stage=stop, session=session, evidence=inspect(session)))
+
         return r
 
     def controller(stop=None, signing=True):
-        argv = prefix + ['run-once', '--worker-binary', BIN / 'archcert-worker', '--workspace-root', workspaces,
-            '--docker', DOCKER, '--endpoint', ENDPOINT, '--development-key', private if signing else fixture.authority / 'UNREACHABLE_PRIVATE_KEY',
-            '--public-key', public if signing else fixture.authority / 'UNREACHABLE_PUBLIC_KEY', '--lease-seconds', '30']
+        argv = prefix + [
+            'run-once',
+            '--worker-binary',
+            BIN / 'archcert-worker',
+            '--workspace-root',
+            workspaces,
+            '--docker',
+            DOCKER,
+            '--endpoint',
+            ENDPOINT,
+            '--development-key',
+            private if signing else fixture.authority / 'UNREACHABLE_PRIVATE_KEY',
+            '--public-key',
+            public if signing else fixture.authority / 'UNREACHABLE_PUBLIC_KEY',
+            '--lease-seconds',
+            '30',
+        ]
+
         if stop:
             argv += ['--stop-after', stop]
+
         r = crash_command(argv, stop) if stop else command(argv)
+
         if stop:
             assert r.returncode == -signal.SIGKILL, (stop, r.stderr)
+
         return r
 
     session = opened(good)
+
     for stage in ['knowledge', 'impact', 'request']:
         prepare(session, stage)
+
     prepared = prepare(session)
     replay = response(prepared)
+
     for stage in ['review', 'gate', 'plan', 'admitted']:
         review(session, replay if stage == 'review' else None, stage)
+
     replay.unlink()  # All later recovery must use the accepted immutable response.
     admitted = json.loads(review(session).stdout)
+
     assert admitted['id'] == session and admitted['state'] == 'QUEUED'
+
     frozen = admitted['inputs']['plan_sha256']
-    for stage in ['evidence', 'challenge', 'before-evaluation', 'evaluation', 'before-signing', 'prepared', 'signed', 'certificate-upload']:
+
+    for stage in [
+        'evidence',
+        'challenge',
+        'before-evaluation',
+        'evaluation',
+        'before-signing',
+        'prepared',
+        'signed',
+        'certificate-upload',
+    ]:
         controller(stage)
         job = json.loads(command(prefix + ['show', session]).stdout)
+
         assert job['inputs']['plan_sha256'] == frozen and len(job['attempts']) == 1
+
         checkpoints.append(dict(stage=stage, job=job))
         print('Recovered Ironcrest checkpoint:', stage, flush=True)
+
     completed = json.loads(controller().stdout)
+
     assert completed['state'] == 'COMPLETED' and len(completed['attempts']) == 1
-    assert completed['inputs']['source'] == good['source'] and completed['inputs']['plan_sha256'] == frozen
+    assert (
+        completed['inputs']['source'] == good['source']
+        and completed['inputs']['plan_sha256'] == frozen
+    )
+
     evidence_ref = completed['attempts'][0]['evidence']
+
     for entry in checkpoints:
         if 'job' in entry:
             assert entry['job']['attempts'][0]['evidence'] == evidence_ref
-    certificate = (objects / F['PROJECT'] / completed['certificate']['artifact']['sha256']).read_bytes()
+
+    certificate = (
+        objects / F['PROJECT'] / completed['certificate']['artifact']['sha256']
+    ).read_bytes()
     (OUTPUT / 'certificate.json').write_bytes(certificate)
     payload = json.loads(certificate)['payload']
     manifest_bytes = (objects / F['PROJECT'] / payload['evidence_manifest_sha256']).read_bytes()
+
     assert hashlib.sha256(manifest_bytes).hexdigest() == payload['evidence_manifest_sha256']
+
     manifest = json.loads(manifest_bytes)
-    assert payload['schema'] == 1 and manifest['schema'] == 2 and len(manifest['ironcrest']['roles']) == 8
+
+    assert (
+        payload['schema'] == 1
+        and manifest['schema'] == 2
+        and len(manifest['ironcrest']['roles']) == 8
+    )
     assert manifest['ironcrest']['pin']['baseline']['source'] == baseline['source']
     assert manifest['ironcrest']['pin']['source'] == good['source']
+
     gate_reference = next(ref for role, ref in manifest['ironcrest']['roles'] if role == 'GATE')
     gate = json.loads((objects / F['PROJECT'] / gate_reference['sha256']).read_bytes())
+
     assert gate['decision'] == 'REQUIRE_MORE_EVIDENCE' and gate['review_decision'] == 'CONTINUE'
     assert gate['required_challenges'][0]['identity']['parameters']['repetitions'] == 5
+
     (OUTPUT / 'evidence-manifest.json').write_bytes(manifest_bytes)
     retain('successful-job.json', completed)
-    result['successful_certificate'] = dict(job=session, source=good['source'], certificate_sha256=completed['certificate']['issuance']['certificate_sha256'],
-        certificate_artifact_sha256=completed['certificate']['artifact']['sha256'])
+    result['successful_certificate'] = dict(
+        job=session,
+        source=good['source'],
+        certificate_sha256=completed['certificate']['issuance']['certificate_sha256'],
+        certificate_artifact_sha256=completed['certificate']['artifact']['sha256'],
+    )
 
     # A non-expiring claimed invocation without response remains explicitly blocked.
     uncertain = opened(good)
     uncertain_request = prepare(uncertain)
     review(uncertain, response(uncertain_request), 'claim')
+
     assert review(uncertain, ok=False).returncode != 0
     assert inspect(uncertain)['review_recovery'] == 'OPERATOR_RECOVERY_REQUIRED'
+
     result['uncertain_claim'] = inspect(uncertain)
 
     # Establish mechanical eligibility independently, without entering any signer.
-    baseline_run = command([BIN / 'archcert', 'evaluate', '--source-submission', blocker['submission'], '--source-store', fixture.store,
-        '--snapshot', blocker['source']['snapshot_sha256'], '--project', F['PROJECT'], '--repository', blocker['repository'],
-        '--workspace-root', workspaces, '--profile', 'python', '--image', IMAGE, '--docker', DOCKER, '--endpoint', ENDPOINT,
-        '--authority-config', authority_recipe])
+    baseline_run = command(
+        [
+            BIN / 'archcert',
+            'evaluate',
+            '--source-submission',
+            blocker['submission'],
+            '--source-store',
+            fixture.store,
+            '--snapshot',
+            blocker['source']['snapshot_sha256'],
+            '--project',
+            F['PROJECT'],
+            '--repository',
+            blocker['repository'],
+            '--workspace-root',
+            workspaces,
+            '--profile',
+            'python',
+            '--image',
+            IMAGE,
+            '--docker',
+            DOCKER,
+            '--endpoint',
+            ENDPOINT,
+            '--authority-config',
+            authority_recipe,
+        ]
+    )
     baseline_evaluation = json.loads(baseline_run.stdout)
     retain('blocker-deterministic-baseline.json', baseline_evaluation)
+
     assert 'ELIGIBLE_FOR_CERTIFICATION' in baseline_run.stdout.decode()
+
     blocked = opened(blocker)
     block_result = json.loads(review(blocked, response(prepare(blocked), True)).stdout)
-    assert block_result['status'] == 'SEMANTIC_BLOCK' and block_result['certificate'] == 'NOT_ISSUED'
+
+    assert (
+        block_result['status'] == 'SEMANTIC_BLOCK' and block_result['certificate'] == 'NOT_ISSUED'
+    )
     assert command(prefix + ['show', blocked], ok=False).returncode != 0
     assert json.loads(controller(signing=False).stdout)['status'] == 'IDLE'
+
     result['semantic_blocker'] = dict(outcome=block_result, journal=inspect(blocked))
 
     unavailable = opened(blocker)
     prepare(unavailable)
     outage = json.loads(review(unavailable).stdout)
+
     assert outage['status'] == 'INCONCLUSIVE' and outage['certificate'] == 'NOT_ISSUED'
+
     before = inspect(unavailable)
+
     assert json.loads(review(unavailable, response(prepare(unavailable))).stdout) == outage
     assert inspect(unavailable) == before  # A later replay cannot replace the failure.
     assert command(prefix + ['show', unavailable], ok=False).returncode != 0
     assert json.loads(controller(signing=False).stdout)['status'] == 'IDLE'
+
     result['provider_failure'] = dict(outcome=outage, journal=before)
 
     # An exact response from a different source/session cannot be accepted as CLEAR.
@@ -269,7 +487,9 @@ try:
     prepare(foreign)
     foreign_replay = response(prepared)
     rejected = json.loads(review(foreign, foreign_replay).stdout)
+
     assert rejected['status'] == 'INCONCLUSIVE' and rejected['certificate'] == 'NOT_ISSUED'
+
     result['durable_replay_rejection'] = inspect(foreign)
 
     # Semantic CLEAR cannot rescue a real failing authority challenge.
@@ -277,18 +497,26 @@ try:
     negative_request = prepare(negative)
     review(negative, response(negative_request))
     not_eligible = json.loads(controller(signing=False).stdout)
+
     assert not_eligible['id'] == negative and not_eligible['state'] == 'NOT_ELIGIBLE'
     assert not_eligible['issuance'] is None and not_eligible['certificate'] is None
+
     result['deterministic_challenge_failure'] = not_eligible
 
     # Historical HTTP admission and Bottle source/policy behavior remain intact.
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
+
     api_log = (OUTPUT / 'api.log').open('ab')
-    api = subprocess.Popen([str(BIN / 'archcertd'), '--config', str(config), '--listen', f'127.0.0.1:{port}'],
-        env=ENV, stdout=api_log, stderr=api_log)
+    api = subprocess.Popen(
+        [str(BIN / 'archcertd'), '--config', str(config), '--listen', f'127.0.0.1:{port}'],
+        env=ENV,
+        stdout=api_log,
+        stderr=api_log,
+    )
     base = f'http://127.0.0.1:{port}'
+
     for _ in range(100):
         try:
             urllib.request.urlopen(base + '/healthz', timeout=1).close()
@@ -296,35 +524,72 @@ try:
         except (OSError, urllib.error.URLError):
             if api.poll() is not None:
                 raise RuntimeError('API startup failed')
-            time.sleep(.1)
+
+            time.sleep(0.1)
+
     def submit(src, key):
-        req = urllib.request.Request(base + '/api/v1/certifications', data=json.dumps(dict(project=F['PROJECT'],
-            repository=src['repository'], source_submission=src['submission'])).encode(),
-            headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token, 'Idempotency-Key': key})
+        req = urllib.request.Request(
+            base + '/api/v1/certifications',
+            data=json.dumps(
+                dict(
+                    project=F['PROJECT'],
+                    repository=src['repository'],
+                    source_submission=src['submission'],
+                )
+            ).encode(),
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + token,
+                'Idempotency-Key': key,
+            },
+        )
+
         try:
             with urllib.request.urlopen(req, timeout=20) as reply:
                 return reply.status, json.loads(reply.read())
         except urllib.error.HTTPError as error:
             return error.code, error.read().decode()
+
     assert submit(good, 'forbidden-semantic-bypass')[0] == 404
+
     code, historical = submit(bottle, 'historical-bottle')
+
     assert code == 202, (code, historical)
+
     bottle_job = json.loads(controller(signing=False).stdout)
+
     assert bottle_job['id'] == historical['job_id'] and bottle_job['state'] == 'NOT_ELIGIBLE'
-    assert bottle_job['inputs']['source'] == bottle['source'] and bottle_job['certificate'] is None and bottle_job['issuance'] is None
+    assert (
+        bottle_job['inputs']['source'] == bottle['source']
+        and bottle_job['certificate'] is None
+        and bottle_job['issuance'] is None
+    )
+
     result['bottle'] = bottle_job
     api.terminate()
     api.wait(timeout=10)
     api = None
     api_log.close()
-    verification = command([BIN / 'archcert', 'verify', OUTPUT / 'certificate.json', '--public-key', OUTPUT / 'public-key.hex'])
+    verification = command(
+        [
+            BIN / 'archcert',
+            'verify',
+            OUTPUT / 'certificate.json',
+            '--public-key',
+            OUTPUT / 'public-key.hex',
+        ]
+    )
     (OUTPUT / 'offline-verification.json').write_bytes(verification.stdout)
     retain('results.json', result)
     retain('checkpoints.json', checkpoints)
-    print('Ironcrest controlled success, blocker, provider failure, replay, challenge failure and Bottle passed.', flush=True)
+    print(
+        'Ironcrest controlled success, blocker, provider failure, replay, challenge failure and Bottle passed.',
+        flush=True,
+    )
 finally:
     if api is not None:
         api.terminate()
         api.wait(timeout=10)
+
     retain('commands.json', commands)
     fixture.close()

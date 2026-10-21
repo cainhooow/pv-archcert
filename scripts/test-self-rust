@@ -33,16 +33,22 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     output = args.output.resolve()
+
     if output.exists() or not output.is_relative_to(ROOT / 'target'):
         raise RuntimeError('Output must be a fresh directory beneath ignored target/')
+
     output.mkdir(parents=True, mode=0o700)
     source_repo = args.source_repo.resolve()
     started = time.monotonic()
     fixture = F['NorthgateFixture'](BIN / 'archcert-gateway')
     commands = []
-    result = dict(kind='PRE_GENESIS_ENGINEERING_SELF_VALIDATION', result='INCONCLUSIVE',
-                  certificate_issued=False, offline_verification='NOT_REACHED',
-                  trust_limit='Shared implementation/authority; not independent certification or Genesis')
+    result = dict(
+        kind='PRE_GENESIS_ENGINEERING_SELF_VALIDATION',
+        result='INCONCLUSIVE',
+        certificate_issued=False,
+        offline_verification='NOT_REACHED',
+        trust_limit='Shared implementation/authority; not independent certification or Genesis',
+    )
 
     def retain(name, value):
         (output / name).write_text(json.dumps(value, indent=2) + '\n')
@@ -54,23 +60,37 @@ def main():
         commands.append(record)
         retain('commands.json', commands)
         print('Command', index, argv[0], ' '.join(argv[1:3]), flush=True)
+
         if crash:
-            process = subprocess.Popen(argv + ['--hold-checkpoint'], env=environment,
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            process = subprocess.Popen(
+                argv + ['--hold-checkpoint'],
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
             observed = bytearray()
+
             try:
                 deadline = time.monotonic() + 180
+
                 while time.monotonic() < deadline:
                     ready, _, _ = select.select([process.stderr], [], [], 1)
+
                     if ready:
                         line = process.stderr.readline()
                         observed.extend(line)
+
                         if b'interruption after ' + crash.encode() in line:
                             process.kill()
                             stdout, stderr = process.communicate(timeout=10)
+
                             assert process.returncode == -signal.SIGKILL
-                            r = subprocess.CompletedProcess(argv, process.returncode, stdout, bytes(observed) + stderr)
+
+                            r = subprocess.CompletedProcess(
+                                argv, process.returncode, stdout, bytes(observed) + stderr
+                            )
                             break
+
                         if not line and process.poll() is not None:
                             raise RuntimeError('Controller exited before checkpoint')
                 else:
@@ -81,42 +101,108 @@ def main():
                     process.communicate(timeout=10)
         else:
             r = subprocess.run(argv, capture_output=True, env=environment, timeout=7200)
+
         record['exit_code'] = r.returncode
         (output / f'command-{index}.stdout').write_bytes(r.stdout)
         (output / f'command-{index}.stderr').write_bytes(r.stderr)
         retain('commands.json', commands)
+
         if ok and not crash and r.returncode:
-            raise RuntimeError(f'Command {index} failed; retained diagnostics identify the boundary')
+            raise RuntimeError(
+                f'Command {index} failed; retained diagnostics identify the boundary'
+            )
+
         return r
 
     try:
-        exact = command(['/usr/bin/git', '-C', source_repo, 'rev-parse', '--verify', args.commit + '^{commit}']).stdout.decode().strip()
+        exact = (
+            command(
+                [
+                    '/usr/bin/git',
+                    '-C',
+                    source_repo,
+                    'rev-parse',
+                    '--verify',
+                    args.commit + '^{commit}',
+                ]
+            )
+            .stdout.decode()
+            .strip()
+        )
+
         if exact != args.commit or len(exact) not in (40, 64):
             raise RuntimeError('A full immutable commit is required')
-        if command(['/usr/bin/git', '-C', source_repo, 'status', '--porcelain', '--untracked-files=no']).stdout:
-            raise RuntimeError('Commit all implementation/documentation before selecting the source')
-        tree = command(['/usr/bin/git', '-C', source_repo, 'rev-parse', exact + '^{tree}']).stdout.decode().strip()
+
+        if command(
+            ['/usr/bin/git', '-C', source_repo, 'status', '--porcelain', '--untracked-files=no']
+        ).stdout:
+            raise RuntimeError(
+                'Commit all implementation/documentation before selecting the source'
+            )
+
+        tree = (
+            command(['/usr/bin/git', '-C', source_repo, 'rev-parse', exact + '^{tree}'])
+            .stdout.decode()
+            .strip()
+        )
         config = json.loads(fixture.config.read_text())
         config['devices'][0]['repositories'][0]['repository'] = 'archcert/archcert'
         fixture.config.write_text(json.dumps(config))
-        command(['/usr/bin/git', '-c', 'core.hooksPath=/dev/null', '-c', 'gc.auto=0', '-C', source_repo,
-                 'push', fixture.endpoint, exact + ':refs/heads/pre-genesis-self-test-2'], environment=fixture.environment)
+        command(
+            [
+                '/usr/bin/git',
+                '-c',
+                'core.hooksPath=/dev/null',
+                '-c',
+                'gc.auto=0',
+                '-C',
+                source_repo,
+                'push',
+                fixture.endpoint,
+                exact + ':refs/heads/pre-genesis-self-test-2',
+            ],
+            environment=fixture.environment,
+        )
         accepted = fixture.submissions()
+
         assert len(accepted) == 1 and accepted[0]['status'] == 'ACCEPTED'
+
         accepted = accepted[0]
+
         assert accepted['source']['commit'] == exact and accepted['source']['tree'] == tree
+
         retain('ingress.json', accepted)
         result['source'] = accepted['source']
         workspaces, objects = output / 'workspaces', output / 'objects'
+
         for path in [workspaces, objects]:
             path.mkdir(mode=0o700)
-        inspected = json.loads(command([BIN / 'archcert', 'source', 'inspect', source_repo / '.git', exact,
-                              '--project', F['PROJECT'], '--repository', accepted['repository'],
-                              '--materialize-under', workspaces]).stdout)
+
+        inspected = json.loads(
+            command(
+                [
+                    BIN / 'archcert',
+                    'source',
+                    'inspect',
+                    source_repo / '.git',
+                    exact,
+                    '--project',
+                    F['PROJECT'],
+                    '--repository',
+                    accepted['repository'],
+                    '--materialize-under',
+                    workspaces,
+                ]
+            ).stdout
+        )
+
         assert inspected['source']['identity'] == accepted['source']
         assert inspected['materialization']['verification'] == 'Verified'
-        assert inspected['materialization']['observed_digest'] == accepted['source']['snapshot_sha256']
+        assert (
+            inspected['materialization']['observed_digest'] == accepted['source']['snapshot_sha256']
+        )
         assert inspected['destruction']['status'] == 'DESTROYED' and not list(workspaces.iterdir())
+
         retain('materialization.json', inspected)
         result['ingestion_materialization'] = 'PASS'
         token = os.urandom(32).hex()
@@ -124,60 +210,152 @@ def main():
         token_file.write_text(token)
         token_file.chmod(0o600)
         private, public = fixture.authority / 'development.der', fixture.authority / 'public.hex'
-        command([BIN / 'archcert', 'development-keygen', '--private-key', private, '--public-key', public])
+        command(
+            [
+                BIN / 'archcert',
+                'development-keygen',
+                '--private-key',
+                private,
+                '--public-key',
+                public,
+            ]
+        )
         public.chmod(0o600)
         (output / 'public-key.hex').write_bytes(public.read_bytes())
         recipe = args.authority_recipe.resolve().read_text()
-        grant = dict(project=F['PROJECT'], repository=accepted['repository'], actor=F['ACTOR'],
-                     token_sha256=hashlib.sha256(token.encode()).hexdigest(), profile='rust-workspace-v1', image=args.image,
-                     authority_toml=recipe, maximum_attempts=1, ironcrest=True, ironcrest_baseline=None)
+        grant = dict(
+            project=F['PROJECT'],
+            repository=accepted['repository'],
+            actor=F['ACTOR'],
+            token_sha256=hashlib.sha256(token.encode()).hexdigest(),
+            profile='rust-workspace-v1',
+            image=args.image,
+            authority_toml=recipe,
+            maximum_attempts=1,
+            ironcrest=True,
+            ironcrest_baseline=None,
+        )
         authority = fixture.authority / 'control-plane.json'
         settings = dict(source_store=str(fixture.store), artifact_root=str(objects), grants=[grant])
         authority.write_text(json.dumps(settings))
         authority.chmod(0o600)
         prefix = [BIN / 'archcert-controller', '--config', authority]
         command(prefix + ['provision'])
-        result['authority'] = dict(profile='rust-workspace-review-v1/1.0.0', image=args.image,
-                                   endpoint=args.endpoint, baseline=None, disclosure='DENIED',
-                                   recipe_sha256=hashlib.sha256(recipe.encode()).hexdigest(), provider='LOCAL_EXACT_REPLAY')
+        result['authority'] = dict(
+            profile='rust-workspace-review-v1/1.0.0',
+            image=args.image,
+            endpoint=args.endpoint,
+            baseline=None,
+            disclosure='DENIED',
+            recipe_sha256=hashlib.sha256(recipe.encode()).hexdigest(),
+            provider='LOCAL_EXACT_REPLAY',
+        )
 
         def opened(src=accepted, selected=prefix):
             session = str(uuid.uuid4())
-            command(selected + ['ironcrest', 'open', '--project', F['PROJECT'], '--repository', src['repository'],
-                                '--submission', src['submission'], '--session', session, '--token-file', token_file])
+            command(
+                selected
+                + [
+                    'ironcrest',
+                    'open',
+                    '--project',
+                    F['PROJECT'],
+                    '--repository',
+                    src['repository'],
+                    '--submission',
+                    src['submission'],
+                    '--session',
+                    session,
+                    '--token-file',
+                    token_file,
+                ]
+            )
+
             return session
 
         def inspect(session, selected=prefix):
-            return json.loads(command(selected + ['ironcrest', 'show', '--project', F['PROJECT'], '--session', session]).stdout)
+            return json.loads(
+                command(
+                    selected
+                    + ['ironcrest', 'show', '--project', F['PROJECT'], '--session', session]
+                ).stdout
+            )
 
         def prepare(session):
-            return json.loads(command(prefix + ['ironcrest', 'prepare', '--project', F['PROJECT'], '--session', session]).stdout)
+            return json.loads(
+                command(
+                    prefix
+                    + ['ironcrest', 'prepare', '--project', F['PROJECT'], '--session', session]
+                ).stdout
+            )
 
         def response(prepared, block=False):
             path = fixture.authority / (str(uuid.uuid4()) + '.json')
-            path.write_text(json.dumps(dict(schema=1, request_sha256=prepared['request_sha256'], complete=True,
-                items=[dict(id='controlled-blocker', kind='BLOCKING_CONCERN', text='Controlled authority-relevant veto; no deterministic proof.',
-                            related_authority_ids=[prepared['binding']['policy']['id']])] if block else [], proposed_challenges=[])))
+            path.write_text(
+                json.dumps(
+                    dict(
+                        schema=1,
+                        request_sha256=prepared['request_sha256'],
+                        complete=True,
+                        items=(
+                            [
+                                dict(
+                                    id='controlled-blocker',
+                                    kind='BLOCKING_CONCERN',
+                                    text='Controlled authority-relevant veto; no deterministic proof.',
+                                    related_authority_ids=[prepared['binding']['policy']['id']],
+                                )
+                            ]
+                            if block
+                            else []
+                        ),
+                        proposed_challenges=[],
+                    )
+                )
+            )
             path.chmod(0o600)
+
             return path
 
         def review(session, replay=None, crash=None):
             argv = prefix + ['ironcrest', 'review', '--project', F['PROJECT'], '--session', session]
+
             if replay:
                 argv += ['--response-file', replay]
+
             if crash:
                 argv += ['--stop-after', crash]
+
             r = command(argv, crash=crash)
+
             return None if crash else json.loads(r.stdout)
 
         def no_job(session):
             assert command(prefix + ['show', session], ok=False).returncode != 0
 
         def execute(signing):
-            return json.loads(command(prefix + ['run-once', '--worker-binary', BIN / 'archcert-worker',
-                '--workspace-root', workspaces, '--docker', args.docker, '--endpoint', args.endpoint,
-                '--development-key', private if signing else fixture.authority / 'UNREACHABLE_PRIVATE_KEY',
-                '--public-key', public if signing else fixture.authority / 'UNREACHABLE_PUBLIC_KEY', '--lease-seconds', '30']).stdout)
+            return json.loads(
+                command(
+                    prefix
+                    + [
+                        'run-once',
+                        '--worker-binary',
+                        BIN / 'archcert-worker',
+                        '--workspace-root',
+                        workspaces,
+                        '--docker',
+                        args.docker,
+                        '--endpoint',
+                        args.endpoint,
+                        '--development-key',
+                        private if signing else fixture.authority / 'UNREACHABLE_PRIVATE_KEY',
+                        '--public-key',
+                        public if signing else fixture.authority / 'UNREACHABLE_PUBLIC_KEY',
+                        '--lease-seconds',
+                        '30',
+                    ]
+                ).stdout
+            )
 
         # Bounded mandatory overflow on the ACTUAL exact ArchCert source. The
         # operator config lowers limits and therefore changes the pinned profile.
@@ -187,24 +365,40 @@ def main():
         insufficient_config.chmod(0o600)
         insufficient_prefix = [BIN / 'archcert-controller', '--config', insufficient_config]
         insufficient = opened(selected=insufficient_prefix)
-        failed = command(insufficient_prefix + ['ironcrest', 'prepare', '--project', F['PROJECT'], '--session', insufficient], ok=False)
+        failed = command(
+            insufficient_prefix
+            + ['ironcrest', 'prepare', '--project', F['PROJECT'], '--session', insufficient],
+            ok=False,
+        )
+
         assert failed.returncode != 0
+
         journal = inspect(insufficient, insufficient_prefix)['session']
-        assert not journal['review_claimed'] and not any(e['role'] in ['REQUEST', 'REVIEW'] for e in journal['evidence'])
+
+        assert not journal['review_claimed'] and not any(
+            e['role'] in ['REQUEST', 'REVIEW'] for e in journal['evidence']
+        )
+
         no_job(insufficient)
-        result['insufficient_package'] = dict(result='INCONCLUSIVE', provider_invocations=0, certificate_issued=False, journal=journal)
+        result['insufficient_package'] = dict(
+            result='INCONCLUSIVE', provider_invocations=0, certificate_issued=False, journal=journal
+        )
         retain('negative-insufficient.json', result['insufficient_package'])
 
         blocked = opened()
         prepared_block = prepare(blocked)
         veto = review(blocked, response(prepared_block, True))
+
         assert veto['status'] == 'SEMANTIC_BLOCK' and veto['certificate'] == 'NOT_ISSUED'
+
         no_job(blocked)
         result['semantic_blocker'] = veto
         foreign = opened()
         prepare(foreign)
         replayed = review(foreign, response(prepared_block))
+
         assert replayed['status'] == 'INCONCLUSIVE' and replayed['certificate'] == 'NOT_ISSUED'
+
         no_job(foreign)
         result['cross_session_replay'] = replayed
 
@@ -221,65 +415,131 @@ def main():
             'crypto/Cargo.toml': '[package]\nname = "archcert-crypto"\nversion = "0.1.0"\nedition = "2024"\npublish = false\n',
             'crypto/src/lib.rs': 'pub fn value() -> u8 {\n    1\n}\n',
         }
+
         for name, text in files.items():
             path = negative_repo / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
+
         fixture.git(negative_repo, 'init', '-q', '--initial-branch=main')
         fixture.git(negative_repo, 'config', 'user.name', 'Controlled authority fixture')
         fixture.git(negative_repo, 'config', 'user.email', 'fixture@example.invalid')
         fixture.git(negative_repo, 'add', *files.keys())
         fixture.git(negative_repo, 'commit', '-qm', 'Controlled forbidden Rust inward dependency')
         before = {s['submission'] for s in fixture.submissions()}
-        command(['/usr/bin/git', '-C', negative_repo, 'push', fixture.endpoint, 'HEAD:refs/heads/negative-rust'], environment=fixture.environment)
+        command(
+            [
+                '/usr/bin/git',
+                '-C',
+                negative_repo,
+                'push',
+                fixture.endpoint,
+                'HEAD:refs/heads/negative-rust',
+            ],
+            environment=fixture.environment,
+        )
         defective = next(s for s in fixture.submissions() if s['submission'] not in before)
         negative = opened(defective)
         review(negative, response(prepare(negative)))
         not_eligible = execute(False)
+
         assert not_eligible['id'] == negative and not_eligible['state'] == 'NOT_ELIGIBLE'
         assert not_eligible['issuance'] is None and not_eligible['certificate'] is None
+
         worker = not_eligible['attempts'][-1]['evidence']
         worker_bytes = (objects / F['PROJECT'] / worker['sha256']).read_bytes()
         # Existing worker artifact is versioned; retain it for independent decoding.
         (output / 'negative-worker-artifact.pb').write_bytes(worker_bytes)
-        challenge_ref = next(e['artifact'] for e in inspect(negative)['session']['evidence'] if e['role'] == 'CHALLENGE_RESULT')
-        challenge_result = json.loads((objects / F['PROJECT'] / challenge_ref['sha256']).read_bytes())
+        challenge_ref = next(
+            e['artifact']
+            for e in inspect(negative)['session']['evidence']
+            if e['role'] == 'CHALLENGE_RESULT'
+        )
+        challenge_result = json.loads(
+            (objects / F['PROJECT'] / challenge_ref['sha256']).read_bytes()
+        )
+
         assert challenge_result['satisfied'] is False
+
         step = challenge_result['required_results'][0]
+
         assert step['step'] == 'rust-trust-architecture' and step['evidence']['exit_code'] != 0
         assert b'forbidden inward dependency' in bytes(step['evidence']['stderr']['excerpt'])
         assert step['source_cleaned'] and step['sandbox_cleaned']
+
         retain('negative-challenge-result.json', challenge_result)
         result['deterministic_failure'] = not_eligible
         retain('negative-deterministic.json', not_eligible)
 
         # Exact real-source request/package checkpoint, process death and recovery.
         session = opened()
-        command(prefix + ['ironcrest', 'prepare', '--project', F['PROJECT'], '--session', session,
-                          '--stop-after', 'request'], crash='request')
+        command(
+            prefix
+            + [
+                'ironcrest',
+                'prepare',
+                '--project',
+                F['PROJECT'],
+                '--session',
+                session,
+                '--stop-after',
+                'request',
+            ],
+            crash='request',
+        )
         checkpoint = inspect(session)
-        request_ref = next(e['artifact'] for e in checkpoint['session']['evidence'] if e['role'] == 'REQUEST')
+        request_ref = next(
+            e['artifact'] for e in checkpoint['session']['evidence'] if e['role'] == 'REQUEST'
+        )
         request_bytes = (objects / F['PROJECT'] / request_ref['sha256']).read_bytes()
         request_body = json.loads(request_bytes)
+
         assert hashlib.sha256(request_bytes).hexdigest() == request_ref['sha256']
-        package_bytes = json.dumps(request_body['package'], sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()
+
+        package_bytes = json.dumps(
+            request_body['package'], sort_keys=True, separators=(',', ':'), ensure_ascii=False
+        ).encode()
+
         assert hashlib.sha256(package_bytes).hexdigest() == request_body['package_sha256']
-        assert len(request_bytes) <= 1048576 and request_body['package']['coverage'] == 'PARTIAL_ACCEPTABLE'
+        assert (
+            len(request_bytes) <= 1048576
+            and request_body['package']['coverage'] == 'PARTIAL_ACCEPTABLE'
+        )
+
         (output / 'semantic-package.json').write_bytes(package_bytes)
         prepared = prepare(session)
-        assert prepared['package_sha256'] == request_body['package_sha256'] and prepared['request_sha256'] == request_ref['sha256']
+
+        assert (
+            prepared['package_sha256'] == request_body['package_sha256']
+            and prepared['request_sha256'] == request_ref['sha256']
+        )
+
         result['measurements'] = prepared['measurements']
+
         assert prepared['measurements']['knowledge_bytes'] > 1048576
-        assert prepared['measurements']['knowledge_bytes'] + prepared['measurements']['impact_bytes'] > 1048576
+        assert (
+            prepared['measurements']['knowledge_bytes'] + prepared['measurements']['impact_bytes']
+            > 1048576
+        )
         assert request_body['actual_request_bytes'] == len(request_bytes)
         assert request_body['package']['actual_package_bytes'] == len(package_bytes)
+
         for role, field in [('KNOWLEDGE', 'knowledge_sha256'), ('IMPACT', 'impact_sha256')]:
-            reference = next(e['artifact'] for e in checkpoint['session']['evidence'] if e['role'] == role)
+            reference = next(
+                e['artifact'] for e in checkpoint['session']['evidence'] if e['role'] == role
+            )
+
             assert prepared['binding'][field] == reference['sha256']
 
-        result['package'] = dict(sha256=prepared['package_sha256'], bytes=len(package_bytes),
-                                 included=request_body['package']['included'], excluded=request_body['package']['excluded'])
-        result['recovery'] = dict(package_request_checkpoint='SIGKILL', same_package_digest=True, same_request_digest=True)
+        result['package'] = dict(
+            sha256=prepared['package_sha256'],
+            bytes=len(package_bytes),
+            included=request_body['package']['included'],
+            excluded=request_body['package']['excluded'],
+        )
+        result['recovery'] = dict(
+            package_request_checkpoint='SIGKILL', same_package_digest=True, same_request_digest=True
+        )
         replay = response(prepared)
         review(session, replay, crash='review')
         replay.unlink()
@@ -287,21 +547,49 @@ def main():
         admitted = review(session)  # Unavailable adapter only: accepted review must restore.
         after_restore = inspect(session)
         old_review = next(e for e in before_restore['session']['evidence'] if e['role'] == 'REVIEW')
-        assert next(e for e in after_restore['session']['evidence'] if e['role'] == 'REVIEW') == old_review
+
+        assert (
+            next(e for e in after_restore['session']['evidence'] if e['role'] == 'REVIEW')
+            == old_review
+        )
         assert admitted['id'] == session and admitted['state'] == 'QUEUED'
+
         completed = execute(True)
         retain('self-test-job.json', completed)
         result['job'] = completed
+
         if completed['state'] != 'COMPLETED' or completed['certificate'] is None:
-            result['boundary'] = 'DETERMINISTIC_EXECUTION_OR_POLICY: exact job retained; no weaker retry'
+            result['boundary'] = (
+                'DETERMINISTIC_EXECUTION_OR_POLICY: exact job retained; no weaker retry'
+            )
+
             return 2
-        challenge_ref = next(e['artifact'] for e in inspect(session)['session']['evidence'] if e['role'] == 'CHALLENGE_RESULT')
-        challenge_result = json.loads((objects / F['PROJECT'] / challenge_ref['sha256']).read_bytes())
+
+        challenge_ref = next(
+            e['artifact']
+            for e in inspect(session)['session']['evidence']
+            if e['role'] == 'CHALLENGE_RESULT'
+        )
+        challenge_result = json.loads(
+            (objects / F['PROJECT'] / challenge_ref['sha256']).read_bytes()
+        )
+
         assert challenge_result['satisfied'] is True
+
         rust_step = challenge_result['required_results'][0]
-        assert rust_step['step'] == 'rust-trust-architecture' and rust_step['evidence']['exit_code'] == 0
+
+        assert (
+            rust_step['step'] == 'rust-trust-architecture'
+            and rust_step['evidence']['exit_code'] == 0
+        )
+
         challenge_summary = json.loads(bytes(rust_step['evidence']['stdout']['excerpt']))
-        assert challenge_summary['checked_named_layers'] >= 3 and challenge_summary['source_mount'] == 'READ_ONLY'
+
+        assert (
+            challenge_summary['checked_named_layers'] >= 3
+            and challenge_summary['source_mount'] == 'READ_ONLY'
+        )
+
         result['rust_challenge'] = challenge_summary
         retain('successful-challenge-result.json', challenge_result)
         cert_ref = completed['certificate']['artifact']
@@ -310,35 +598,58 @@ def main():
         result['certificate_issued'] = True
         payload = json.loads(certificate)['payload']
         manifest_bytes = (objects / F['PROJECT'] / payload['evidence_manifest_sha256']).read_bytes()
+
         assert hashlib.sha256(manifest_bytes).hexdigest() == payload['evidence_manifest_sha256']
+
         manifest = json.loads(manifest_bytes)
+
         assert manifest['schema'] == 2 and len(manifest['ironcrest']['roles']) == 8
         assert manifest['ironcrest']['pin']['source'] == accepted['source']
-        assert next(ref for role, ref in manifest['ironcrest']['roles'] if role == 'REQUEST') == request_ref
+        assert (
+            next(ref for role, ref in manifest['ironcrest']['roles'] if role == 'REQUEST')
+            == request_ref
+        )
+
         (output / 'evidence-manifest.json').write_bytes(manifest_bytes)
         # Controller/worker are one-shot processes; the replay/config/key/ingress
         # authority is removed before verification. Caller can also stop DB/runtime.
         fixture.close()
         fixture = None
-        verified = command([BIN / 'archcert', 'verify', output / 'certificate.json', '--public-key', output / 'public-key.hex'],
-                           environment={'PATH': '/usr/bin:/bin'})
+        verified = command(
+            [
+                BIN / 'archcert',
+                'verify',
+                output / 'certificate.json',
+                '--public-key',
+                output / 'public-key.hex',
+            ],
+            environment={'PATH': '/usr/bin:/bin'},
+        )
         (output / 'offline-verification.json').write_bytes(verified.stdout)
         result['offline_verification'] = json.loads(verified.stdout)
         result['result'] = 'PRE-GENESIS ENGINEERING SELF-VALIDATION: PASSED'
+
         return 0
     except Exception as error:
         result['boundary'] = str(error)
         raise
     finally:
-        state = command(['/usr/bin/git', '-C', source_repo, 'status', '--porcelain', '--untracked-files=no'], ok=False)
+        state = command(
+            ['/usr/bin/git', '-C', source_repo, 'status', '--porcelain', '--untracked-files=no'],
+            ok=False,
+        )
         result['tracked_source_unchanged'] = state.returncode == 0 and not state.stdout
+
         if not result['tracked_source_unchanged']:
             result['result'] = 'INCONCLUSIVE'
             result['boundary'] = 'Tracked source changed during self-test; result invalid'
+
         result['total_seconds'] = round(time.monotonic() - started, 3)
         retain('result.json', result)
+
         if fixture is not None:
             fixture.close()
+
         if not result['tracked_source_unchanged']:
             raise RuntimeError(result['boundary'])
 

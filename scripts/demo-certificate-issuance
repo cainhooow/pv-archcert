@@ -19,8 +19,10 @@ PROJECT = "00000000-0000-4000-8000-000000000004"
 
 def command(argv, **kwargs):
     result = subprocess.run([str(a) for a in argv], capture_output=True, **kwargs)
+
     if result.returncode:
         raise RuntimeError(result.stderr.decode(errors="replace"))
+
     return result.stdout
 
 
@@ -35,50 +37,129 @@ with tempfile.TemporaryDirectory(prefix="archcert-eldermark-") as temporary:
     repo.mkdir(mode=0o700)
     workspaces = root / "workspaces"
     workspaces.mkdir(mode=0o700)
-    git_env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
-               "GIT_AUTHOR_NAME": "ArchCert fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
-               "GIT_COMMITTER_NAME": "ArchCert fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
-               "GIT_AUTHOR_DATE": "2000-01-01T00:00:00Z", "GIT_COMMITTER_DATE": "2000-01-01T00:00:00Z"}
+    git_env = {
+        **os.environ,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_AUTHOR_NAME": "ArchCert fixture",
+        "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+        "GIT_COMMITTER_NAME": "ArchCert fixture",
+        "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+        "GIT_AUTHOR_DATE": "2000-01-01T00:00:00Z",
+        "GIT_COMMITTER_DATE": "2000-01-01T00:00:00Z",
+    }
 
     def git(*args):
-        return command(["git", "-c", "core.hooksPath=/dev/null", "-c", "gc.auto=0", *args], cwd=repo, env=git_env).decode().strip()
+        return (
+            command(
+                ["git", "-c", "core.hooksPath=/dev/null", "-c", "gc.auto=0", *args],
+                cwd=repo,
+                env=git_env,
+            )
+            .decode()
+            .strip()
+        )
 
     git("init", "--template=", "--initial-branch=fixture")
     shutil.copyfile(ROOT / "tests/fixtures/policy-target/checks.py", repo / "checks.py")
     git("add", "checks.py")
     git("commit", "-m", "controlled passing target")
     commit = git("rev-parse", "HEAD")
+
     assert commit == "67085b42fe02ff0832641629a31634338214be00", commit
 
     def certify(git_dir, commit, repository, name, config):
-        inspected = json.loads(command([BINARY, "source", "inspect", git_dir, commit,
-                                      "--project", PROJECT, "--repository", repository]))
+        inspected = json.loads(
+            command(
+                [
+                    BINARY,
+                    "source",
+                    "inspect",
+                    git_dir,
+                    commit,
+                    "--project",
+                    PROJECT,
+                    "--repository",
+                    repository,
+                ]
+            )
+        )
         output = root / name
-        argv = [BINARY, "certify", "--git-dir", git_dir, "--commit", commit,
-                "--snapshot", inspected["identity"]["snapshot_sha256"], "--project", PROJECT,
-                "--repository", repository, "--workspace-root", workspaces,
-                "--profile", "python", "--image", os.environ["ARCHCERT_TEST_IMAGE"],
-                "--docker", os.environ["ARCHCERT_TEST_DOCKER"], "--endpoint", os.environ["ARCHCERT_TEST_ENDPOINT"],
-                "--development-key", private, "--public-key", public, "--output", output] + config
+        argv = [
+            BINARY,
+            "certify",
+            "--git-dir",
+            git_dir,
+            "--commit",
+            commit,
+            "--snapshot",
+            inspected["identity"]["snapshot_sha256"],
+            "--project",
+            PROJECT,
+            "--repository",
+            repository,
+            "--workspace-root",
+            workspaces,
+            "--profile",
+            "python",
+            "--image",
+            os.environ["ARCHCERT_TEST_IMAGE"],
+            "--docker",
+            os.environ["ARCHCERT_TEST_DOCKER"],
+            "--endpoint",
+            os.environ["ARCHCERT_TEST_ENDPOINT"],
+            "--development-key",
+            private,
+            "--public-key",
+            public,
+            "--output",
+            output,
+        ] + config
         result = subprocess.run([str(a) for a in argv], capture_output=True)
+
         assert not list(workspaces.iterdir()), "source cleanup failed"
+
         return result, output
 
-    result, issued = certify(repo / ".git", commit, "archcert/controlled-policy", "controlled",
-                             ["--authority-config", ROOT / "docs/policy/CONTROLLED_AUTHORITY.toml"])
+    result, issued = certify(
+        repo / ".git",
+        commit,
+        "archcert/controlled-policy",
+        "controlled",
+        ["--authority-config", ROOT / "docs/policy/CONTROLLED_AUTHORITY.toml"],
+    )
+
     assert result.returncode == 0, result.stderr.decode(errors="replace")
     assert json.loads(result.stdout)["status"] == "CERTIFIED"
+
     verified = command([BINARY, "verify", issued / "certificate.json", "--public-key", public])
     (issued / "offline-verification.json").write_bytes(verified)
+
     assert json.loads(verified)["status"] == "CERTIFIED"
+
     certificate = json.loads((issued / "certificate.json").read_text())
     (root / "signature.bin").write_bytes(bytes.fromhex(certificate["signature"]))
     # OpenSSL independently decodes the Dalek-generated PKCS#8 key and verifies
     # the actual certificate signature over the retained canonical bytes.
     openssl = shutil.which("openssl")
-    command([openssl, "pkey", "-inform", "DER", "-in", private, "-pubout", "-out", root / "public.pem"])
-    independent = command([openssl, "pkeyutl", "-verify", "-rawin", "-pubin", "-inkey", root / "public.pem",
-                           "-in", issued / "canonical-certificate.json", "-sigfile", root / "signature.bin"])
+    command(
+        [openssl, "pkey", "-inform", "DER", "-in", private, "-pubout", "-out", root / "public.pem"]
+    )
+    independent = command(
+        [
+            openssl,
+            "pkeyutl",
+            "-verify",
+            "-rawin",
+            "-pubin",
+            "-inkey",
+            root / "public.pem",
+            "-in",
+            issued / "canonical-certificate.json",
+            "-sigfile",
+            root / "signature.bin",
+        ]
+    )
     (issued / "openssl-verification.txt").write_bytes(independent)
     # Public PEM is safe to retain for independent reproduction.
     shutil.copyfile(root / "public.pem", issued / "public-key.pem")
@@ -87,30 +168,60 @@ with tempfile.TemporaryDirectory(prefix="archcert-eldermark-") as temporary:
     bad["signature"] = "00" * 64
     invalid = root / "invalid-signature.json"
     invalid.write_text(json.dumps(bad, indent=2) + "\n")
-    rejected = subprocess.run([str(BINARY), "verify", str(invalid), "--public-key", str(public)], capture_output=True)
+    rejected = subprocess.run(
+        [str(BINARY), "verify", str(invalid), "--public-key", str(public)], capture_output=True
+    )
+
     assert rejected.returncode != 0 and b"CERTIFIED" not in rejected.stdout
 
     other_private, other_public = authority / "other.der", authority / "other.hex"
-    command([BINARY, "development-keygen", "--private-key", other_private, "--public-key", other_public])
-    wrong = subprocess.run([str(BINARY), "verify", str(issued / "certificate.json"), "--public-key", str(other_public)], capture_output=True)
+    command(
+        [BINARY, "development-keygen", "--private-key", other_private, "--public-key", other_public]
+    )
+    wrong = subprocess.run(
+        [
+            str(BINARY),
+            "verify",
+            str(issued / "certificate.json"),
+            "--public-key",
+            str(other_public),
+        ],
+        capture_output=True,
+    )
+
     assert wrong.returncode != 0 and b"CERTIFIED" not in wrong.stdout
 
     # Remove the private key before Bottle: gate rejection must precede loading.
     private.unlink()
-    bottle, rejected_bundle = certify(ROOT / "target/m3-bottle/.git", "8ec5fe29420d14998c0d86885083983eaea8b839",
-                                     "bottlepy/bottle", "bottle", ["--config", ROOT / "docs/runner/BOTTLE_REQUEST.toml"])
+    bottle, rejected_bundle = certify(
+        ROOT / "target/m3-bottle/.git",
+        "8ec5fe29420d14998c0d86885083983eaea8b839",
+        "bottlepy/bottle",
+        "bottle",
+        ["--config", ROOT / "docs/runner/BOTTLE_REQUEST.toml"],
+    )
+
     assert bottle.returncode != 0
+
     rejection = json.loads(bottle.stdout)
+
     assert rejection["certificate"] == "CERTIFICATE NOT ISSUED"
     assert rejection["eligibility"] == "NOT_ELIGIBLE"
     assert "evaluation not eligible" in rejection["reason"]
     assert not (rejected_bundle / "certificate.json").exists()
+
     OUTPUT.mkdir(parents=True, exist_ok=True)
+
     for source, name in [(issued, "controlled"), (rejected_bundle, "bottle")]:
         destination = OUTPUT / name
+
         if destination.exists():
-            raise RuntimeError("Refusing to overwrite retained development evidence: " + str(destination))
+            raise RuntimeError(
+                "Refusing to overwrite retained development evidence: " + str(destination)
+            )
+
         shutil.copytree(source, destination)
+
     (OUTPUT / "invalid-signature.json").write_bytes(invalid.read_bytes())
     (OUTPUT / "invalid-signature-verification.json").write_bytes(rejected.stdout)
     (OUTPUT / "wrong-key-verification.json").write_bytes(wrong.stdout)
