@@ -157,7 +157,10 @@ also admit no job. A documented path-only Rust fixture introduces a real forbidd
 application-to-signing-package edge; the fixed OCI authority guard must fail and
 semantic CLEAR must leave NOT_ELIGIBLE without any signer access. The fixture has
 no downloaded dependencies and is constructed deterministically by the harness;
-its execution outputs remain ordinary ignored runtime evidence.
+its execution outputs remain ordinary ignored runtime evidence. Its private-package
+license configuration avoids an unrelated license failure; ordinary commands are
+expected to pass while the named trust challenge fails. Successful ArchCert runs
+also require the guard to report at least its three named inward/semantic layers.
 
 For the real-source run, the harness kills the controller after package/request
 publication, restarts and verifies the same request/package digests. It then kills

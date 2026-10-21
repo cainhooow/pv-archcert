@@ -213,6 +213,7 @@ def main():
         negative_repo = fixture.root / 'negative-rust'
         negative_repo.mkdir()
         files = {
+            'deny.toml': '[licenses.private]\nignore = true\n',
             'Cargo.toml': '[workspace]\nresolver = "2"\nmembers = ["application", "crypto"]\n',
             'Cargo.lock': '# Deterministic path-only controlled fixture.\nversion = 4\n\n[[package]]\nname = "archcert-crypto"\nversion = "0.1.0"\n\n[[package]]\nname = "negative-application"\nversion = "0.1.0"\ndependencies = ["archcert-crypto"]\n',
             'application/Cargo.toml': '[package]\nname = "negative-application"\nversion = "0.1.0"\nedition = "2024"\npublish = false\n[dependencies]\narchcert-crypto = { path = "../crypto" }\n',
@@ -294,6 +295,15 @@ def main():
         if completed['state'] != 'COMPLETED' or completed['certificate'] is None:
             result['boundary'] = 'DETERMINISTIC_EXECUTION_OR_POLICY: exact job retained; no weaker retry'
             return 2
+        challenge_ref = next(e['artifact'] for e in inspect(session)['session']['evidence'] if e['role'] == 'CHALLENGE_RESULT')
+        challenge_result = json.loads((objects / F['PROJECT'] / challenge_ref['sha256']).read_bytes())
+        assert challenge_result['satisfied'] is True
+        rust_step = challenge_result['required_results'][0]
+        assert rust_step['step'] == 'rust-trust-architecture' and rust_step['evidence']['exit_code'] == 0
+        challenge_summary = json.loads(bytes(rust_step['evidence']['stdout']['excerpt']))
+        assert challenge_summary['checked_named_layers'] >= 3 and challenge_summary['source_mount'] == 'READ_ONLY'
+        result['rust_challenge'] = challenge_summary
+        retain('successful-challenge-result.json', challenge_result)
         cert_ref = completed['certificate']['artifact']
         certificate = (objects / F['PROJECT'] / cert_ref['sha256']).read_bytes()
         (output / 'certificate.json').write_bytes(certificate)
