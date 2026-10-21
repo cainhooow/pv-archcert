@@ -2,9 +2,10 @@
 
 Ironcrest architecture is defined in ADRs 0041–0044 and the semantic review threat
 model. Controlled authority-profile review, immutable challenge selection, durable
-admission and issuance are integrated. Final milestone gates and explicit support
-limits are recorded in the M6 working report. This does not broaden Stoneward's
-exact native execution qualification or establish a production certifier.
+admission and issuance are integrated. M6 — Ironcrest — COMPLETE. Final validation
+and explicit support limits are recorded in the intentionally untracked M6 working
+report. This does not broaden Stoneward's exact native execution qualification or
+establish a production certifier.
 
 The initial knowledge core now owns generic graph/provenance/coverage vocabulary,
 explicit scoped authority bundles and an application extractor registry over
@@ -67,7 +68,8 @@ the review decision. The certificate constructor independently re-evaluates poli
 CONTINUE creates no PROVEN result. Historical bundle identities, certificate schema
 1, signing and offline verification remain compatible. Controller composition
 restores the reviewed chain and accepted challenge evidence before evaluation and
-preparation. Final milestone gates are tracked in the M6 working report.
+preparation. Final milestone gates passed; exact commands and evidence are recorded
+in the M6 working report.
 
 Migration 0004 and the application IroncrestRepository port now add a separate
 project-scoped pre-admission journal. It checks repository grants and accepted
@@ -338,6 +340,16 @@ semantic blocker, unavailable reviewer, persisted replay rejection, a real faili
 challenge under semantic CLEAR, and historical Bottle NOT_ELIGIBLE. Sixteen actual
 SIGKILL checkpoints retain one execution attempt and immutable issuance identity.
 Unknown provider outcome remains OPERATOR_RECOVERY_REQUIRED, never a retry permit.
+All standard gates passed, with 244 workspace tests passing and 32 opt-in tests
+ignored in that command. Explicit runs also passed all thirteen real PostgreSQL
+groups, Protobuf, artifact-store, real Northgate SSH, focused Ironcrest and live OCI
+challenge regressions. The exported certificate verified with a cleared environment
+after the controller, worker, ingress, PostgreSQL and OCI test services stopped.
+The reproduced PostgreSQL lease anomaly was caused by competing development VM
+clock synchronizers; after aligning clocks, 100 isolated runs and twenty parallel
+suites passed. The original occurrence lacked clock observations, so attribution
+of that historical failure retains explicit uncertainty in the working report.
+
 Semantic review uses local exact replay; no live external model is configured or
 qualified. Syntax extraction is not compiler resolution; model nondeterminism,
 provider drift, false positives/negatives and injection susceptibility remain.

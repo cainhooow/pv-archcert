@@ -11,8 +11,14 @@ Its core rule is simple:
 The development implementation includes verified source preparation, authenticated
 Northgate ingress, durable Ravenport jobs, Stoneward execution fencing, and the
 controlled Ironcrest review-to-certificate lifecycle. Authority-resolved plans,
-deterministic policy evaluation and canonical certificates retain offline verification. Signing is DEVELOPMENT
-ONLY; ArchCert is not a production certifier.
+deterministic policy evaluation and canonical certificates retain offline
+verification. Signing is DEVELOPMENT ONLY; ArchCert is not a production certifier.
+
+M6 — Ironcrest — COMPLETE. The controlled lifecycle passed crash recovery,
+semantic veto and provider-failure regressions, all standard gates, real PostgreSQL
+and OCI checks, and offline verification with the test services stopped. Completion
+covers the documented development scope; semantic review accuracy and production
+operation remain unproven.
 
 ## Certification lifecycle
 

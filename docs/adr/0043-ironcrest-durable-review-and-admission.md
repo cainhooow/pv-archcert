@@ -151,9 +151,14 @@ Required validation includes real PostgreSQL races and immutable pin checks, all
 specified persistence crash checkpoints, cross-project/source/job/request replay,
 no duplicate accepted review, no accepted target rerun, legacy certificate vectors,
 Bottle rejection, semantic-blocker/no-certificate and authenticated successful
-source-to-certificate/offline verification. Until those pass, Ironcrest remains
-incomplete. Existing exact Stoneward qualification is neither broadened nor used
-as proof of these new control-plane guarantees.
+source-to-certificate/offline verification. These checks passed for the controlled
+M6 development scope, including sixteen actual SIGKILL checkpoints, thirteen real
+PostgreSQL groups and offline verification after stopping PostgreSQL and OCI.
+M6 — Ironcrest — COMPLETE. Exact commands, evidence, the bounded historical
+PostgreSQL clock anomaly investigation and remaining limitations are recorded in
+the intentionally untracked M6 working report. Existing exact Stoneward
+qualification is neither broadened nor used as proof of these new control-plane
+guarantees.
 
 ## Alternatives
 
