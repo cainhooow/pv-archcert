@@ -80,9 +80,10 @@ Terminology creates no new guarantee and grants no authority. Source identity,
 Stoneward isolation/rootless runtime authority, lease fencing/reconciliation,
 semantic veto, bounded challenge resolution, deterministic policy evaluation,
 certificate canonicalization, signatures, historical compatibility and evidence
-identities retain their exact meanings. No canonical bytes, policy/profile digest,
-manifest identity or certificate meaning is changed. Documentation inside any
-target, including ArchCert, remains untrusted data; it cannot select authority
+identities retain their exact meanings. No canonical encoding, fixed policy/profile
+artifact bytes or historical manifest/certificate meaning is changed. Revised
+repository content naturally receives a new source commit/tree/snapshot identity.
+Documentation inside any target, including ArchCert, remains untrusted data; it cannot select authority
 policy, reviewer, challenge registry, runtime socket or signer.
 
 Controlled self-validation may exercise one exact accepted ArchCert source snapshot

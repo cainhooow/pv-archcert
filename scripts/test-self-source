@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""One immutable source preparation probe under the existing development authority.
+
+Engineering self-validation only, never independent certification or Genesis.
+The source repository is never edited. Policies/replay/runtime/signing inputs are
+operator selections outside the target. No target code executes on the host.
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import runpy
+import uuid
+
+ROOT = Path(os.environ.get('ARCHCERT_REPO_ROOT', Path(__file__).resolve().parent.parent)).resolve()
+F = runpy.run_path(str(ROOT / 'scripts/test-northgate'))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source-repo', type=Path, required=True)
+    parser.add_argument('--commit', required=True)
+    parser.add_argument('--authority-recipe', type=Path, required=True)
+    parser.add_argument('--profile', required=True)
+    parser.add_argument('--image', required=True)
+    parser.add_argument('--docker', type=Path, required=True, help='Intended authority runtime client; execution may remain unreached')
+    parser.add_argument('--endpoint', required=True, help='Intended authority endpoint; never selected by target content')
+    parser.add_argument('--output', type=Path, required=True)
+    args = parser.parse_args()
+    source_repo = args.source_repo.resolve()
+    output = args.output.resolve()
+    if output.exists():
+        raise RuntimeError('Refusing to overwrite experiment output')
+    if not output.is_relative_to(ROOT / 'target'):
+        raise RuntimeError('Evidence must remain under ignored target/')
+    output.mkdir(parents=True, mode=0o700)
+    fixture = F['NorthgateFixture'](ROOT / 'target/debug/archcert-gateway')
+    commands = []
+    result = dict(kind='PRE_GENESIS_ENGINEERING_SELF_VALIDATION', result='INCONCLUSIVE',
+                  certificate_issued=False, offline_verification='NOT_REACHED',
+                  limitation='Same implementing and validating authority; no independent trust root; not Genesis',
+                  pipeline={})
+
+    def retain(name, value):
+        (output / name).write_text(json.dumps(value, indent=2) + '\n')
+
+    def command(argv, *, ok=True, **kwargs):
+        argv = [str(x) for x in argv]
+        r = F['run'](argv, ok=False, **kwargs)
+        index = len(commands)
+        (output / f'command-{index}.stdout').write_bytes(r.stdout)
+        (output / f'command-{index}.stderr').write_bytes(r.stderr)
+        commands.append(dict(argv=argv, exit_code=r.returncode))
+        retain('commands.json', commands)
+        if ok and r.returncode:
+            raise RuntimeError(f'Command {index} failed; see retained stderr')
+        return r
+
+    try:
+        # Read exact objects only. Untracked/ignored working files cannot enter Git push.
+        actual = command(['/usr/bin/git', '-C', source_repo, 'rev-parse', '--verify', args.commit + '^{commit}']).stdout.decode().strip()
+        if actual != args.commit or len(actual) not in (40, 64):
+            raise RuntimeError('An exact full immutable commit is required')
+        tree = command(['/usr/bin/git', '-C', source_repo, 'rev-parse', actual + '^{tree}']).stdout.decode().strip()
+        if command(['/usr/bin/git', '-C', source_repo, 'status', '--porcelain', '--untracked-files=no']).stdout:
+            raise RuntimeError('Tracked source changes are forbidden during the experiment')
+        result['source'] = dict(commit=actual, tree=tree)
+        config = json.loads(fixture.config.read_text())
+        config['devices'][0]['repositories'][0]['repository'] = 'archcert/archcert'
+        fixture.config.write_text(json.dumps(config))
+        command(['/usr/bin/git', '-c', 'core.hooksPath=/dev/null', '-c', 'gc.auto=0', '-C', source_repo,
+                        'push', fixture.endpoint, actual + ':refs/heads/engineering-self-test'], env=fixture.environment)
+        accepted = fixture.submissions()
+        if len(accepted) != 1 or accepted[0]['status'] != 'ACCEPTED':
+            raise RuntimeError('Exact authenticated source acceptance required')
+        accepted = accepted[0]
+        assert accepted['source']['commit'] == actual and accepted['source']['tree'] == tree
+        retain('ingress.json', accepted)
+        result['source']['snapshot_sha256'] = accepted['source']['snapshot_sha256']
+        result['pipeline']['ingestion'] = 'ACCEPTED: authenticated SSH exact commit; no target code'
+        workspaces = output / 'workspaces'
+        workspaces.mkdir(mode=0o700)
+        inspection = command([ROOT / 'target/debug/archcert', 'source', 'inspect', source_repo / '.git', actual,
+                              '--project', F['PROJECT'], '--repository', accepted['repository'],
+                              '--materialize-under', workspaces])
+        (output / 'materialization.json').write_bytes(inspection.stdout)
+        verified = json.loads(inspection.stdout)
+        assert verified['source']['identity'] == accepted['source']
+        assert verified['source']['status'] == 'COMPLETE'
+        materialized = verified['materialization']
+        assert materialized['expected_digest'] == accepted['source']['snapshot_sha256']
+        assert materialized['observed_digest'] == accepted['source']['snapshot_sha256']
+        assert materialized['verification'] == 'Verified'
+        assert verified['destruction']['status'] == 'DESTROYED'
+        assert not list(workspaces.iterdir()), 'Materialization cleanup must complete'
+        result['pipeline']['materialization'] = 'VERIFIED_AND_CLEANED: independent exact-object inspection'
+        objects = output / 'objects'
+        objects.mkdir(mode=0o700)
+        token = os.urandom(32).hex()
+        token_file = fixture.authority / 'token'
+        token_file.write_text(token)
+        token_file.chmod(0o600)
+        recipe = args.authority_recipe.resolve().read_text()
+        authority = fixture.authority / 'control-plane.json'
+        authority.write_text(json.dumps(dict(source_store=str(fixture.store), artifact_root=str(objects), grants=[dict(
+            project=F['PROJECT'], repository=accepted['repository'], actor=F['ACTOR'],
+            token_sha256=hashlib.sha256(token.encode()).hexdigest(), profile=args.profile, image=args.image,
+            authority_toml=recipe, maximum_attempts=1, ironcrest=True, ironcrest_baseline=None)])))
+        authority.chmod(0o600)
+        result['environment'] = dict(execution_profile=args.profile, image=args.image, docker=str(args.docker),
+                                     endpoint=args.endpoint, network='DENIED', baseline='NONE: FULL_REVIEW',
+                                     authority_recipe_sha256=hashlib.sha256(recipe.encode()).hexdigest(),
+                                     semantic_provider='authority local exact replay only; no live AI')
+        prefix = [ROOT / 'target/debug/archcert-controller', '--config', authority]
+        command(prefix + ['provision'])
+        session = str(uuid.uuid4())
+        opened = json.loads(command(prefix + ['ironcrest', 'open', '--project', F['PROJECT'],
+                            '--repository', accepted['repository'], '--submission', accepted['submission'],
+                            '--session', session, '--token-file', token_file]).stdout)
+        retain('opened-session.json', opened)
+        result['session'] = session
+        result['pins'] = opened['session']['pin']
+        prepared = command(prefix + ['ironcrest', 'prepare', '--project', F['PROJECT'], '--session', session], ok=False)
+        journal = json.loads(command(prefix + ['ironcrest', 'show', '--project', F['PROJECT'], '--session', session]).stdout)
+        retain('prepared-session.json', journal)
+        if prepared.returncode:
+            result['failure'] = 'Normal durable prepare rejected; see command stderr and session. No alternate profile, bounds or bypass.'
+            result['pipeline']['knowledge_semantic_preparation'] = 'REJECTED'
+            result['pipeline'].update({s: 'NOT_REACHED' for s in ['semantic_gate', 'challenges', 'execution', 'deterministic_policy', 'manifest', 'issuance', 'offline_verification']})
+            return 2
+        prepared = json.loads(prepared.stdout)
+        retain('prepared.json', prepared)
+        result['pipeline']['knowledge_semantic_preparation'] = 'PREPARED'
+        # No fabricated CLEAR or fixture replay is created for this target.
+        # Without an actual authority review, required semantic review must block.
+        reviewed = json.loads(command(prefix + ['ironcrest', 'review', '--project', F['PROJECT'], '--session', session]).stdout)
+        retain('reviewed.json', reviewed)
+        result['pipeline']['semantic_gate'] = reviewed
+        result['pipeline'].update({s: 'NOT_REACHED' for s in ['challenges', 'execution', 'deterministic_policy', 'manifest', 'issuance', 'offline_verification']})
+        result['failure'] = 'No authority semantic review provisioned for this exact source; unavailable adapter fails closed'
+        return 2
+    finally:
+        source_state = command(['/usr/bin/git', '-C', source_repo, 'status', '--porcelain', '--untracked-files=no'], ok=False)
+        result['tracked_source_unchanged'] = source_state.returncode == 0 and not source_state.stdout
+        if not result['tracked_source_unchanged']:
+            result['failure'] = 'Tracked source changed during experiment; result invalid'
+        retain('result.json', result)
+        fixture.close()
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
