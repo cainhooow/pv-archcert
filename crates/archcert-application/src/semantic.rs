@@ -521,6 +521,23 @@ pub trait SemanticReviewer: Send + Sync {
         request: &SemanticReviewRequest,
     ) -> Result<ReviewerOutput, SemanticReviewError>;
 }
+/// Final application-owned size/coverage gate before invoking a provider. An
+/// authority transport may impose an additional lower bound, never a higher one.
+pub async fn review_with_byte_bound(
+    request: &SemanticReviewRequest,
+    reviewer: &dyn SemanticReviewer,
+    maximum_request_bytes: usize,
+) -> Result<ReviewerOutput, SemanticReviewError> {
+    if request.artifact().bytes().len() > maximum_request_bytes.min(request.limits().request_bytes)
+        || request.artifact().bytes().len() > SemanticLimits::default().request_bytes
+    {
+        return Err(SemanticReviewError::Oversized);
+    }
+    if !request.context_sufficient() {
+        return Err(SemanticReviewError::Truncated);
+    }
+    reviewer.review(request).await
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReviewArtifactBody {

@@ -132,7 +132,8 @@ impl IroncrestWorkflow<'_> {
                 .restore(request, evidence, session.review_timestamp)
                 .await;
         };
-        let output = reviewer.review(request).await;
+        let output =
+            review_with_byte_bound(request, reviewer, request.limits().request_bytes).await;
         let artifact = SemanticReviewArtifact::accept(request, output, invocation.timestamp)
             .map_err(|_| JobStoreError::Invalid)?;
         self.persist(

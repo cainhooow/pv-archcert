@@ -418,3 +418,43 @@ async fn bounded_review_rejects_every_immutable_scope_and_packaging_substitution
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn exact_limit_minus_one_equal_plus_one_gate_precedes_provider_invocation() -> R {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Counter(AtomicUsize);
+    #[async_trait::async_trait]
+    impl SemanticReviewer for Counter {
+        async fn review(
+            &self,
+            _: &SemanticReviewRequest,
+        ) -> Result<ReviewerOutput, SemanticReviewError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(SemanticReviewError::Unavailable)
+        }
+    }
+    let s = snapshot(ProjectId::new(), 1)?;
+    let k = engine()?.extract(&s, &[], None)?;
+    let i = analyze_impact(&k, None)?;
+    let request = prepare(&s, &k, &i, JobId::new(), b"profile", 1024 * 1024)?;
+    let actual = request.artifact().bytes().len();
+    let provider = Counter(AtomicUsize::new(0));
+    // Exact request is limit-1 bytes, then limit, then limit+1 bytes. Include
+    // canonical escaping/envelopes/digests, not a source-character approximation.
+    assert!(matches!(
+        review_with_byte_bound(&request, &provider, actual + 1).await,
+        Err(SemanticReviewError::Unavailable)
+    ));
+    assert_eq!(provider.0.load(Ordering::SeqCst), 1);
+    assert!(matches!(
+        review_with_byte_bound(&request, &provider, actual).await,
+        Err(SemanticReviewError::Unavailable)
+    ));
+    assert_eq!(provider.0.load(Ordering::SeqCst), 2);
+    assert!(matches!(
+        review_with_byte_bound(&request, &provider, actual - 1).await,
+        Err(SemanticReviewError::Oversized)
+    ));
+    assert_eq!(provider.0.load(Ordering::SeqCst), 2);
+    Ok(())
+}
