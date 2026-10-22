@@ -57,7 +57,7 @@ finally:
     os.close(parent)
 
 # Install the completion handshake before publishing readiness. Only the authority
-# runtime controls the freeze/copy/resume boundary; the marker grants no verdict.
+# runtime controls the collection/completion boundary; the marker grants no verdict.
 released = False
 
 

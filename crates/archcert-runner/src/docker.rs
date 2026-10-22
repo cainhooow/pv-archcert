@@ -847,7 +847,7 @@ impl DockerRootlessRunner {
                 "/usr/bin/python3",
                 "-I",
                 "-c",
-                include_str!("release_collect.py"),
+                archcert_application::release::FILE_COLLECTOR,
             ]),
             &[],
             archcert_application::release::MAX_RELEASE_ARTIFACT_BYTES,

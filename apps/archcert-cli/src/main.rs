@@ -239,8 +239,11 @@ fn main() -> Result<()> {
             )?;
             println!(
                 "{}",
-                serde_json::json!({"status": "RELEASE_PERMITTED", "permit": identity,
-                "notice": "DEVELOPMENT ONLY / NOT PRODUCTION AUTHORITY"})
+                serde_json::json!({
+                    "status": "RELEASE_PERMITTED",
+                    "permit": identity,
+                    "notice": "DEVELOPMENT ONLY / NOT PRODUCTION AUTHORITY",
+                })
             );
             Ok(())
         }

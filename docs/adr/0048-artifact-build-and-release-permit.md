@@ -102,3 +102,17 @@ bytes and retry-until-reproducible are rejected. OCI/directory/package formats,
 remote build workers, automatic uncertain-execution recovery, reproducibility
 across different environments, freshness/revocation and production signers are
 future work. Historical schemas/migrations/vectors remain byte-compatible.
+
+## Recipe 1.0.1 and early development compatibility
+
+Recipe 1.0.1 explicitly includes the SHA-256 of the fixed authority collector in
+its output contract. Its launcher also describes the collection/completion
+handshake accurately. Both script preimages contribute to the new recipe/invocation
+identity. This deliberately supersedes experimental 1.0.0 preparation from this
+implementation series; no stored manifest, failed run, artifact or permit is
+rewritten. Recovery of an old invocation requires its original exact authority
+implementation and recipe, or blocks. It never substitutes the current recipe for
+the retained version. Previously issued development permits remain verifiable under
+the unchanged permit schema and their explicitly selected key. Regression checks
+reject a changed collector digest and retain the seven-checkpoint lifecycle for the
+new recipe. No historical source certificate, review profile or migration changes.

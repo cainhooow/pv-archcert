@@ -13,7 +13,7 @@ fn recipe_and_invocation_pin_source_certificate_environment_and_output() -> R {
     original.validate(&recipe()?)?;
     let identity = original.identity()?;
 
-    for field in 0..8 {
+    for field in 0..9 {
         let mut changed = original.clone();
         match field {
             0 => changed.certified_source.source.snapshot_sha256 = digest_bytes(b"other source"),
@@ -26,11 +26,12 @@ fn recipe_and_invocation_pin_source_certificate_environment_and_output() -> R {
             4 => changed.recipe.environment.toolchain_sha256 = digest_bytes(b"other toolchain"),
             5 => changed.recipe.output = "/work/elsewhere".into(),
             6 => changed.release_authority_key_sha256 = digest_bytes(b"other authority"),
-            _ => changed.recipe.normalization = "STRIP-DIFFERENCES".into(),
+            7 => changed.recipe.normalization = "STRIP-DIFFERENCES".into(),
+            _ => changed.recipe.collector_sha256 = digest_bytes(b"substituted collector"),
         }
 
         assert_ne!(changed.identity()?, identity);
-        if (2..=5).contains(&field) || field == 7 {
+        if (2..=5).contains(&field) || field >= 7 {
             assert!(changed.validate(&recipe()?).is_err());
         }
     }

@@ -350,8 +350,11 @@ pub async fn run(state: &ControlPlane, args: ReleaseArgs) -> Result<()> {
     fs::write(args.output.join("build-input.json"), release_bytes(&input)?)?;
     println!(
         "{}",
-        serde_json::json!({"status": "RELEASE_PERMITTED", "permit": identity,
-        "notice": "DEVELOPMENT ONLY / NOT PRODUCTION AUTHORITY"})
+        serde_json::json!({
+            "status": "RELEASE_PERMITTED",
+            "permit": identity,
+            "notice": "DEVELOPMENT ONLY / NOT PRODUCTION AUTHORITY",
+        })
     );
 
     Ok(())

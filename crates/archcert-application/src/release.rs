@@ -21,6 +21,10 @@ use archcert_domain::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Fixed authority collector source. It returns hostile bytes only and is
+/// executed exclusively through the isolated runner, never on the host.
+pub const FILE_COLLECTOR: &str = include_str!("release/collect.py");
+
 /// Finite artifact bound shared by collection, storage and deployment verification.
 pub const MAX_RELEASE_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -91,6 +95,8 @@ pub struct BuildRecipeDescription {
     pub normalization: String,
     /// Explicit large-offline-image-v1 control operation deadline.
     pub control_timeout_ms: u64,
+    /// Exact authority file reader, part of the frozen output contract.
+    pub collector_sha256: Sha256Digest,
 }
 
 /// Explicit authority capability. Construction is an operator decision, never
@@ -154,7 +160,7 @@ impl RustReleaseRecipe {
         .map_err(|_| JobStoreError::Invalid)?;
         let description = BuildRecipeDescription {
             id: "rust-single-file-release-v1".into(),
-            version: "1.0.0".into(),
+            version: "1.0.1".into(),
             profile: "rust-release-build-v1".into(),
             environment,
             command,
@@ -165,6 +171,7 @@ impl RustReleaseRecipe {
             network: "DENIED".into(),
             normalization: "NONE".into(),
             control_timeout_ms: 60_000,
+            collector_sha256: digest_bytes(FILE_COLLECTOR.as_bytes()),
         };
         let recipe = Self { description };
         recipe.execution_profile()?;
