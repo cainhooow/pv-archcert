@@ -842,7 +842,7 @@ impl DockerRootlessRunner {
                 "container",
                 "exec",
                 "--user",
-                USER,
+                archcert_application::release::FILE_COLLECTOR_USER,
                 target,
                 "/usr/bin/python3",
                 "-I",

@@ -75,6 +75,14 @@ fn independent_rust_builds_collect_equal_bytes_and_detect_real_nondeterminism() 
     let source = |random: bool| -> R<SourceSnapshot> {
         let mut files = vec![
             (
+                "rust-toolchain.toml",
+                b"[toolchain]\nchannel = \"untrusted-never-installed\"\n".to_vec(),
+            ),
+            (
+                ".cargo/config.toml",
+                b"[build]\ntarget = \"wasm32-unknown-unknown\"\n".to_vec(),
+            ),
+            (
                 "Cargo.toml",
                 b"[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"
                     .to_vec(),
@@ -177,7 +185,7 @@ fn authority_collector_rejects_links_special_files_directories_and_extra_outputs
                 "-I".into(),
                 "-c".into(),
                 format!(
-                    "import os,signal,time\n{setup}\nsignal.signal(signal.SIGUSR1,lambda *_:exit(0))\nos.write(1,b'ARCHCERT_BUILD_READY_V1\\n')\nwhile True: time.sleep(1)\n"
+                    "import os,signal,time\nos.chmod('/output',0o755)\n{setup}\nsignal.signal(signal.SIGUSR1,lambda *_:exit(0))\nos.write(1,b'ARCHCERT_BUILD_READY_V1\\n')\nwhile True: time.sleep(1)\n"
                 ),
             ],
             "/source".into(),

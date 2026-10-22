@@ -15,7 +15,10 @@ os.symlink('/opt/archcert/cargo/registry', '/home/archcert/.cargo/registry')
 # No repository-provided shell or launcher. Cargo still executes hostile build
 # scripts, rustc wrappers and source under the ordinary sandbox boundary.
 status = subprocess.run(
-    ['/usr/local/cargo/bin/cargo', 'build', '--release', '--locked', '--offline', '--bin', binary],
+    [
+        '/usr/local/cargo/bin/cargo', 'build', '--release', '--locked', '--offline',
+        '--target', 'x86_64-unknown-linux-gnu', '--bin', binary,
+    ],
     cwd='/source',
     stdin=subprocess.DEVNULL,
     stdout=sys.stderr,
@@ -30,7 +33,7 @@ if status != 0:
 # authority over either the accepted digest or the reproducibility verdict.
 parent = os.open('/work', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 try:
-    for component in ['target', 'release']:
+    for component in ['target', 'x86_64-unknown-linux-gnu', 'release']:
         child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
         os.close(parent)
         parent = child
@@ -55,6 +58,11 @@ try:
                 raise RuntimeError('output grew')
 finally:
     os.close(parent)
+
+# The separate unprivileged authority reader must be able to traverse this mount.
+# Target descendants remain UID 10001 and cannot access the reader's UID 10002 FDs.
+os.chmod('/output/artifact', 0o444)
+os.chmod('/output', 0o755)
 
 # Install the completion handshake before publishing readiness. Only the authority
 # runtime controls the collection/completion boundary; the marker grants no verdict.

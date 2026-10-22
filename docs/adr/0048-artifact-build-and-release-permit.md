@@ -116,3 +116,32 @@ the retained version. Previously issued development permits remain verifiable un
 the unchanged permit schema and their explicitly selected key. Regression checks
 reject a changed collector digest and retain the seven-checkpoint lifecycle for the
 new recipe. No historical source certificate, review profile or migration changes.
+
+## Recipe 1.0.2 pins Rustup and the target explicitly
+
+The initial Rust recipe supports Rust 1.99.1 for x86_64-unknown-linux-gnu. Recipe
+1.0.2 sets RUSTUP_TOOLCHAIN to the exact installed authority toolchain and passes
+Cargo's explicit --target flag. A source rust-toolchain file or Cargo build.target
+request cannot choose another authority toolchain/target. The output selector now
+traverses that fixed target directory without following links. The image and
+inventory must provision these exact tools before execution; no runtime download
+or alternate toolchain fallback is authorized. This closes an authority-selection
+gap discovered during final review, with a new recipe/invocation identity rather
+than reinterpreting earlier manifests. Prior versions require their exact original
+authority implementation for recovery; stored permits retain offline verification.
+The live Rust fixture includes a nonexistent source toolchain and foreign Cargo
+target request, so it can complete only under the fixed authority selections.
+
+Upstream contracts: [Rustup override precedence](https://rust-lang.github.io/rustup/overrides.html)
+and [Cargo target selection](https://doc.rust-lang.org/cargo/commands/cargo-build.html).
+
+Recipe 1.0.2 also binds a separate unprivileged collector UID:GID 10002:10002.
+The target remains 10001:10001 with no capabilities. The launcher makes only the
+output directory/file readable to the collector, which verifies its own UID/GID.
+This prevents target descendants from opening the collector's /proc file descriptors
+or signalling it as a same-UID peer. The collector returns only data through its
+private runtime channel. The output stays hostile and target-owned; permission or
+concurrent-content interference fails collection or is detected by the bounded
+file checks. No root reader, new capability, host mount or credential is introduced.
+This is a new release mechanism requiring native qualification; it grants no
+extension of historical Stoneward qualification.

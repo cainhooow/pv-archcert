@@ -16,6 +16,7 @@ local deployment gate. Source certification and artifact authorization differ.
 | Signing crash | Persist payload first, reconstruct exact bytes, deterministic same-message signature, readback envelope then completion | Key availability required; no production custody |
 | Missing/corrupt accepted evidence | Re-read and verify every prerequisite before preparing or signing | Object retention/capacity remain operator duties |
 | Artifact swap at deploy | Gate reads actual bounded bytes, verifies SHA-256/size, exact project/repository and selected permit key | Caller must deploy those same verified bytes; no external orchestrator integration |
+| Target writes collector stdout or signals the reader | Reader runs as separate unprivileged UID/GID 10002; target stays 10001 without capabilities; reader checks its identity | Runtime/kernel compromise remains trusted; target may deny output availability |
 | Key/credential disclosure | No keys in runner/worker/input/image; load signer only after execution and confirmed cleanup | Development controller shares OS identity with local signer |
 | Semantic approval laundering | Release policy is deterministic and demands all evidence plus REPRODUCIBLE | Source review accuracy is outside artifact reproducibility |
 | Cross-protocol signature | Distinct signed ARCHCERT_RELEASE_PERMIT kind and versioned payload | Administrative trust selection remains required |

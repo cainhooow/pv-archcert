@@ -7,6 +7,9 @@ the project. The controller validates runtime completion and hashes those bytes.
 import os
 import stat
 
+if os.getuid() != 10002 or os.getgid() != 10002:
+    raise RuntimeError('collector identity mismatch')
+
 parent = os.open('/output', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 try:
     if os.listdir(parent) != ['artifact']:

@@ -8,7 +8,9 @@ small signed Release Permit. See [ADR 0048](../adr/0048-artifact-build-and-relea
 and the [release threat model](../threat-model/RELEASE_PERMIT.md).
 
 The initial supported artifact is one nonempty regular file, at most 64 MiB,
-produced by `cargo build --release --locked --offline --bin AUTHORITY_BINARY`.
+produced by Rust 1.99.1 using `cargo build --release --locked --offline
+--target x86_64-unknown-linux-gnu --bin AUTHORITY_BINARY`. The authority fixes both
+the Rustup toolchain and target; repository toolchain/config files cannot select them.
 The authority launcher, environment, output selector, network denial, limits and
 image are frozen in the admitted input manifest. There is no normalization or
 project-selected shell recipe. Authority must independently prepare the public

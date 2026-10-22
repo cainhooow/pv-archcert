@@ -25,6 +25,9 @@ use std::collections::BTreeMap;
 /// executed exclusively through the isolated runner, never on the host.
 pub const FILE_COLLECTOR: &str = include_str!("release/collect.py");
 
+/// Separate unprivileged sandbox identity, preventing target access to collector FDs.
+pub const FILE_COLLECTOR_USER: &str = "10002:10002";
+
 /// Finite artifact bound shared by collection, storage and deployment verification.
 pub const MAX_RELEASE_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -97,6 +100,8 @@ pub struct BuildRecipeDescription {
     pub control_timeout_ms: u64,
     /// Exact authority file reader, part of the frozen output contract.
     pub collector_sha256: Sha256Digest,
+    /// Separate non-target sandbox UID/GID used by the authority reader.
+    pub collector_user: String,
 }
 
 /// Explicit authority capability. Construction is an operator decision, never
@@ -137,6 +142,10 @@ impl RustReleaseRecipe {
             ("CARGO_INCREMENTAL".into(), "0".into()),
             ("CARGO_BUILD_JOBS".into(), "2".into()),
             ("RUSTUP_HOME".into(), "/usr/local/rustup".into()),
+            (
+                "RUSTUP_TOOLCHAIN".into(),
+                "1.99.1-x86_64-unknown-linux-gnu".into(),
+            ),
             ("RUSTC".into(), "/usr/local/cargo/bin/rustc".into()),
             ("RUSTDOC".into(), "/usr/local/cargo/bin/rustdoc".into()),
             (
@@ -160,7 +169,7 @@ impl RustReleaseRecipe {
         .map_err(|_| JobStoreError::Invalid)?;
         let description = BuildRecipeDescription {
             id: "rust-single-file-release-v1".into(),
-            version: "1.0.1".into(),
+            version: "1.0.2".into(),
             profile: "rust-release-build-v1".into(),
             environment,
             command,
@@ -172,6 +181,7 @@ impl RustReleaseRecipe {
             normalization: "NONE".into(),
             control_timeout_ms: 60_000,
             collector_sha256: digest_bytes(FILE_COLLECTOR.as_bytes()),
+            collector_user: FILE_COLLECTOR_USER.into(),
         };
         let recipe = Self { description };
         recipe.execution_profile()?;
