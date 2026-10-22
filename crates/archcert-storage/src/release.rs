@@ -31,10 +31,14 @@ async fn release_load(
         return Err(JobStoreError::Precondition);
     }
 
-    let rows = sqlx::query("SELECT role,reference,available FROM release_evidence WHERE project=$1 AND invocation=$2 ORDER BY role")
-        .bind(project.to_string())
-        .bind(id.0.as_str())
-        .fetch_all(c).await.map_err(db)?;
+    let rows = sqlx::query(
+        "SELECT role,reference,available FROM release_evidence WHERE project=$1 AND invocation=$2 ORDER BY role",
+    )
+    .bind(project.to_string())
+    .bind(id.0.as_str())
+    .fetch_all(c)
+    .await
+    .map_err(db)?;
     let mut references = Vec::new();
 
     for row in rows {
@@ -119,21 +123,41 @@ impl ReleaseRepository for PostgresJobRepository {
         }
 
         let mut tx = self.pool.begin().await.map_err(db)?;
-        let allowed = sqlx::query("SELECT actor FROM repository_grants WHERE project=$1 AND repository=$2 AND actor=$3 FOR SHARE")
-            .bind(source.project.to_string()).bind(source.repository.as_str()).bind(admission.actor.as_str())
-            .fetch_optional(&mut *tx).await.map_err(db)?.is_some();
-        let accepted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accepted_sources WHERE submission=$1 AND project=$2 AND repository=$3 AND source=$4)")
-            .bind(admission.submission.to_string()).bind(source.project.to_string())
-            .bind(source.repository.as_str()).bind(json(&source.source)?)
-            .fetch_one(&mut *tx).await.map_err(db)?;
+        let allowed = sqlx::query(
+            "SELECT actor FROM repository_grants WHERE project=$1 AND repository=$2 AND actor=$3 FOR SHARE",
+        )
+        .bind(source.project.to_string())
+        .bind(source.repository.as_str())
+        .bind(admission.actor.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db)?
+        .is_some();
+        let accepted: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM accepted_sources WHERE submission=$1 AND project=$2 AND repository=$3 AND source=$4)",
+        )
+        .bind(admission.submission.to_string())
+        .bind(source.project.to_string())
+        .bind(source.repository.as_str())
+        .bind(json(&source.source)?)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db)?;
 
         if !allowed || !accepted {
             return Err(JobStoreError::Unauthorized);
         }
 
-        let inserted = sqlx::query("INSERT INTO release_invocations(project,invocation,admission) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
-            .bind(source.project.to_string()).bind(id.0.as_str()).bind(json(admission)?)
-            .execute(&mut *tx).await.map_err(db)?.rows_affected() == 1;
+        let insertion = sqlx::query(
+            "INSERT INTO release_invocations(project,invocation,admission) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+        )
+        .bind(source.project.to_string())
+        .bind(id.0.as_str())
+        .bind(json(admission)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+        let inserted = insertion.rows_affected() == 1;
         let record = release_load(&mut tx, source.project, &id).await?;
 
         if json(&record.admission)? != json(admission)? {
@@ -199,6 +223,7 @@ impl ReleaseRepository for PostgresJobRepository {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
+
         release_audit(
             &mut tx,
             project,
@@ -209,6 +234,7 @@ impl ReleaseRepository for PostgresJobRepository {
             },
         )
         .await?;
+
         tx.commit().await.map_err(db)?;
 
         Ok(Some(BuildClaim { ordinal, token }))
@@ -283,6 +309,7 @@ impl ReleaseRepository for PostgresJobRepository {
         .execute(&mut *tx)
         .await
         .map_err(db)?;
+
         release_audit(
             &mut tx,
             project,
@@ -290,6 +317,7 @@ impl ReleaseRepository for PostgresJobRepository {
             &format!("{}_STAGED", role_name(role)?),
         )
         .await?;
+
         tx.commit().await.map_err(db)?;
 
         Ok(())
@@ -316,9 +344,16 @@ impl ReleaseRepository for PostgresJobRepository {
         }
 
         if !existing.available {
-            sqlx::query("UPDATE release_evidence SET available=TRUE WHERE project=$1 AND invocation=$2 AND role=$3")
-                .bind(project.to_string()).bind(id.0.as_str()).bind(role_name(role)?)
-                .execute(&mut *tx).await.map_err(db)?;
+            sqlx::query(
+                "UPDATE release_evidence SET available=TRUE WHERE project=$1 AND invocation=$2 AND role=$3",
+            )
+            .bind(project.to_string())
+            .bind(id.0.as_str())
+            .bind(role_name(role)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+
             release_audit(
                 &mut tx,
                 project,
