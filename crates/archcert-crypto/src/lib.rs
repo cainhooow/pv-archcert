@@ -128,7 +128,7 @@ pub enum SigningFailure {
     SigningFailed,
 }
 
-/// Narrow authority port. Only canonical certificate bytes reach this interface.
+/// Narrow authority port. Only canonical certificate or release-permit payloads reach this interface.
 /// Filesystem, environment, KMS, HSM and PKCS#11 details belong to adapters.
 pub trait CertificateSigner {
     /// Stable public-key identity; never a filename.

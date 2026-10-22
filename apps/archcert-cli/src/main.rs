@@ -34,6 +34,18 @@ enum Command {
         #[arg(long)]
         public_key: PathBuf,
     },
+    /// Offline gate for exact artifact bytes and a separately trusted release permit.
+    ReleaseGate {
+        permit: PathBuf,
+        #[arg(long)]
+        public_key: PathBuf,
+        #[arg(long)]
+        artifact: PathBuf,
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        repository: String,
+    },
     /// Creates a DEVELOPMENT ONLY local key outside repositories and workspaces.
     DevelopmentKeygen {
         #[arg(long)]
@@ -117,6 +129,9 @@ struct RunArgs {
     /// Explicit Unix runtime endpoint; rootless verification is mandatory.
     #[arg(long)]
     endpoint: String,
+    /// Authority-only large-offline-image-v1 control deadline; target budgets are unchanged.
+    #[arg(long)]
+    large_offline_image: bool,
     /// Sandbox working directory (/source or /work and descendants).
     #[arg(long, default_value = "/source")]
     working_directory: String,
@@ -182,6 +197,53 @@ fn main() -> Result<()> {
             certificate,
             public_key,
         } => verify_command(&certificate, &public_key),
+        Command::ReleaseGate {
+            permit,
+            public_key,
+            artifact,
+            project,
+            repository,
+        } => {
+            use std::io::Read;
+            use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+            let key = archcert_crypto::PublicKey::from_hex(fs::read_to_string(public_key)?.trim())?;
+            let envelope = archcert_certificate::release::ReleasePermitEnvelope::read(
+                fs::File::open(permit)?,
+            )?;
+            let expected = fs::symlink_metadata(&artifact)?;
+            anyhow::ensure!(
+                expected.is_file(),
+                "release artifact must be a regular file"
+            );
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(
+                    (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
+                )
+                .open(&artifact)?;
+            let actual = file.metadata()?;
+            anyhow::ensure!(
+                actual.is_file()
+                    && expected.dev() == actual.dev()
+                    && expected.ino() == actual.ino(),
+                "release artifact changed while opening"
+            );
+            let mut bytes = Vec::new();
+            file.take(archcert_application::release::MAX_RELEASE_ARTIFACT_BYTES + 1)
+                .read_to_end(&mut bytes)?;
+            let identity = envelope.authorize_artifact(
+                &key,
+                project.parse()?,
+                &archcert_domain::source::RepositoryId::parse(repository)?,
+                &bytes,
+            )?;
+            println!(
+                "{}",
+                serde_json::json!({"status": "RELEASE_PERMITTED", "permit": identity,
+                "notice": "DEVELOPMENT ONLY / NOT PRODUCTION AUTHORITY"})
+            );
+            Ok(())
+        }
         Command::DevelopmentKeygen {
             private_key,
             public_key,
@@ -400,10 +462,12 @@ fn run_command(
         docker_endpoint: args.endpoint,
         workspace_root: args.workspace_root,
     };
-    let runner = DockerRootlessRunner::new(DockerRuntime::new(
-        runtime.docker_executable,
-        runtime.docker_endpoint,
-    )?);
+    let docker = if args.large_offline_image {
+        DockerRuntime::for_release(runtime.docker_executable, runtime.docker_endpoint)?
+    } else {
+        DockerRuntime::new(runtime.docker_executable, runtime.docker_endpoint)?
+    };
+    let runner = DockerRootlessRunner::new(docker);
     // execute performs its own preflight; a failed preflight must remain observable to policy.
     let repository = RepositoryId::parse(args.repository)?;
     let project: ProjectId = serde_json::from_value(serde_json::Value::String(args.project))?;

@@ -3,6 +3,9 @@
 //! Eligibility is not certification. Only successful construction, signing and
 //! strict verification can create an IssuedCertificate. No target execution lives here.
 
+/// Separate canonical M6 permit construction and artifact deployment gate.
+pub mod release;
+
 use archcert_application::validation::{ValidationObservation, ValidationPlan};
 use archcert_crypto::{CertificateSigner, DetachedSignature, PublicKey, SigningFailure};
 use archcert_domain::{

@@ -21,6 +21,7 @@ archcert-policy = { path = "../../crates/archcert-policy", version = "=0.1.0" }
 archcert-certificate = { path = "../../crates/archcert-certificate", version = "=0.1.0" }
 archcert-crypto = { path = "../../crates/archcert-crypto", version = "=0.1.0", features = ["local-development"] }
 serde_json.workspace = true
+rustix.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

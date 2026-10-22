@@ -124,6 +124,7 @@ dependencies = [
  "archcert-semantic",
  "archcert-source",
  "clap",
+ "rustix",
  "serde_json",
  "tempfile",
  "tokio",
