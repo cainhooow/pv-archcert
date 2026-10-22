@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""Canonical M6 development source/build/permit and actual SIGKILL recovery.
+
+Requires dedicated PostgreSQL and an independently provisioned rootless daemon.
+All authority inputs are explicit. Target builds execute only inside OCI.
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import runpy
+import select
+import secrets
+import shutil
+import signal
+import subprocess
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+BIN = ROOT / 'target/debug'
+F = runpy.run_path(str(ROOT / 'scripts/test-northgate'))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ['image', 'endpoint', 'dependencies', 'toolchain']:
+        parser.add_argument('--' + name, required=True)
+    parser.add_argument('--docker', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    args = parser.parse_args()
+    output = args.output.resolve()
+    if output.exists() or not output.is_relative_to(ROOT / 'target'):
+        raise RuntimeError('Output must be a new directory below ignored target/')
+    output.mkdir(parents=True, mode=0o700)
+    fixture = F['NorthgateFixture'](BIN / 'archcert-gateway')
+    environment = dict(os.environ)
+    commands = []
+
+    def run(argv, *, checkpoint=None, ok=True, env=None):
+        argv = [str(a) for a in argv]
+        index = len(commands)
+        print('Command', index, 'checkpoint=' + str(checkpoint), flush=True)
+        if checkpoint:
+            process = subprocess.Popen(argv + ['--stop-after', checkpoint, '--hold-checkpoint'],
+                                       env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            observed = bytearray()
+            try:
+                deadline = time.monotonic() + 1800
+                while time.monotonic() < deadline:
+                    ready, _, _ = select.select([process.stderr], [], [], 1)
+                    if ready:
+                        line = process.stderr.readline()
+                        observed.extend(line)
+                        if b'interruption after ' + checkpoint.encode() in line:
+                            process.kill()
+                            stdout, stderr = process.communicate(timeout=15)
+                            assert process.returncode == -signal.SIGKILL
+                            result = subprocess.CompletedProcess(argv, process.returncode, stdout,
+                                                                 bytes(observed) + stderr)
+                            break
+                        if process.poll() is not None:
+                            raise RuntimeError('Exited before checkpoint: ' + observed.decode(errors='replace'))
+                else:
+                    raise RuntimeError('Checkpoint deadline')
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate(timeout=15)
+        else:
+            result = subprocess.run(argv, env=env or environment, capture_output=True, timeout=3600)
+        commands.append(dict(argv=argv, exit_code=result.returncode, checkpoint=checkpoint))
+        (output / 'commands.json').write_text(json.dumps(commands, indent=2) + '\n')
+        (output / f'{index}.stdout').write_bytes(result.stdout)
+        (output / f'{index}.stderr').write_bytes(result.stderr)
+        if ok and not checkpoint and result.returncode:
+            raise RuntimeError(f'Command {index} failed; see retained stderr')
+        return result
+
+    try:
+        repo = fixture.root / 'rust-release'
+        repo.mkdir(mode=0o700)
+        fixture.git(repo, 'init', '--template=', '--initial-branch=fixture')
+        (repo / 'src').mkdir()
+        (repo / 'Cargo.toml').write_text('[package]\nname = "fixture"\nversion = "0.1.0"\nedition = "2024"\n')
+        (repo / 'Cargo.lock').write_text('version = 4\n[[package]]\nname = "fixture"\nversion = "0.1.0"\n')
+        (repo / 'src/main.rs').write_text('fn main() {\n    println!("exact release fixture");\n}\n')
+        fixture.git(repo, 'add', 'Cargo.toml', 'Cargo.lock', 'src/main.rs')
+        fixture.git(repo, 'commit', '-m', 'controlled Rust release fixture')
+        source = fixture.push(repo)
+        (output / 'source.json').write_text(json.dumps(source, indent=2) + '\n')
+
+        sources = output / 'sources'
+        shutil.copytree(fixture.store, sources)
+        workspaces, objects = output / 'workspaces', output / 'objects'
+        for path in [workspaces, objects]:
+            path.mkdir(mode=0o700)
+        private = fixture.authority / 'development.der'
+        public = fixture.authority / 'public.hex'
+        run([BIN / 'archcert', 'development-keygen', '--private-key', private, '--public-key', public])
+        public.chmod(0o600)
+        shutil.copyfile(public, output / 'public-key.hex')
+        recipe = fixture.authority / 'source-checks.toml'
+        recipe.write_text('schema = 1\n[project]\nname = "Controlled Rust release"\n'
+                          '[execution]\nprofile = "rust-workspace-v1"\n' + ''.join(
+            f'[[execution.commands]]\nname = "{name}"\nprogram = "cargo"\n'
+            f'args = ["{command}", "--locked", "--offline"]\nevidence = "{category}"\n'
+            'working_directory = "/source"\n'
+            for name, command, category in [('typecheck', 'check', 'TYPECHECK'),
+                                             ('test', 'test', 'TEST'), ('build', 'build', 'BUILD')]))
+        recipe.chmod(0o600)
+        run([BIN / 'archcert', 'certify', '--source-submission', source['submission'],
+             '--source-store', sources, '--snapshot', source['source']['snapshot_sha256'],
+             '--project', F['PROJECT'], '--repository', source['repository'],
+             '--workspace-root', workspaces, '--profile', 'rust-workspace-v1', '--image', args.image,
+             '--docker', args.docker, '--endpoint', args.endpoint, '--large-offline-image', '--authority-config', recipe,
+             '--development-key', private, '--public-key', public, '--output', output / 'source-certificate'])
+        certificate = fixture.authority / 'source-certificate.json'
+        shutil.copyfile(output / 'source-certificate/certificate.json', certificate)
+        certificate.chmod(0o600)
+        source_certificate = json.loads(certificate.read_text())
+        config = fixture.authority / 'controller.json'
+        config.write_text(json.dumps(dict(source_store=str(sources), artifact_root=str(objects), grants=[dict(
+            project=F['PROJECT'], repository=source['repository'], actor=F['ACTOR'],
+            token_sha256=hashlib.sha256(secrets.token_bytes(32)).hexdigest(),
+            profile='rust-workspace-v1', image=args.image, authority_toml=recipe.read_text(), maximum_attempts=1)])))
+        config.chmod(0o600)
+        run([BIN / 'archcert-controller', '--config', config, 'provision'])
+        build = [BIN / 'archcert-controller', '--config', config, 'release', '--project', F['PROJECT'],
+                 '--repository', source['repository'], '--actor', F['ACTOR'], '--submission', source['submission'],
+                 '--source-certificate', certificate, '--source-key', public,
+                 '--source-policy', source_certificate['payload']['policy']['sha256'], '--image', args.image,
+                 '--dependencies', args.dependencies, '--toolchain', args.toolchain, '--binary', 'fixture',
+                 '--release-key', public, '--development-key', private, '--workspace-root', workspaces,
+                 '--docker', args.docker, '--endpoint', args.endpoint, '--output', output / 'released']
+        invocation = None
+        frozen = {}
+        for checkpoint in ['input', 'build-a', 'build-b', 'reproducibility', 'payload', 'signed', 'permit-upload']:
+            interrupted = run(build, checkpoint=checkpoint)
+            observed = json.loads(interrupted.stdout.splitlines()[0])['invocation']
+            if invocation is None:
+                invocation = observed
+            assert invocation == observed
+            status = json.loads(run([BIN / 'archcert-controller', '--config', config, 'release-show',
+                                     '--project', F['PROJECT'], invocation]).stdout)
+            (output / f'checkpoint-{checkpoint}.json').write_text(json.dumps(status, indent=2) + '\n')
+            for reference in status['references']:
+                role = reference['role']
+                if role in frozen:
+                    assert frozen[role] == reference['artifact']
+                frozen[role] = reference['artifact']
+        run(build)
+        assert all(role in frozen for role in ['RESULT_A', 'RESULT_B', 'ARTIFACT_A', 'ARTIFACT_B',
+                                              'REPRODUCIBILITY', 'PERMIT_PAYLOAD', 'PERMIT_ENVELOPE'])
+        permit = json.loads((output / 'released/release-permit.json').read_text())
+        gate = [BIN / 'archcert', 'release-gate', output / 'released/release-permit.json',
+                '--public-key', output / 'public-key.hex', '--artifact', output / 'released/artifact',
+                '--project', F['PROJECT'], '--repository', source['repository']]
+        private.unlink()
+        run(gate, env={'PATH': '/usr/bin:/bin'})
+        changed = output / 'substituted-artifact'
+        changed.write_bytes((output / 'released/artifact').read_bytes() + b'substitution')
+        bad_gate = gate.copy()
+        bad_gate[bad_gate.index('--artifact') + 1] = changed
+        assert run(bad_gate, ok=False).returncode != 0
+        (output / 'result.json').write_text(json.dumps(dict(
+            status='PASSED', source=source, permit_sha256=permit['permit_sha256'],
+            artifact=permit['payload']['artifact'], crash_checkpoints=7,
+            notice='DEVELOPMENT ENGINEERING REGRESSION; not native qualification or Genesis'), indent=2) + '\n')
+    finally:
+        fixture.close()
+
+
+if __name__ == '__main__':
+    main()

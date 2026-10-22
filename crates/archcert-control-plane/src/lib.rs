@@ -206,6 +206,48 @@ impl ControlPlane {
         Ok(())
     }
 
+    /// Loads an exact accepted source for a separately authorized artifact build.
+    /// Repository scope is checked before opening source storage; no mutable ref.
+    pub async fn release_source(
+        &self,
+        actor: &GitActorId,
+        submission: &SourceSubmissionId,
+        expected: &archcert_domain::release::CertifiedSourceIdentity,
+    ) -> Result<SourceSnapshot, JobStoreError> {
+        self.configuration
+            .grant_for(actor, expected.project, &expected.repository)?;
+
+        if !self
+            .repository
+            .authorized(expected.project, &expected.repository, actor)
+            .await?
+        {
+            return Err(JobStoreError::Unauthorized);
+        }
+
+        let store =
+            archcert_gateway::AcceptedSubmissionReader::open(&self.configuration.source_store)
+                .map_err(|_| JobStoreError::Unavailable)?;
+        let accepted = store.load(submission).map_err(|_| JobStoreError::Invalid)?;
+
+        if accepted.snapshot.project() != expected.project
+            || accepted.snapshot.repository() != &expected.repository
+            || accepted.snapshot.identity() != &expected.source
+        {
+            return Err(JobStoreError::Precondition);
+        }
+
+        accepted
+            .snapshot
+            .require_complete()
+            .map_err(|_| JobStoreError::Invalid)?;
+        self.repository
+            .register_source(submission, &accepted.snapshot)
+            .await?;
+
+        Ok(accepted.snapshot)
+    }
+
     /// Loads independently checked accepted source under a known authority reference.
     pub fn source(&self, inputs: &JobInputs) -> Result<SourceSnapshot, JobStoreError> {
         let store =

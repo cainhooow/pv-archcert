@@ -3,6 +3,8 @@
 ArchCert is building a software certification authority. The current implementation
 produces source, materialization and isolated execution evidence, plus deterministic
 unsigned policy evaluations and development Ed25519 certificates for exact source states.
+A separate M6 path builds one regular-file Rust artifact twice and issues a digest-bound
+development Release Permit only for exact reproducible bytes.
 
 Its core rule is simple:
 
@@ -19,7 +21,7 @@ The canonical roadmap is:
 | Milestone | Scope | Status |
 | --- | --- | --- |
 | M5.2 — Stoneward | Native Linux Runner Qualification & Operational Recovery | COMPLETE, within its documented qualification scope |
-| M6 — Ironcrest | Artifact Binding, Reproducible Builds & Release Permit | PLANNED / NOT YET IMPLEMENTED |
+| M6 — Ironcrest | Artifact Binding, Reproducible Builds & Release Permit | IN PROGRESS: initial development path implemented; native qualification pending |
 | M7 — Asterwyn | Project Knowledge Engine & Change Impact Graph | SUBSTANTIALLY IMPLEMENTED ahead of sequence; pending formal milestone reconciliation |
 | M8 — Greywatch | Semantic Review, Agent Claims, Discoveries & Blind Spots | SUBSTANTIALLY IMPLEMENTED ahead of sequence; pending formal milestone reconciliation |
 
@@ -30,6 +32,10 @@ complete canonical M6 or establish the full Definition of Done for M7/M8.
 inventory. Existing `ironcrest` APIs, policy/profile IDs, schemas and commands are
 retained historical implementation labels, not claims of artifact binding,
 reproducible builds or release permits. Git history is preserved.
+
+See the [M6 release lifecycle and offline deployment gate](docs/release/README.md).
+Source certificates retain EXACT_SOURCE scope. They cannot authorize arbitrary
+artifacts, and the new permit does not broaden historical Stoneward qualification.
 
 ## Certification lifecycle
 

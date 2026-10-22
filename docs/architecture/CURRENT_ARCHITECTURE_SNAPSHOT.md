@@ -3,7 +3,8 @@
 The canonical roadmap and historical naming inventory are defined in
 [ADR 0045](../adr/0045-roadmap-reconciliation.md). M5.2 Stoneward is COMPLETE within
 its documented qualification scope. M6 Ironcrest (Artifact Binding, Reproducible
-Builds & Release Permit) is PLANNED / NOT YET IMPLEMENTED. M7 Asterwyn (Project
+Builds & Release Permit) is IN PROGRESS: an initial development release path is
+implemented under ADR 0048; native qualification and final acceptance remain pending. M7 Asterwyn (Project
 Knowledge Engine & Change Impact Graph) and M8 Greywatch (Semantic Review, Agent
 Claims, Discoveries & Blind Spots) are SUBSTANTIALLY IMPLEMENTED ahead of sequence,
 pending formal milestone reconciliation. Their full canonical Definitions of Done
@@ -198,7 +199,7 @@ M1–M4A source, materialization, isolation, fixed environment/network/resource,
 structured observations and mandatory authority-policy guarantees remain active.
 Project configuration cannot select signer/key/algorithm/authority or weaken policy.
 No AI participates in issuance. Ravenport now implements authenticated durable
-HTTP job admission/status and PostgreSQL metadata. No web UI, release permit, artifact certification,
+HTTP job admission/status and PostgreSQL metadata. No web UI, production artifact certification,
 waiver, policy inheritance, production KMS/HSM/PKCS#11, revocation or transparency
 service is added. Only the exact Stoneward native profile is qualified; see qualification/NATIVE_LINUX_RUNNER.md.
 
@@ -400,3 +401,58 @@ select pending requirements and accepted challenge steps throughout the durable
 lifecycle. Controller, issuer and storage all enforce the reviewed prerequisite.
 Schema-2 manifests bind the package through a schema-2 REQUEST only for the new
 Rust policy. Existing Python profile/policy/manifest identities are unchanged.
+
+## Canonical M6 artifact binding and release permits
+
+[ADR 0048](../adr/0048-artifact-build-and-release-permit.md) and the
+[operator guide](../release/README.md) define a separate release namespace. Historical
+`ironcrest` identifiers and source certificate schemas keep their meanings. M6 does
+not start Genesis / Firstwarden or reconcile M7/M8 completion.
+
+Domain/application distinguish certified source, recipe, environment, invocation,
+result, file artifact, reproducibility and permit identities. Authority composition
+verifies the exact source certificate against explicit scope/key/policy, then
+freezes one canonical input manifest. A versioned fixed Rust recipe binds the
+read-only source snapshot, digest-pinned image, public dependency bundle/toolchain
+inventory assertions, literal offline locked Cargo invocation, fixed environment,
+finite limits and one bounded output selector. Target configuration selects none
+of these authorities. Preparation of public dependencies remains outside execution.
+
+Migration 0006 adds project-scoped create-only invocation/evidence metadata,
+non-expiring independent A/B execution claims, immutable publication intent and
+append-only audit. Short row-locked transactions precede runtime or object-store
+operations. The controller builds in two fresh rootless instances and source/scratch
+workspaces. An unknown claim or failed cleanup blocks; no lease expiry or automatic
+retry authorizes repeating an unknown build. Accepted results resume from rehashed
+immutable bytes. This conservative initial path does not add remote build workers
+or automatic cleanup of unknown standalone runtime resources.
+
+The release runner uses a separate `archcert-docker-release-v1` evidence producer
+and explicit `large-offline-image-v1/60s` control profile. Historical default control
+operations retain 15 seconds. Since daemon archives omit live tmpfs bytes, a fixed
+runtime-invoked authority reader collects only /output/artifact with no-follow,
+nonblocking regular-file/size/directory/mutation checks and a separate bounded byte
+channel. It grants no status or filename authority to target text. All runtime and
+source cleanup finishes before signing. SHA-256 and size identify imported bytes;
+create-only storage publication and independent readback precede acceptance.
+
+Canonical comparison evidence binds both independent execution results and artifact
+identities. Equal complete bytes mean REPRODUCIBLE; actual differences mean
+NON_REPRODUCIBLE; missing/infrastructure-impaired completion means INCONCLUSIVE.
+Only REPRODUCIBLE can prepare a permit. The issuer independently rechecks the source
+certificate, selected recipe, actual execution/cleanup/equality evidence and artifact
+readback. A private exact-message durable capability is required before signing.
+The small separate ARCHCERT_RELEASE_PERMIT payload binds source/certificate,
+invocation/recipe/environment, artifact, comparison, fixed policy and release key.
+Existing Ed25519 primitives sign canonical bytes; selected-key verification and
+immutable envelope readback precede RELEASE_PERMITTED. Completed permits can be
+restored without reloading a private key.
+
+The offline `archcert release-gate` verifies a permit under an explicitly trusted
+release key and checks actual artifact bytes plus project/repository. A source
+certificate alone, another scope, wrong key or substituted binary cannot pass.
+It is a local gate: external deployment integration, OCI/package formats, expiry,
+revocation and production signer custody are not implemented. Inventory assertions
+are not toolchain/runtime attestation. The new mechanism remains outside historical
+Stoneward native qualification until separately requalified. Development fixture
+validation and exact-source engineering self-validation are separate claims.

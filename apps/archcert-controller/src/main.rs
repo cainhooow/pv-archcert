@@ -4,6 +4,8 @@ mod ironcrest;
 
 mod runtime;
 
+mod release;
+
 use anyhow::{Context, Result, ensure};
 use archcert_application::{
     artifacts::ImmutableArtifactStore,
@@ -29,6 +31,14 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Canonical M6 artifact build, reproducibility and release permit lifecycle.
+    Release(Box<release::ReleaseArgs>),
+    /// Shows project-scoped canonical M6 checkpoints without exposing execution claims.
+    ReleaseShow {
+        #[arg(long)]
+        project: String,
+        invocation: String,
+    },
     /// Durable pre-admission Ironcrest lifecycle under explicit authority controls.
     Ironcrest {
         #[command(subcommand)]
@@ -114,6 +124,11 @@ async fn main() -> Result<()> {
     .await?;
 
     match args.command {
+        Command::Release(args) => release::run(&state, *args).await?,
+        Command::ReleaseShow {
+            project,
+            invocation,
+        } => release::show(&state, &project, &invocation).await?,
         Command::Ironcrest { command } => ironcrest::command(&state, command).await?,
         Command::Doctor => {
             state.repository.check_readiness().await?;

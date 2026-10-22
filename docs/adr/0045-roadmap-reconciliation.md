@@ -23,7 +23,7 @@ criteria or infer completion from the amount of existing code.
 | Milestone | Canonical scope | Current status |
 | --- | --- | --- |
 | M5.2 — Stoneward | Native Linux Runner Qualification & Operational Recovery | COMPLETE within the documented exact qualification scope |
-| M6 — Ironcrest | Artifact Binding, Reproducible Builds & Release Permit | PLANNED / NOT YET IMPLEMENTED |
+| M6 — Ironcrest | Artifact Binding, Reproducible Builds & Release Permit | IN PROGRESS; initial development implementation under ADR 0048; native qualification pending |
 | M7 — Asterwyn | Project Knowledge Engine & Change Impact Graph | SUBSTANTIALLY IMPLEMENTED AHEAD OF SEQUENCE; PENDING FORMAL MILESTONE RECONCILIATION |
 | M8 — Greywatch | Semantic Review, Agent Claims, Discoveries & Blind Spots | SUBSTANTIALLY IMPLEMENTED AHEAD OF SEQUENCE; PENDING FORMAL MILESTONE RECONCILIATION |
 
@@ -38,8 +38,10 @@ have not been independently checked. Local exact replay is not qualified semanti
 model accuracy; syntax extraction is not compiler resolution. Neither milestone
 is declared COMPLETE.
 
-M6 still requires its own artifact binding, reproducible build and release permit
-design and implementation. Existing source/certificate/evidence binding alone does
+At reconciliation, M6 still required its own artifact binding, reproducible build
+and release permit design and implementation. [ADR 0048](0048-artifact-build-and-release-permit.md)
+now defines the separate initial development implementation; milestone completion
+and native qualification remain pending. Existing source/certificate/evidence binding alone does
 not satisfy that scope. Genesis / Firstwarden bootstrap and independent trust
 establishment remain separate and are not started by this decision or a development
 self-validation experiment.

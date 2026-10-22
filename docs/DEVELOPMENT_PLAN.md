@@ -117,7 +117,7 @@ archcert verify certificate.json certificate.sig
 - client/server envelope encryption hierarchy;
 - organization RBAC;
 - external AI providers;
-- release permits and deployment gate;
+- production release authority and deployment-platform integration;
 - private transparency/Merkle log.
 
 These are planned, not discarded. They are deferred so that the root of trust exists before intelligence and UX are layered on top.
@@ -133,3 +133,12 @@ Milestone 4 should evaluate authority policy against those facts; issuance/signi
 requires separate design and authorization. Independent review, fuzzing, durable storage, recovery and production
 Linux runner operations remain necessary; engineering self-validation is not
 independent certification.
+
+## Canonical M6 implementation update
+
+The initial single-file Rust build/reproducibility/development Release Permit and
+local offline artifact gate are implemented separately from historical `ironcrest`
+review identifiers. See [ADR 0048](adr/0048-artifact-build-and-release-permit.md) and
+[release operations](release/README.md). M6 remains in progress pending native
+qualification and final acceptance. This does not start Genesis / Firstwarden or
+declare M7/M8 complete.
