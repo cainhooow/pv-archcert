@@ -25,6 +25,11 @@ Initially support one nonempty regular-file Rust executable, bounded to 64 MiB.
 The authority recipe fixes offline locked release Cargo, a single authority-selected
 binary name, no normalization, source at /source, fresh output at /work/target,
 finite resources, denied network and no host mounts or environment inheritance.
+The explicit `large-offline-image-v1/60s` runtime profile gives each control
+operation a 60-second deadline, recorded in runtime observations and the build
+recipe. Historical default construction retains 15 seconds. The source-check CLI
+may select this profile explicitly with `--large-offline-image`; target execution
+budgets, command authority and historical recovery defaults remain unchanged.
 Toolchain and dependency inventory digests are authority provisioning assertions
 bound alongside the image digest; they are not independent runtime attestation.
 Dependency preparation happens before image provisioning, never during the build.
@@ -40,10 +45,17 @@ for exact operator investigation; unknown cleanup prevents signing.
 The isolated authority launcher runs Cargo with literal arguments. Build logs go
 to stderr. After selecting output with descriptor-relative no-follow traversal,
 it copies one regular file to /output/artifact and signals readiness, retaining
-PID 1 until collection. The runner pauses the entire container, reads a bounded
-archive of /output without host extraction, rejects links/devices/directories/
-extra entries/path ambiguity, then resumes the launcher to obtain runtime exit
-status. These bytes are hostile output, not authority instructions. Container and
+PID 1 until collection. The daemon archive API omits live tmpfs data. The runner
+therefore invokes a fixed authority Python reader through the isolated runtime,
+with a literal /output/artifact selector and separate bounded binary channel.
+Descriptor-relative no-follow/nonblocking opens, exact directory entries, regular
+file/size checks and before/after inode/mode/size/mtime/ctime checks reject links,
+special files, extra entries and concurrent mutation. The controller independently
+hashes the returned hostile bytes. Collection does not interpret target status or
+filename text. After successful transfer, a runtime signal releases the waiting
+launcher so ordinary runtime exit status and whole-container cleanup can complete.
+The reader shares the sandbox and can be disrupted by hostile descendants; failed
+or uncertain collection is infrastructure uncertainty, never a positive verdict. These bytes are hostile output, not authority instructions. Container and
 source cleanup must succeed before evidence can support a permit. Existing
 execute behavior stays separate. This added mechanism needs live OCI regressions
 and native requalification; Stoneward's historical qualification is not extended.

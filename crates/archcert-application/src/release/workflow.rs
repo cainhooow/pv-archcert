@@ -299,6 +299,26 @@ impl ReleaseWorkflow<'_> {
             return Ok(result);
         }
 
+        if ordinal == BuildOrdinal::B {
+            let first = self
+                .restore_build(input, BuildOrdinal::A)
+                .await?
+                .ok_or(JobStoreError::Precondition)?;
+
+            if !first.cleanup_complete {
+                return Err(JobStoreError::Precondition);
+            }
+        }
+
+        if self.read(input, ReleaseRole::Input).await? != Some(release_bytes(input)?)
+            || self
+                .read(input, ReleaseRole::SourceCertificate)
+                .await?
+                .is_none()
+        {
+            return Err(JobStoreError::Precondition);
+        }
+
         let claim = self
             .repository
             .claim(input.certified_source.project, &input.identity()?, ordinal)

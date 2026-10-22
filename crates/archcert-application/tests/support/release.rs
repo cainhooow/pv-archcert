@@ -58,13 +58,16 @@ pub fn result(input: &BuildInputManifest, ordinal: BuildOrdinal, bytes: &[u8]) -
         source: input.certified_source.source.clone(),
         workspace: WorkspaceId::new(),
         backend: "DockerRootlessRunner".into(),
-        backend_version: "archcert-docker-cli-v1".into(),
+        backend_version: "archcert-docker-release-v1".into(),
         producer_version: "0.1.0".into(),
         observed_runtime: ObservedRuntimeIdentity {
             client_path: "/authority/docker".into(),
             client_version: "synthetic".into(),
             server_version: "synthetic".into(),
-            runtime_information: BTreeMap::new(),
+            runtime_information: BTreeMap::from([(
+                "authority/control-profile".into(),
+                "large-offline-image-v1/60s".into(),
+            )]),
         },
         toolchain: ToolchainObservation::NotObserved,
         image_digest: input.recipe.environment.image.clone(),

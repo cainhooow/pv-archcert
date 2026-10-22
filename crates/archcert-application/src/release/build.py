@@ -5,6 +5,7 @@ import signal
 import stat
 import subprocess
 import sys
+import time
 
 binary = sys.argv[1]
 os.environ.update(json.loads(sys.argv[2]))
@@ -37,7 +38,7 @@ try:
     descriptor = os.open(binary, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
     with os.fdopen(descriptor, 'rb') as source:
         metadata = os.fstat(source.fileno())
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        if not stat.S_ISREG(metadata.st_mode):
             raise RuntimeError('unsupported output type')
         if not 0 < metadata.st_size <= 64 * 1024 * 1024:
             raise RuntimeError('output size limit')
@@ -55,18 +56,17 @@ try:
 finally:
     os.close(parent)
 
-# SIGSTOP precedes the readiness marker observed by the controller: a tiny helper
-# writes the marker after PID 1 is stopped. The controller pauses every process
-# before copying, then unpauses and sends CONT. Output collection is not a log claim.
-helper = os.fork()
-if helper == 0:
-    import time
-    for _ in range(1000):
-        with open('/proc/1/status', encoding='ascii') as state:
-            if any(line.startswith('State:') and 'T' in line for line in state):
-                os.write(1, b'ARCHCERT_BUILD_READY_V1\n')
-                os._exit(0)
-        time.sleep(0.001)
-    os._exit(1)
-os.kill(os.getpid(), signal.SIGSTOP)
-os.waitpid(helper, 0)
+# Install the completion handshake before publishing readiness. Only the authority
+# runtime controls the freeze/copy/resume boundary; the marker grants no verdict.
+released = False
+
+
+def release(_signal, _frame):
+    global released
+    released = True
+
+
+signal.signal(signal.SIGUSR1, release)
+os.write(1, b'ARCHCERT_BUILD_READY_V1\n')
+while not released:
+    time.sleep(0.01)

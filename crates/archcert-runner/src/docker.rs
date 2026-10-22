@@ -30,6 +30,7 @@ pub struct DockerRuntime {
     executable: PathBuf,
     endpoint: String,
     configuration: tempfile::TempDir,
+    control_timeout: Duration,
 }
 
 impl DockerRuntime {
@@ -69,7 +70,18 @@ impl DockerRuntime {
             executable,
             endpoint,
             configuration,
+            control_timeout: CONTROL_TIMEOUT,
         })
+    }
+
+    /// Explicit versioned authority runtime profile for large offline build images.
+    /// Historical construction retains its 15-second control deadline. Target
+    /// execution budgets and isolation controls are unchanged.
+    pub fn for_release(executable: PathBuf, endpoint: String) -> Result<Self, ExecutionError> {
+        let mut runtime = Self::new(executable, endpoint)?;
+        runtime.control_timeout = Duration::from_secs(60);
+
+        Ok(runtime)
     }
 
     fn command(&self, args: &[String]) -> Command {
@@ -97,7 +109,7 @@ impl DockerRuntime {
             self.command(args),
             input,
             IoPolicy {
-                timeout: CONTROL_TIMEOUT,
+                timeout: self.control_timeout,
                 stdout: max,
                 stderr: CONTROL_BYTES,
                 prefix: max,
@@ -474,6 +486,25 @@ impl Drop for SandboxLease<'_> {
 
 impl<S: VerifiedSourceExport> SandboxRunner<S> for DockerRootlessRunner {
     fn execute(&self, request: ExecutionRequest<S>) -> Result<ExecutionResult, ExecutionFailure> {
+        self.execute_collecting(request, false).map(|r| r.execution)
+    }
+}
+
+impl DockerRootlessRunner {
+    /// Executes the fixed release launcher and collects /output/artifact while the
+    /// build launcher waits for collection. Returned bytes remain untrusted output.
+    pub fn execute_file<S: VerifiedSourceExport>(
+        &self,
+        request: ExecutionRequest<S>,
+    ) -> Result<archcert_application::execution::CollectedExecution, ExecutionFailure> {
+        self.execute_collecting(request, true)
+    }
+
+    fn execute_collecting<S: VerifiedSourceExport>(
+        &self,
+        request: ExecutionRequest<S>,
+        collect: bool,
+    ) -> Result<archcert_application::execution::CollectedExecution, ExecutionFailure> {
         let mut gate = self.execution_gate().map_err(|error| ExecutionFailure {
             error,
             evidence: None,
@@ -491,7 +522,15 @@ impl<S: VerifiedSourceExport> SandboxRunner<S> for DockerRootlessRunner {
         };
         let mut events = vec![ExecutionEvent::ExecutionPrepared];
 
-        let attempt = self.execute_inner(&request, id, &mut lease, &mut events, &mut gate);
+        let mut artifact = None;
+        let attempt = self.execute_inner(
+            &request,
+            id,
+            &mut lease,
+            &mut events,
+            &mut gate,
+            collect.then_some(&mut artifact),
+        );
 
         let cleanup = lease.cleanup();
 
@@ -502,11 +541,16 @@ impl<S: VerifiedSourceExport> SandboxRunner<S> for DockerRootlessRunner {
         }
 
         match (attempt, cleanup) {
-            (Ok(evidence), CleanupStatus::Destroyed) => Ok(ExecutionResult {
-                evidence,
-                cleanup,
-                events,
-            }),
+            (Ok(evidence), CleanupStatus::Destroyed) => {
+                Ok(archcert_application::execution::CollectedExecution {
+                    execution: ExecutionResult {
+                        evidence,
+                        cleanup,
+                        events,
+                    },
+                    artifact,
+                })
+            }
             (Ok(evidence), _) => Err(ExecutionFailure {
                 error: ExecutionError::CleanupFailed,
                 evidence: Some(Box::new(evidence)),
@@ -531,6 +575,7 @@ impl DockerRootlessRunner {
         lease: &mut SandboxLease<'_>,
         events: &mut Vec<ExecutionEvent>,
         gate: &mut Option<ExecutionGateLease>,
+        mut artifact: Option<&mut Option<Vec<u8>>>,
     ) -> Result<ExecutionEvidence, ExecutionError> {
         let started = Instant::now();
         let started_at_ms = now()?;
@@ -563,6 +608,12 @@ impl DockerRootlessRunner {
         let source_tar = archive::encode(&files)?;
 
         let mut observed_runtime = self.runtime.preflight()?;
+        if self.runtime.control_timeout != CONTROL_TIMEOUT {
+            observed_runtime.runtime_information.insert(
+                "authority/control-profile".into(),
+                "large-offline-image-v1/60s".into(),
+            );
+        }
 
         if gate.as_ref().is_some_and(|gate| {
             observed_runtime.runtime_information.get("ID") != Some(&gate.binding().daemon_id)
@@ -685,7 +736,8 @@ impl DockerRootlessRunner {
             .advance(ExecutionState::Running)?;
         events.push(ExecutionEvent::ExecutionStarted);
 
-        let output = process::run(
+        let mut collected = false;
+        let output = process::run_observed(
             self.runtime
                 .command(&strings(&["container", "start", "--attach", &lease.target])),
             &[],
@@ -696,6 +748,21 @@ impl DockerRootlessRunner {
                 prefix: limits.excerpt_bytes,
             },
             || self.runtime.stop(&lease.target),
+            |prefix, count| {
+                if artifact.is_some()
+                    && !collected
+                    && prefix == b"ARCHCERT_BUILD_READY_V1\n"
+                    && count == prefix.len() as u64
+                {
+                    let bytes = self.collect_release_file(&lease.target)?;
+                    if let Some(destination) = artifact.as_mut() {
+                        **destination = Some(bytes);
+                    }
+                    collected = true;
+                }
+
+                Ok(())
+            },
         )?;
 
         if output.trigger.is_some() {
@@ -738,7 +805,12 @@ impl DockerRootlessRunner {
             source: request.input().expected_source_identity().clone(),
             workspace: request.input().workspace(),
             backend: "DockerRootlessRunner".into(),
-            backend_version: "archcert-docker-cli-v1".into(),
+            backend_version: if artifact.is_some() {
+                "archcert-docker-release-v1"
+            } else {
+                "archcert-docker-cli-v1"
+            }
+            .into(),
             producer_version: env!("CARGO_PKG_VERSION").into(),
             observed_runtime,
             toolchain: ToolchainObservation::NotObserved,
@@ -760,6 +832,38 @@ impl DockerRootlessRunner {
             stderr: output.stderr,
             outcome,
         })
+    }
+
+    fn collect_release_file(&self, target: &str) -> Result<Vec<u8>, ExecutionError> {
+        // Runtime archives omit tmpfs data. Run only this fixed authority reader
+        // through the isolated runtime, with no host execution or target selector.
+        let output = self.runtime.call(
+            &strings(&[
+                "container",
+                "exec",
+                "--user",
+                USER,
+                target,
+                "/usr/bin/python3",
+                "-I",
+                "-c",
+                include_str!("release_collect.py"),
+            ]),
+            &[],
+            archcert_application::release::MAX_RELEASE_ARTIFACT_BYTES,
+        )?;
+
+        if output.stdout.excerpt.is_empty() {
+            return Err(ExecutionError::RuntimeFailure);
+        }
+
+        self.runtime.call(
+            &strings(&["container", "kill", "--signal=USR1", target]),
+            &[],
+            CONTROL_BYTES,
+        )?;
+
+        Ok(output.stdout.excerpt)
     }
 
     fn creation_call(

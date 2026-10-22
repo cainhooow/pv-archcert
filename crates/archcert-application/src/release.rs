@@ -71,7 +71,7 @@ pub struct BuildRecipeDescription {
     pub id: String,
     /// Exact recipe version; incompatible recipes need a new version.
     pub version: String,
-    /// Qualified execution family, separately identified from source checks.
+    /// Versioned execution family, separately identified from source checks.
     pub profile: String,
     /// Authority image and provisioning inventories.
     pub environment: BuildEnvironment,
@@ -89,6 +89,8 @@ pub struct BuildRecipeDescription {
     pub network: String,
     /// Only NONE is supported.
     pub normalization: String,
+    /// Explicit large-offline-image-v1 control operation deadline.
+    pub control_timeout_ms: u64,
 }
 
 /// Explicit authority capability. Construction is an operator decision, never
@@ -162,6 +164,7 @@ impl RustReleaseRecipe {
             source_mode: "EXACT_SNAPSHOT_READ_ONLY".into(),
             network: "DENIED".into(),
             normalization: "NONE".into(),
+            control_timeout_ms: 60_000,
         };
         let recipe = Self { description };
         recipe.execution_profile()?;
@@ -310,7 +313,12 @@ impl BuildResult {
                 || e.profile != input.recipe.profile
                 || release_bytes(&e.command)? != release_bytes(&input.recipe.command)?
                 || release_bytes(&e.limits)? != release_bytes(&input.recipe.limits)?
-                || e.backend_version != "archcert-docker-cli-v1")
+                || e.backend_version != "archcert-docker-release-v1"
+                || e.observed_runtime
+                    .runtime_information
+                    .get("authority/control-profile")
+                    .map(String::as_str)
+                    != Some("large-offline-image-v1/60s"))
         {
             return Err(JobStoreError::Precondition);
         }
@@ -324,6 +332,16 @@ impl BuildResult {
                 || e.outcome != ExecutionOutcome::Completed
                 || e.exit_code != Some(0)
                 || !e.stdout.complete
+                || !e.stderr.complete
+                || e.termination != archcert_domain::execution::TerminationReason::Exit
+                || e.container_user != "10001:10001"
+                || e.environment_keys
+                    != archcert_domain::execution::sandbox_environment()
+                        .into_keys()
+                        .collect::<Vec<_>>()
+                || e.stdout.truncated
+                || e.stdout.observed_bytes != b"ARCHCERT_BUILD_READY_V1\n".len() as u64
+                || e.stdout.sha256 != digest_bytes(b"ARCHCERT_BUILD_READY_V1\n")
                 || e.stdout.excerpt != b"ARCHCERT_BUILD_READY_V1\n"
             {
                 return Err(JobStoreError::Precondition);

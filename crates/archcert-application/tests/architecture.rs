@@ -395,6 +395,8 @@ fn runner_and_source_interfaces_contain_no_signing_capability() {
     for source in [
         include_str!("../src/materialization.rs"),
         include_str!("../src/execution.rs"),
+        include_str!("../src/release.rs"),
+        include_str!("../src/release/workflow.rs"),
         include_str!("../src/source.rs"),
         include_str!("../src/configuration.rs"),
         include_str!("../src/semantic.rs"),

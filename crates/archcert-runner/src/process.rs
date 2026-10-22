@@ -100,10 +100,22 @@ pub(crate) struct IoPolicy {
 }
 
 pub(crate) fn run(
+    command: Command,
+    input: &[u8],
+    policy: IoPolicy,
+    terminate: impl FnMut(),
+) -> Result<ProcessOutput, Error> {
+    run_observed(command, input, policy, terminate, |_, _| Ok(()))
+}
+
+/// Release-only collection hook. The ordinary execution entry point observes no
+/// target output as control data and preserves its existing termination behavior.
+pub(crate) fn run_observed(
     mut command: Command,
     input: &[u8],
     policy: IoPolicy,
     mut terminate: impl FnMut(),
+    mut observe: impl FnMut(&[u8], u64) -> Result<(), Error>,
 ) -> Result<ProcessOutput, Error> {
     command
         .stdin(if input.is_empty() {
@@ -157,6 +169,10 @@ pub(crate) fn run(
         } else {
             false
         };
+
+        if trigger.is_none() && !stdout_limit && !stderr_limit {
+            observe(&out.excerpt, out.bytes)?;
+        }
 
         if let Some(pipe) = &mut stdin {
             let end = (written + 65536).min(input.len());
