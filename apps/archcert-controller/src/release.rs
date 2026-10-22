@@ -40,6 +40,9 @@ pub struct ReleaseArgs {
     source_policy: String,
     #[arg(long)]
     image: String,
+    /// Exact authority recipe version; no newer default is selected on recovery.
+    #[arg(long, value_parser = [RUST_RELEASE_RECIPE_VERSION])]
+    recipe_version: String,
     #[arg(long)]
     dependencies: String,
     #[arg(long)]
@@ -226,6 +229,10 @@ pub async fn run(state: &ControlPlane, args: ReleaseArgs) -> Result<()> {
         release_policy: RELEASE_POLICY.into(),
         release_policy_sha256: release_policy_digest(),
     };
+    ensure!(
+        recipe.description().version == args.recipe_version,
+        "unsupported retained release recipe"
+    );
     verify_source(&input, &recipe, &certificate, &source_key, &release_key)?;
 
     let workspace = fs::canonicalize(&args.workspace_root)?;
@@ -385,4 +392,62 @@ pub async fn show(state: &ControlPlane, project: &str, invocation: &str) -> Resu
     println!("{}", serde_json::to_string_pretty(&record)?);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    #[test]
+    fn admission_and_recovery_require_an_explicit_supported_recipe_version() {
+        let mut args = vec![
+            "archcert-controller",
+            "--config",
+            "/private/authority.json",
+            "release",
+            "--project",
+            "project",
+            "--repository",
+            "repository",
+            "--actor",
+            "actor",
+            "--submission",
+            "submission",
+            "--source-certificate",
+            "/private/certificate.json",
+            "--source-key",
+            "/private/source.hex",
+            "--source-policy",
+            "policy",
+            "--image",
+            "image",
+            "--dependencies",
+            "dependencies",
+            "--toolchain",
+            "toolchain",
+            "--binary",
+            "archcert",
+            "--release-key",
+            "/private/release.hex",
+            "--development-key",
+            "/private/key.der",
+            "--workspace-root",
+            "/private/work",
+            "--docker",
+            "/usr/bin/docker",
+            "--endpoint",
+            "unix:///private/runtime.sock",
+            "--output",
+            "/private/output",
+        ];
+
+        assert!(crate::Args::try_parse_from(&args).is_err());
+
+        args.extend(["--recipe-version", super::RUST_RELEASE_RECIPE_VERSION]);
+        assert!(crate::Args::try_parse_from(&args).is_ok());
+
+        args.pop();
+        args.push("unsupported-newer-version");
+        assert!(crate::Args::try_parse_from(&args).is_err());
+    }
 }

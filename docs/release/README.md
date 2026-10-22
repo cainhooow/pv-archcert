@@ -31,7 +31,8 @@ unencrypted; the local signer is DEVELOPMENT ONLY / NOT PRODUCTION AUTHORITY.
 
 `archcert-controller --config PRIVATE_CONFIG release --help` lists the required
 explicit authority parameters: scope/actor, exact accepted source submission,
-source certificate and trusted source key/policy, approved image, public dependency
+source certificate and trusted source key/policy, explicit `--recipe-version 1.0.2`,
+approved image, public dependency
 bundle SHA-256, toolchain inventory SHA-256, binary selector, release public/private
 key paths, materialization root, Docker executable/endpoint and new export directory.
 The source certificate is cryptographically verified before admission, including

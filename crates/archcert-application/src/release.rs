@@ -34,6 +34,9 @@ pub const MAX_RELEASE_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
 /// Versioned producer for new release evidence; historical Ironcrest is untouched.
 pub const RELEASE_PRODUCER: &str = "archcert-release-v1/0.1.0";
 
+/// Exact supported recipe version; operators select it explicitly on admission/resume.
+pub const RUST_RELEASE_RECIPE_VERSION: &str = "1.0.2";
+
 /// Fixed pure release policy. No target or semantic response may alter it.
 pub const RELEASE_POLICY: &str = "archcert-release-strict-v1/1.0.0";
 
@@ -169,7 +172,7 @@ impl RustReleaseRecipe {
         .map_err(|_| JobStoreError::Invalid)?;
         let description = BuildRecipeDescription {
             id: "rust-single-file-release-v1".into(),
-            version: "1.0.2".into(),
+            version: RUST_RELEASE_RECIPE_VERSION.into(),
             profile: "rust-release-build-v1".into(),
             environment,
             command,

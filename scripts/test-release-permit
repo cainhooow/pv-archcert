@@ -130,6 +130,7 @@ def main():
                  '--repository', source['repository'], '--actor', F['ACTOR'], '--submission', source['submission'],
                  '--source-certificate', certificate, '--source-key', public,
                  '--source-policy', source_certificate['payload']['policy']['sha256'], '--image', args.image,
+                 '--recipe-version', '1.0.2',
                  '--dependencies', args.dependencies, '--toolchain', args.toolchain, '--binary', 'fixture',
                  '--release-key', public, '--development-key', private, '--workspace-root', workspaces,
                  '--docker', args.docker, '--endpoint', args.endpoint, '--output', output / 'released']

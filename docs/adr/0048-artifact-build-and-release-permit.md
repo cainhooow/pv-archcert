@@ -145,3 +145,8 @@ concurrent-content interference fails collection or is detected by the bounded
 file checks. No root reader, new capability, host mount or credential is introduced.
 This is a new release mechanism requiring native qualification; it grants no
 extension of historical Stoneward qualification.
+
+The controller requires an explicit --recipe-version on both admission and resume.
+An upgraded authority executable must reject an unsupported retained version rather
+than silently select its newer recipe and create a different invocation. Recipe
+content and cryptographic schemas are unchanged by this CLI guard.
