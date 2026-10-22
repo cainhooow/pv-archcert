@@ -1,0 +1,72 @@
+"""Authority-owned offline Rust recipe, executed only inside the isolated runner."""
+import json
+import os
+import signal
+import stat
+import subprocess
+import sys
+
+binary = sys.argv[1]
+os.environ.update(json.loads(sys.argv[2]))
+os.makedirs('/home/archcert/.cargo', mode=0o700, exist_ok=True)
+os.symlink('/opt/archcert/cargo/registry', '/home/archcert/.cargo/registry')
+
+# No repository-provided shell or launcher. Cargo still executes hostile build
+# scripts, rustc wrappers and source under the ordinary sandbox boundary.
+status = subprocess.run(
+    ['/usr/local/cargo/bin/cargo', 'build', '--release', '--locked', '--offline', '--bin', binary],
+    cwd='/source',
+    stdin=subprocess.DEVNULL,
+    stdout=sys.stderr,
+    stderr=sys.stderr,
+    check=False,
+).returncode
+if status != 0:
+    sys.exit(status if status > 0 else 1)
+
+# Traverse each component without following links. The runner subsequently freezes
+# the whole sandbox and validates its own archive copy; this launcher cannot assert
+# authority over either the accepted digest or the reproducibility verdict.
+parent = os.open('/work', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    for component in ['target', 'release']:
+        child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+        os.close(parent)
+        parent = child
+
+    descriptor = os.open(binary, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    with os.fdopen(descriptor, 'rb') as source:
+        metadata = os.fstat(source.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise RuntimeError('unsupported output type')
+        if not 0 < metadata.st_size <= 64 * 1024 * 1024:
+            raise RuntimeError('output size limit')
+
+        with open('/output/artifact', 'xb') as output:
+            remaining = metadata.st_size
+            while remaining:
+                chunk = source.read(min(remaining, 65536))
+                if not chunk:
+                    raise RuntimeError('short output')
+                output.write(chunk)
+                remaining -= len(chunk)
+            if source.read(1):
+                raise RuntimeError('output grew')
+finally:
+    os.close(parent)
+
+# SIGSTOP precedes the readiness marker observed by the controller: a tiny helper
+# writes the marker after PID 1 is stopped. The controller pauses every process
+# before copying, then unpauses and sends CONT. Output collection is not a log claim.
+helper = os.fork()
+if helper == 0:
+    import time
+    for _ in range(1000):
+        with open('/proc/1/status', encoding='ascii') as state:
+            if any(line.startswith('State:') and 'T' in line for line in state):
+                os.write(1, b'ARCHCERT_BUILD_READY_V1\n')
+                os._exit(0)
+        time.sleep(0.001)
+    os._exit(1)
+os.kill(os.getpid(), signal.SIGSTOP)
+os.waitpid(helper, 0)

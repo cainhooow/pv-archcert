@@ -20,6 +20,9 @@ pub mod materialization;
 
 pub mod source;
 
+/// Exact build, artifact and release identities, separate from source certification.
+pub mod release;
+
 /// Unique identifier of a registered project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ProjectId(Uuid);

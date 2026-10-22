@@ -25,6 +25,9 @@ pub mod semantic;
 
 pub mod source;
 
+/// Authority build contracts and durable release orchestration ports.
+pub mod release;
+
 pub mod validation;
 
 pub mod worker;

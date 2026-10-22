@@ -63,6 +63,15 @@ pub struct ExecutionResult {
     pub events: Vec<ExecutionEvent>,
 }
 
+/// Release-only bounded file collection plus ordinary execution and cleanup evidence.
+/// Artifact bytes remain untrusted; storage and release policy establish identities.
+pub struct CollectedExecution {
+    /// Runtime observations after collection and complete sandbox destruction.
+    pub execution: ExecutionResult,
+    /// Exactly one authority-selected regular file, independently copied by the runner.
+    pub artifact: Option<Vec<u8>>,
+}
+
 /// Setup, evidence or cleanup failure; target nonzero exit is not this error.
 #[derive(Debug, Serialize)]
 pub struct ExecutionFailure {
