@@ -6,6 +6,8 @@ mod ironcrest;
 
 mod runtime;
 
+mod release;
+
 use archcert_application::jobs::*;
 use archcert_domain::{
     ProjectId,
