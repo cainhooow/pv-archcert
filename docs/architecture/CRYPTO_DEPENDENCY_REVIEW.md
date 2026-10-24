@@ -93,3 +93,23 @@ the real controlled certificate signature over the exact retained canonical byte
 This independently reproduces cryptography/serialization, not engineering claims
 or independent certification of the implementation. Neither OpenSSL nor Python
 is a runtime dependency of issuance or offline verification.
+
+## M6 closure security patch
+
+On October 24, 2026, the closure advisory gate rejected locked ctutils 0.4.3 under
+[RUSTSEC-2026-0385](https://rustsec.org/advisories/RUSTSEC-2026-0385.html), issued
+October 23. The advisory describes conditional branches in unsigned mask generation
+and in 128-bit comparisons on 32-bit targets. ctutils reaches the signing graph
+through digest 0.11.3 and curve25519-dalek 5.0.0, and also reaches PostgreSQL/hash
+dependencies. This dependency exposure warrants remediation without claiming that
+ArchCert demonstrated secret recovery or independently proved constant-time code.
+
+The lockfile selects the smallest patched version, ctutils 0.4.4, with registry
+checksum `12218662ccac37d9714f2191252553d67585b97df8c839cbe49e0bde278dc865`.
+The [upstream release](https://github.com/RustCrypto/utils/pull/1569) records the
+mask-generation and comparison corrections. No advisory ignore, feature change,
+new package, algorithm or canonical format is introduced. Retained signature and
+certificate vectors remain exact compatibility checks. Historical certificates
+keep their original source/dependency identities; this intentional dependency fix
+requires a new exact-source self-validation and an independently provisioned public
+offline cache/image under the existing release environment binding.
