@@ -587,3 +587,58 @@ fn hostile_project_configuration_cannot_change_limits_or_registry() -> R {
 
     Ok(())
 }
+
+struct SerializationOverflow {
+    emitted: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl KnowledgeExtractor for SerializationOverflow {
+    fn identity(&self) -> &'static str {
+        "serialization-bound-fixture/1"
+    }
+
+    fn supports(&self, _: &SourceFile) -> bool {
+        true
+    }
+
+    fn extract(&self, _: &SourceFile, sink: &mut StructuralSink<'_>) -> Result<(), KnowledgeError> {
+        // Saturate serialization using legal bounded graph records. The counter
+        // proves failure occurs after extraction, rather than at a smaller limit.
+        for ordinal in 0..10_000 {
+            sink.node(
+                &format!("label/{ordinal}"),
+                NodeKind::Symbol,
+                "x".repeat(4096),
+                b"fixture",
+            )?;
+            self.emitted
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        Ok(())
+    }
+}
+
+#[test]
+fn oversized_canonical_knowledge_fails_after_successful_bounded_extraction() -> R {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let emitted = Arc::new(AtomicUsize::new(0));
+    let engine = KnowledgeEngine::new(
+        vec![Box::new(SerializationOverflow {
+            emitted: emitted.clone(),
+        })],
+        KnowledgeLimits::default(),
+    )?;
+    let accepted = source(&[("serialized.input", b"bounded input")], 'a', 'b', 1)?;
+
+    let result = engine.extract(&accepted, &[], None);
+
+    assert_eq!(emitted.load(Ordering::Relaxed), 10_000);
+    assert!(matches!(result, Err(KnowledgeError::LimitExceeded)));
+
+    Ok(())
+}

@@ -384,6 +384,48 @@ fn branches_history_availability_and_pack_layout_cannot_change_exact_knowledge()
         );
     }
 
+    let child_submission = SourceSubmission {
+        requested_commit: GitObjectId::parse(&rewritten)?,
+        ..submission
+    };
+    let child_before = ingest_source(
+        &LocalGitGateway::new(repository.clone(), path.join(".git")),
+        &mut MemorySourceStore::default(),
+        child_submission.clone(),
+        SourceLimits::default(),
+    )
+    .map_err(|_| "selected child acquisition failed")?;
+    let child_knowledge = engine()?.extract(&child_before.snapshot, &[], None)?;
+
+    assert_ne!(
+        child_knowledge.artifact().digest(),
+        expected.artifact().digest()
+    );
+
+    // Remove the selected child's actual parent object and shallow declaration.
+    // Its complete source tree remains available; ancestry is never inferred.
+    fs::remove_file(
+        path.join(".git/objects")
+            .join(&commit[..2])
+            .join(&commit[2..]),
+    )?;
+    fs::remove_file(path.join(".git/shallow"))?;
+    let child_after = ingest_source(
+        &LocalGitGateway::new(repository, path.join(".git")),
+        &mut MemorySourceStore::default(),
+        child_submission,
+        SourceLimits::default(),
+    )
+    .map_err(|_| "missing ancestry must not fabricate a source failure or history claim")?;
+
+    assert_eq!(
+        engine()?
+            .extract(&child_after.snapshot, &[], None)?
+            .artifact()
+            .bytes(),
+        child_knowledge.artifact().bytes()
+    );
+
     assert!(expected.body().coverage.iter().any(|c| c.dimension
         == archcert_domain::knowledge::CoverageDimension::GitBaseline
         && c.state == archcert_domain::knowledge::CoverageState::NotAvailable));

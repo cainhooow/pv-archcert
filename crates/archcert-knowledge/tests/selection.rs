@@ -348,7 +348,15 @@ fn authority_mapping_changes_and_removed_files_cannot_be_hidden() -> R {
         [SourcePath::from_bytes(b"shared.rs")?]
     );
 
-    let changed_authority = engine.extract(&after, &[bundle(project, "2")?], Some(&selected))?;
+    let mut remapped_entries = bundles[0].entries().to_vec();
+    remapped_entries[0].paths = vec![SourcePath::from_bytes(b"unrelated.rs")?];
+    let remapped = AuthorityKnowledgeBundle::approve(
+        bundles[0].id().into(),
+        bundles[0].version().into(),
+        KnowledgeScope::Project(project),
+        remapped_entries,
+    )?;
+    let changed_authority = engine.extract(&after, &[remapped], Some(&selected))?;
     let expanded = select_validation_scenarios(
         &catalog(project, false)?,
         &changed_authority,
@@ -391,6 +399,86 @@ fn invalid_catalogs_cannot_create_unbounded_or_ambiguous_mappings() -> R {
         ScenarioCatalog::approve("catalog".into(), "1".into(), scope, vec![mandatory; 129])
             .is_err()
     );
+
+    Ok(())
+}
+
+#[test]
+fn policy_associations_produce_scenario_witnesses_and_changed_policy_bytes_reject_replay() -> R {
+    let project = ProjectId::new();
+    let before = source(project, "project/repository", 'a', b"old")?;
+    let after = source(project, "project/repository", 'c', b"new")?;
+    let selected = SelectedBaseline::accepted(&before, "Exact policy-mapping baseline".into())?;
+    let engine = KnowledgeEngine::new(vec![Box::new(InventoryOnly)], KnowledgeLimits::default())?;
+    let mut entries = bundle(project, "1")?.entries().to_vec();
+    entries[0].id = "RELEASE-POLICY".into();
+    entries[0].kind = AuthorityEntryKind::PolicyAssociation;
+    entries[0].policy_sha256 = vec![digest_bytes(b"authority policy version one")];
+    let original = AuthorityKnowledgeBundle::approve(
+        "policy-mapping".into(),
+        "1".into(),
+        KnowledgeScope::Project(project),
+        entries.clone(),
+    )?;
+    let original = [original];
+    let baseline = engine.extract(&before, &original, Some(&selected))?;
+    let target = engine.extract(&after, &original, Some(&selected))?;
+    let catalog = ScenarioCatalog::approve(
+        "policy-scenarios".into(),
+        "1".into(),
+        KnowledgeScope::Project(project),
+        vec![ValidationScenario {
+            id: "policy-scenario".into(),
+            requirement: ScenarioRequirement::ImpactSelected,
+            triggers: vec![ScenarioTrigger::AuthorityEntry {
+                id: "RELEASE-POLICY".into(),
+            }],
+        }],
+    )?;
+
+    let selection = select_validation_scenarios(&catalog, &target, Some(&baseline))?;
+
+    assert!(!selection.impact().body().full_review);
+    assert_eq!(selection.selected().len(), 1);
+    let ScenarioReason::RelationClosure {
+        changed_node,
+        affected_node,
+        relations,
+    } = &selection.selected()[0].reason
+    else {
+        return Err("policy relation witness missing".into());
+    };
+    assert_eq!(changed_node, "file:shared.rs");
+    assert_eq!(relations.len(), 1);
+    assert_eq!(&relations[0].to, affected_node);
+    assert_eq!(relations[0].kind, RelationKind::GovernedBy);
+
+    entries[0].policy_sha256 = vec![digest_bytes(b"authority policy version two")];
+    let changed = AuthorityKnowledgeBundle::approve(
+        "policy-mapping".into(),
+        "1".into(),
+        KnowledgeScope::Project(project),
+        entries,
+    )?;
+    let changed = [changed];
+    let current = engine.extract(&after, &changed, Some(&selected))?;
+
+    assert_ne!(target.artifact().digest(), current.artifact().digest());
+    assert!(
+        engine
+            .restore_exact(
+                &after,
+                &changed,
+                Some(&selected),
+                target.artifact().bytes(),
+                target.artifact().digest(),
+            )
+            .is_err()
+    );
+
+    let expanded = select_validation_scenarios(&catalog, &current, Some(&baseline))?;
+
+    assert!(expanded.impact().body().full_review);
 
     Ok(())
 }
