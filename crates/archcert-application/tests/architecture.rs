@@ -16,6 +16,7 @@ fn allowed_inward_dependency(package: &str, dependency: &str) -> bool {
         && (is_protobuf_dependency(dependency)
             || is_persistence_dependency(dependency)
             || is_semantic_provider_dependency(dependency)
+            || is_provider_http_dependency(dependency)
             || is_runtime_dependency(dependency))
     {
         return false;
@@ -160,6 +161,42 @@ fn is_semantic_provider_dependency(name: &str) -> bool {
     .any(|prefix| name == *prefix || name.starts_with(&format!("{prefix}-")))
 }
 
+fn is_provider_http_dependency(name: &str) -> bool {
+    ["reqwest", "ureq", "isahc"].contains(&name)
+}
+
+fn semantic_forbidden_capability(name: &str) -> bool {
+    is_runtime_dependency(name)
+        || is_persistence_dependency(name)
+        || [
+            "archcert-source",
+            "archcert-materialization",
+            "archcert-gateway",
+            "archcert-crypto",
+            "archcert-certificate",
+            "archcert-evidence",
+            "ed25519-dalek",
+            "ring",
+            "openssl",
+            "cryptoki",
+            "aws-sdk-kms",
+        ]
+        .contains(&name)
+}
+
+fn dependency_closure(graph: &BTreeMap<String, Vec<String>>, root: &str) -> BTreeSet<String> {
+    let mut pending = vec![root.to_owned()];
+    let mut seen = BTreeSet::new();
+
+    while let Some(name) = pending.pop() {
+        if seen.insert(name.clone()) {
+            pending.extend(graph.get(&name).into_iter().flatten().cloned());
+        }
+    }
+
+    seen
+}
+
 fn is_persistence_dependency(name: &str) -> bool {
     name == "sqlx"
         || name.starts_with("sqlx-")
@@ -249,12 +286,20 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
                 !(is_protobuf_dependency(&name)
                     || is_persistence_dependency(&name)
                     || is_semantic_provider_dependency(&name)
+                    || is_provider_http_dependency(&name)
                     || is_runtime_dependency(&name)),
                 "transport, persistence, provider or runtime enters inward graph {root}: {name}"
             );
 
             pending.extend(graph.get(&name).into_iter().flatten().cloned());
         }
+    }
+
+    for name in dependency_closure(&graph, "archcert-semantic") {
+        assert!(
+            !semantic_forbidden_capability(&name),
+            "runtime, acquisition, persistence or signing capability enters semantic adapter: {name}"
+        );
     }
 
     // The CLI deliberately composes issuance. Execution and transport graphs do
@@ -353,6 +398,8 @@ fn guard_rejects_forbidden_dependencies_including_renamed_package_names() {
         ("archcert-domain", "async-openai"),
         ("archcert-application", "anthropic"),
         ("archcert-application", "openai-api"),
+        ("archcert-application", "reqwest"),
+        ("archcert-domain", "ureq"),
         ("archcert-knowledge", "archcert-crypto"),
         ("archcert-knowledge", "archcert-storage"),
         ("archcert-knowledge", "archcert-runner"),
@@ -412,6 +459,39 @@ fn guard_rejects_forbidden_dependencies_including_renamed_package_names() {
 }
 
 #[test]
+fn semantic_capability_guard_rejects_transitive_and_cyclic_intermediaries() {
+    for forbidden in [
+        "archcert-runner",
+        "bollard",
+        "docker-api",
+        "archcert-storage",
+        "archcert-source",
+        "archcert-gateway",
+        "archcert-crypto",
+        "archcert-certificate",
+        "ed25519-dalek",
+        "aws-sdk-kms",
+    ] {
+        let graph = BTreeMap::from([
+            ("archcert-semantic".into(), vec!["intermediary".into()]),
+            ("intermediary".into(), vec!["cycle".into()]),
+            (
+                "cycle".into(),
+                vec!["intermediary".into(), forbidden.into()],
+            ),
+        ]);
+
+        let closure = dependency_closure(&graph, "archcert-semantic");
+
+        assert!(
+            closure
+                .iter()
+                .any(|name| semantic_forbidden_capability(name))
+        );
+    }
+}
+
+#[test]
 fn runner_and_source_interfaces_contain_no_signing_capability() {
     for source in [
         include_str!("../src/materialization.rs"),
@@ -421,6 +501,8 @@ fn runner_and_source_interfaces_contain_no_signing_capability() {
         include_str!("../src/source.rs"),
         include_str!("../src/configuration.rs"),
         include_str!("../src/semantic.rs"),
+        include_str!("../src/semantic/greywatch.rs"),
+        include_str!("../../archcert-semantic/src/lib.rs"),
         include_str!("../src/knowledge.rs"),
         include_str!("../src/ironcrest.rs"),
         include_str!("../src/ironcrest/workflow.rs"),

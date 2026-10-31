@@ -84,7 +84,7 @@ pub enum SemanticContextCoverage {
 /// Separate immutable identity; this is never the canonical KnowledgeArtifact.
 #[derive(Debug)]
 pub struct BoundedSemanticPackage {
-    artifact: CanonicalArtifact,
+    pub(super) artifact: CanonicalArtifact,
     policy_sha256: Sha256Digest,
     coverage: SemanticContextCoverage,
 }
@@ -514,7 +514,7 @@ impl SemanticReviewRequest {
     }
 }
 
-fn stabilize_size(value: &mut Value, key: &str) -> Result<(), KnowledgeError> {
+pub(super) fn stabilize_size(value: &mut Value, key: &str) -> Result<(), KnowledgeError> {
     // Decimal size has at most seven digits under the fixed 1 MiB ceiling.
     for _ in 0..8 {
         let size = canonical_bytes(value)?.len();
