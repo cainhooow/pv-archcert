@@ -13,7 +13,9 @@ rustix.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+serde_json.workspace = true
 archcert-source = { path = "../archcert-source", version = "=0.1.0" }
+archcert-knowledge = { path = "../archcert-knowledge", version = "=0.1.0" }
 
 [lints]
 workspace = true

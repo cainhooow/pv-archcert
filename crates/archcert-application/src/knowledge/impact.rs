@@ -2,6 +2,10 @@
 
 use super::*;
 
+#[cfg(test)]
+#[path = "impact_tests.rs"]
+mod tests;
+
 /// Immutable impact summary. Relation uncertainty can only expand review.
 #[derive(Debug, Serialize)]
 pub struct ImpactBody {

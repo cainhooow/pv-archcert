@@ -255,8 +255,10 @@ version = "0.1.0"
 dependencies = [
  "archcert-application",
  "archcert-domain",
+ "archcert-knowledge",
  "archcert-source",
  "rustix",
+ "serde_json",
  "tempfile",
 ]
 
