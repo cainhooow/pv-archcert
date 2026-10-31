@@ -20,6 +20,16 @@ writable sandbox Cargo home. Its advisory root is writable for cargo-deny's froz
 operation lock; individual pinned advisory repositories and the public registry
 remain links into read-only image data.
 
+Refresh the public advisory database with `cargo deny fetch db` before packing it.
+Preserve the resulting `.git/FETCH_HEAD` modification time in the archive and
+image, and record it with the fetched revision. Cargo-deny 0.20.2 uses that time
+for its frozen database freshness check. Normalizing it to the Unix epoch makes
+an otherwise current database stale. Do not fabricate a newer timestamp or relax
+the freshness check. Refresh through a real fetch, preserve its metadata, publish
+a new image digest and select that new authority environment explicitly. Run an
+offline frozen advisory check inside the provisioned image before a full source
+validation; retain a failed image and its original validation evidence separately.
+
 Build with an independently provisioned rootless Docker daemon, publish to an
 explicit development registry and resolve the resulting repository@sha256 digest.
 Use that exact immutable reference in the external authority grant. A local build
