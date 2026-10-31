@@ -7,20 +7,22 @@ use std::{
 };
 
 fn allowed_inward_dependency(package: &str, dependency: &str) -> bool {
+    if [
+        "archcert-domain",
+        "archcert-application",
+        "archcert-knowledge",
+    ]
+    .contains(&package)
+        && (is_protobuf_dependency(dependency)
+            || is_persistence_dependency(dependency)
+            || is_semantic_provider_dependency(dependency)
+            || is_runtime_dependency(dependency))
+    {
+        return false;
+    }
+
     if package == "archcert-runner"
         && (dependency == "archcert-semantic" || is_semantic_provider_dependency(dependency))
-    {
-        return false;
-    }
-
-    if ["archcert-domain", "archcert-application"].contains(&package)
-        && is_semantic_provider_dependency(dependency)
-    {
-        return false;
-    }
-
-    if ["archcert-domain", "archcert-application"].contains(&package)
-        && (is_protobuf_dependency(dependency) || is_persistence_dependency(dependency))
     {
         return false;
     }
@@ -181,6 +183,14 @@ fn is_protobuf_dependency(name: &str) -> bool {
         || name.starts_with("archcert-proto")
 }
 
+fn is_runtime_dependency(name: &str) -> bool {
+    name == "archcert-runner"
+        || name == "bollard"
+        || name.starts_with("bollard-")
+        || name == "docker-api"
+        || name.starts_with("docker-api-")
+}
+
 #[test]
 fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_execution()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -221,8 +231,12 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
     }
 
     // External normal/build dependencies are included so an intermediary cannot
-    // leak generated DTOs or Protobuf runtimes into either inward layer.
-    for root in ["archcert-domain", "archcert-application"] {
+    // bring transport, persistence, providers or runtime authority into the core.
+    for root in [
+        "archcert-domain",
+        "archcert-application",
+        "archcert-knowledge",
+    ] {
         let mut pending = vec![root.to_owned()];
         let mut seen = BTreeSet::new();
 
@@ -234,8 +248,9 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
             assert!(
                 !(is_protobuf_dependency(&name)
                     || is_persistence_dependency(&name)
-                    || is_semantic_provider_dependency(&name)),
-                "Protobuf enters inward graph {root}: {name}"
+                    || is_semantic_provider_dependency(&name)
+                    || is_runtime_dependency(&name)),
+                "transport, persistence, provider or runtime enters inward graph {root}: {name}"
             );
 
             pending.extend(graph.get(&name).into_iter().flatten().cloned());
@@ -341,6 +356,12 @@ fn guard_rejects_forbidden_dependencies_including_renamed_package_names() {
         ("archcert-knowledge", "archcert-crypto"),
         ("archcert-knowledge", "archcert-storage"),
         ("archcert-knowledge", "archcert-runner"),
+        ("archcert-knowledge", "async-openai"),
+        ("archcert-knowledge", "prost-types"),
+        ("archcert-knowledge", "tonic"),
+        ("archcert-knowledge", "bollard-stubs"),
+        ("archcert-application", "bollard"),
+        ("archcert-application", "docker-api"),
         ("archcert-semantic", "archcert-crypto"),
         ("archcert-semantic", "archcert-storage"),
         ("archcert-semantic", "archcert-runner"),

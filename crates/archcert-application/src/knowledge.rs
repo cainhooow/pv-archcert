@@ -11,8 +11,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 mod impact;
+mod scenarios;
 
 pub use impact::*;
+pub use scenarios::*;
 
 /// Fixed upper bounds; authority may lower them, never select an unlimited mode.
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -576,6 +578,34 @@ impl KnowledgeEngine {
         std::iter::once("archcert-inventory-v1/1.0.0".into())
             .chain(self.extractors.iter().map(|e| e.identity().into()))
             .collect()
+    }
+
+    /// Restore only by regenerating under the exact current authority inputs.
+    /// A matching digest alone cannot establish freshness or trusted selection.
+    /// Historical bytes require their original registry, limits and bundles.
+    pub fn restore_exact(
+        &self,
+        source: &SourceSnapshot,
+        bundles: &[AuthorityKnowledgeBundle],
+        baseline: Option<&SelectedBaseline>,
+        bytes: &[u8],
+        expected_sha256: &Sha256Digest,
+    ) -> Result<KnowledgeArtifact, KnowledgeError> {
+        if bytes.len() > 32 * 1024 * 1024 {
+            return Err(KnowledgeError::LimitExceeded);
+        }
+
+        if digest_bytes(bytes) != *expected_sha256 {
+            return Err(KnowledgeError::BindingMismatch);
+        }
+
+        let regenerated = self.extract(source, bundles, baseline)?;
+
+        if regenerated.artifact().bytes() != bytes {
+            return Err(KnowledgeError::BindingMismatch);
+        }
+
+        Ok(regenerated)
     }
 
     /// Rehashes exact accepted bytes. Caller supplies authority-owned bundles and

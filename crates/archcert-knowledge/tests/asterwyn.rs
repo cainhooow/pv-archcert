@@ -6,6 +6,7 @@ use archcert_knowledge::RustSyntaxExtractor;
 use std::collections::BTreeSet;
 
 type R<T = ()> = Result<T, Box<dyn std::error::Error>>;
+type CorpusChange<'a> = (&'a str, Option<&'a [u8]>, Option<&'a [u8]>);
 
 fn source(files: &[(&str, &[u8])], commit: char, tree: char, time: u64) -> R<SourceSnapshot> {
     Ok(SourceSnapshot::seal(
@@ -39,7 +40,7 @@ fn bundles(project: ProjectId, version: &str, reverse: bool) -> R<Vec<AuthorityK
     let mut result = Vec::new();
 
     for name in ["first", "second"] {
-        let entries = [
+        let mut entries: Vec<_> = [
             AuthorityEntryKind::Invariant,
             AuthorityEntryKind::PolicyAssociation,
         ]
@@ -59,6 +60,11 @@ fn bundles(project: ProjectId, version: &str, reverse: bool) -> R<Vec<AuthorityK
             policy_sha256: vec![],
         })
         .collect();
+
+        if reverse {
+            entries.reverse();
+        }
+
         result.push(AuthorityKnowledgeBundle::approve(
             name.into(),
             version.into(),
@@ -317,7 +323,7 @@ fn adversarial_changes_preserve_every_required_consumer_including_deleted_nodes(
             b"mod helper; #[test] fn second() { helper::fixture(); }".as_slice(),
         ),
     ];
-    let variants: &[(&str, Option<&[u8]>, Option<&[u8]>)] = &[
+    let variants: &[CorpusChange<'_>] = &[
         (
             "src/shared.rs",
             Some(b"pub fn work() {}"),

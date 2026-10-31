@@ -22,7 +22,7 @@ The canonical roadmap is:
 | --- | --- | --- |
 | M5.2 — Stoneward | Native Linux Runner Qualification & Operational Recovery | COMPLETE, within its documented qualification scope |
 | M6 — Ironcrest | Artifact Binding, Reproducible Builds & Release Permit | COMPLETE within the documented single-file native qualification scope; development signing |
-| M7 — Asterwyn | Project Knowledge Engine & Change Impact Graph | SUBSTANTIALLY IMPLEMENTED ahead of sequence; pending formal milestone reconciliation |
+| M7 — Asterwyn | Project Knowledge Engine & Change Impact Graph | IN PROGRESS; deterministic closure expansion under ADR 0049 |
 | M8 — Greywatch | Semantic Review, Agent Claims, Discoveries & Blind Spots | SUBSTANTIALLY IMPLEMENTED ahead of sequence; pending formal milestone reconciliation |
 
 The recent knowledge, semantic review and durable lifecycle work was incorrectly
@@ -32,6 +32,13 @@ complete canonical M6 or establish the full Definition of Done for M7/M8.
 inventory. Existing `ironcrest` APIs, policy/profile IDs, schemas and commands are
 retained historical implementation labels, not claims of artifact binding,
 reproducible builds or release permits. Git history is preserved.
+
+Asterwyn provides immutable bounded knowledge, conservative change impact and
+authority-owned scenario-selection evidence without a semantic provider.
+[ADR 0049](docs/adr/0049-asterwyn-deterministic-selection.md) defines exact
+restoration, mandatory-scenario preservation and unsupported analysis dimensions.
+The new selection API produces evidence; automatic execution-plan optimization is
+not implemented. M8 behavior and Genesis status are unchanged.
 
 See the [M6 release lifecycle and offline deployment gate](docs/release/README.md).
 The [native M6 qualification](docs/qualification/NATIVE_LINUX_M6_RELEASE.md) records

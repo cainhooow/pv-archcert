@@ -145,3 +145,19 @@ Acceptance includes independent native builds, collector/recovery regressions,
 exact-source engineering certification and a services-stopped offline Release
 Permit gate. Development signing and the documented limitations remain. Genesis /
 Firstwarden is NOT STARTED; M7/M8 retain their existing unreconciled status.
+
+## Canonical M7 closure expansion
+
+Asterwyn reconciliation uses deterministic knowledge already implemented under
+historical `ironcrest` names. [ADR 0049](adr/0049-asterwyn-deterministic-selection.md)
+adds exact regeneration-based restoration and authority scenario-selection
+witnesses. Current closure tests cover parser uncertainty, immutable identity,
+resource limits, graph cycles/closure, topology changes, conservative negative
+impact, actual materialization/process determinism and Git layout independence.
+These APIs require no AI provider and cannot remove mandatory validation.
+
+M7 remains IN PROGRESS pending exact-source closure evidence. Incremental updates,
+compiler-quality resolution, Git ancestry analysis and automatic execution-plan
+optimization are not supported. Unsupported dimensions retain explicit blind spots
+and expand review. M8 is outside this closure expansion; Genesis / Firstwarden is
+NOT STARTED. M6 remains COMPLETE within its unchanged qualification scope.

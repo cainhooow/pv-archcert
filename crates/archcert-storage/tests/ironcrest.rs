@@ -1295,3 +1295,130 @@ async fn ironcrest_durable_blocker_and_provider_failure_never_admit_execution() 
 
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL and private immutable artifact storage"]
+async fn asterwyn_knowledge_publication_is_concurrent_idempotent_and_fail_closed() -> R {
+    use archcert_application::{
+        artifacts::ImmutableArtifactStore,
+        ironcrest::*,
+        knowledge::{CanonicalArtifact, KnowledgeEngine, KnowledgeLimits},
+    };
+    use archcert_storage::artifacts::FilesystemArtifactStore;
+    use std::os::unix::fs::PermissionsExt;
+
+    let (repo, pool) = database().await?;
+    let fixture = admission_fixture(&repo).await?;
+    let id = JobId::new();
+    repo.open_session(id, &fixture.pin).await?;
+    let root = tempfile::tempdir()?;
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700))?;
+    let artifacts =
+        FilesystemArtifactStore::open_unencrypted_development(&root.path().canonicalize()?)?;
+    let workflow = IroncrestWorkflow {
+        repository: &repo,
+        artifacts: &artifacts,
+    };
+    let project = fixture.pin.project;
+    let role = IroncrestEvidenceRole::Knowledge;
+    let expected = ironcrest_reference(fixture.knowledge.artifact());
+
+    workflow
+        .persist(
+            project,
+            id,
+            IroncrestEvidenceRole::AuthorityProfile,
+            fixture.profile.artifact(),
+            None,
+        )
+        .await?;
+
+    let (first, second, third) = tokio::join!(
+        workflow.persist(project, id, role, fixture.knowledge.artifact(), None),
+        workflow.persist(project, id, role, fixture.knowledge.artifact(), None),
+        workflow.persist(project, id, role, fixture.knowledge.artifact(), None),
+    );
+
+    assert_eq!(first?, expected);
+    assert_eq!(second?, expected);
+    assert_eq!(third?, expected);
+    let session = repo.review_session(project, id).await?;
+    let knowledge: Vec<_> = session.evidence.iter().filter(|e| e.role == role).collect();
+    assert_eq!(knowledge.len(), 1);
+    assert!(knowledge[0].available);
+    assert_eq!(knowledge[0].artifact, expected);
+    assert!(session.review_timestamp.is_none());
+    assert!(repo.get(id).await.is_err());
+
+    let substitution = CanonicalArtifact::freeze(
+        &serde_json::json!({"schema": 1, "kind": "SUBSTITUTED_KNOWLEDGE"}),
+        1024,
+    )?;
+    assert!(
+        workflow
+            .persist(project, id, role, &substitution, None)
+            .await
+            .is_err()
+    );
+    let mut changed_metadata = expected.clone();
+    changed_metadata.producer = "foreign-producer/1".into();
+    assert!(
+        repo.stage_review_evidence(project, id, role, &changed_metadata, None)
+            .await
+            .is_err()
+    );
+
+    let engine = KnowledgeEngine::new(vec![], KnowledgeLimits::default())?;
+    let object = root
+        .path()
+        .join(project.to_string())
+        .join(expected.sha256.as_str());
+    let accepted = artifacts.get(project, &expected).await?;
+    assert_eq!(
+        engine
+            .restore_exact(&fixture.source, &[], None, &accepted, &expected.sha256)?
+            .artifact()
+            .bytes(),
+        accepted
+    );
+
+    for corrupt in [
+        {
+            let mut bytes = accepted.clone();
+            bytes[0] ^= 1;
+            bytes
+        },
+        accepted[..accepted.len() - 1].to_vec(),
+        {
+            let mut bytes = accepted.clone();
+            bytes.extend_from_slice(b"{}");
+            bytes
+        },
+    ] {
+        std::fs::set_permissions(&object, std::fs::Permissions::from_mode(0o600))?;
+        std::fs::write(&object, &corrupt)?;
+        assert!(artifacts.get(project, &expected).await.is_err());
+        assert!(
+            workflow
+                .persist(project, id, role, fixture.knowledge.artifact(), None)
+                .await
+                .is_err()
+        );
+    }
+
+    std::fs::remove_file(&object)?;
+    assert!(artifacts.get(project, &expected).await.is_err());
+    let retained = repo.review_session(project, id).await?;
+    assert_eq!(retained.evidence.len(), 2);
+    assert!(
+        retained
+            .evidence
+            .iter()
+            .any(|e| e.role == role && e.artifact == expected)
+    );
+    assert!(retained.review_timestamp.is_none());
+    assert!(repo.get(id).await.is_err());
+    pool.close().await;
+
+    Ok(())
+}

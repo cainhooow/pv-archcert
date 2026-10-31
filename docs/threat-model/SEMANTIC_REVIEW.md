@@ -97,3 +97,26 @@ avoid recursive graph expansion. Renaming a layer can escape name-based scrutiny
 this is an explicit scope limitation, not whole-program architecture proof. The
 image, toolchain, Python and offline caches remain trusted authority provisioning.
 All issuance choke points recognize the new Rust policy's reviewed prerequisite.
+
+## Deterministic Asterwyn boundary
+
+ADR 0049 adds no provider behavior. Exact knowledge restoration hashes and fully
+regenerates under separately supplied accepted source and authority controls;
+recomputed hostile digests and mismatched source/profile inputs cannot establish
+freshness. Scope-bound scenario catalogs have no target decoder or executable
+fields. Mandatory scenarios survive empty deltas; unresolved relations select all
+catalog scenarios and preserve their uncertainty. Relation witnesses use the
+conservative union of old/new graph edges, including deleted entities. Existing
+authority execution requirements remain independent obligations. New selections
+are immutable in-memory evidence, with no durable acceptance or runtime authority.
+
+Knowledge has only admitted owned bytes, never checkout paths or a Git history
+capability. Unavailable ancestry and unsupported languages/manifest/schema/route/
+compiler resolution do not imply clean history or no impact. Existing per-session
+create-only knowledge roles and project-scoped content-addressed objects retain
+STAGING/readback/AVAILABLE behavior; multiple sessions may reference identical
+knowledge bytes without creating different semantic snapshots. A missing or
+mutated accepted object remains infrastructure/integrity failure even when its
+immutable database reference is still retained for audit. This is not semantic
+empty knowledge. Finite bounds do not establish global availability or parser
+memory safety. M6 mechanisms and M8 acceptance semantics are unchanged.

@@ -55,9 +55,11 @@ Follow [ADR 0045](docs/adr/0045-roadmap-reconciliation.md):
   is COMPLETE within the exact single-file native qualification scope in
   [the M6 qualification record](docs/qualification/NATIVE_LINUX_M6_RELEASE.md).
   ADR 0048 retains development signing and the documented assurance limits.
-- M7 Asterwyn covers knowledge and impact; M8 Greywatch covers semantic review,
-  claims, discoveries and blind spots. Both are substantially implemented ahead
-  of sequence, pending formal milestone reconciliation; neither is declared complete.
+- M7 Asterwyn covers deterministic knowledge, conservative impact, structural
+  blind spots and authority scenario selection under ADR 0049. It is IN PROGRESS
+  pending exact-source closure evidence. M8 Greywatch covers semantic review,
+  claims, discoveries and semantic blind spots; its historical prework remains
+  IN PROGRESS and outside the M7 closure expansion.
 - Genesis / Firstwarden is NOT STARTED. Engineering self-validation does not start it.
 
 Existing `ironcrest` identifiers are historical implementation names for the

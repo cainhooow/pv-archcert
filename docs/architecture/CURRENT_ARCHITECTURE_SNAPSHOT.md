@@ -466,3 +466,21 @@ independent native A/B builds and selected-key offline artifact authorization wi
 the dedicated database/runtime stopped. Development fixture validation and each
 exact-source engineering run retain separate identities. M6 is COMPLETE within
 that bounded scope; Genesis / Firstwarden is NOT STARTED and M7/M8 are unchanged.
+
+## Asterwyn deterministic closure expansion
+
+[ADR 0049](../adr/0049-asterwyn-deterministic-selection.md) adds exact restoration
+by bounded full regeneration and a separate authority-only scenario catalog.
+Scenario selection binds exact source/baseline/knowledge/impact/catalog identities,
+always preserves mandatory catalog obligations, retains full-review uncertainty
+and records actual relation witnesses for targeted selections. It requires no
+semantic provider. It does not modify existing execution plans or M8 behavior.
+
+Canonical knowledge/impact schema 1, historical controlled authority profiles,
+extractor IDs and durable role identities retain their bytes and meanings. There
+is no incremental knowledge update or Git-history inference. Unsupported compiler,
+manifest, route, schema and behavioral relations remain explicit omissions and
+expand review; full review does not claim complete semantic knowledge. The new
+selection artifact has no database lifecycle or automatic executor integration.
+Current exact-source closure evidence is retained under ignored `target/m7-*`;
+implementation and test additions alone do not declare M7 COMPLETE.

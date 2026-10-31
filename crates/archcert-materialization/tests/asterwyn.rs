@@ -336,6 +336,8 @@ fn branches_history_availability_and_pack_layout_cannot_change_exact_knowledge()
         expected.artifact().bytes()
     );
 
+    let mut previous_pack = None;
+
     for args in [
         vec![
             "pack-objects",
@@ -343,6 +345,7 @@ fn branches_history_availability_and_pack_layout_cannot_change_exact_knowledge()
             "--revs",
             "--window=0",
             "--depth=0",
+            "--compression=0",
         ],
         vec![
             "pack-objects",
@@ -350,9 +353,15 @@ fn branches_history_availability_and_pack_layout_cannot_change_exact_knowledge()
             "--revs",
             "--window=10",
             "--depth=10",
+            "--compression=9",
         ],
     ] {
         let pack = git_fixture(&path, &args, format!("{commit}\n").as_bytes())?;
+
+        if let Some(previous) = previous_pack.replace(pack.clone()) {
+            assert_ne!(previous, pack, "fixture must perturb actual pack bytes");
+        }
+
         let gateway = PackedGitGateway::new(
             repository.clone(),
             &pack,

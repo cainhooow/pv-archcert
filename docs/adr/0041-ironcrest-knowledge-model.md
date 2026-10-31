@@ -92,3 +92,12 @@ drift fails closed instead of selecting another baseline or silently replacing
 knowledge. Authority-profile and all knowledge/impact/request identities are bound
 through the explicit evidence-manifest extension in ADR 0044. Syntax extraction
 remains passive and does not become compiler-level semantic resolution.
+
+## Deterministic Asterwyn extension
+
+ADR 0049 adds exact regeneration-based restoration and separately versioned
+authority scenario-selection artifacts. Existing knowledge/impact schema 1,
+extractor registry semantics and historical controlled profiles are preserved.
+Structural blind spots belong to deterministic M7 coverage; provider-reported
+semantic blind spots remain M8. Current milestone statuses follow ADR 0045 and
+its closure reconciliation, not historical terminology in this decision.
