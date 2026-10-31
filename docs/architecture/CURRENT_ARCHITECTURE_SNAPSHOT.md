@@ -6,11 +6,13 @@ its documented qualification scope. M6 Ironcrest (Artifact Binding, Reproducible
 Builds & Release Permit) is COMPLETE within the exact single-file native profile
 recorded in [the M6 qualification](../qualification/NATIVE_LINUX_M6_RELEASE.md)
 under ADR 0048. Development signing and the documented assurance limits remain.
-M7 Asterwyn (Project Knowledge Engine & Change Impact Graph) and M8 Greywatch
-(Semantic Review, Agent Claims, Discoveries & Blind Spots) are SUBSTANTIALLY
-IMPLEMENTED ahead of sequence,
-pending formal milestone reconciliation. Their full canonical Definitions of Done
-have not been checked here; neither is declared complete.
+M7 Asterwyn (Project Knowledge Engine & Change Impact Graph) is COMPLETE within
+its bounded deterministic scope under ADR 0049 and the closure reconciliation in
+ADR 0045. Dimensional knowledge coverage retains every Partial/NotAvailable state;
+milestone closure does not make unsupported relationships complete. M8 Greywatch
+(Semantic Review, Agent Claims, Discoveries & Blind Spots) remains IN PROGRESS due
+to historical prework, pending its own formal closure. Genesis / Firstwarden is
+NOT STARTED.
 
 ADRs 0041–0044 describe the implemented knowledge, semantic review and durable
 lifecycle controls. They were historically mislabeled M6/Ironcrest. The retained
@@ -482,5 +484,9 @@ is no incremental knowledge update or Git-history inference. Unsupported compile
 manifest, route, schema and behavioral relations remain explicit omissions and
 expand review; full review does not claim complete semantic knowledge. The new
 selection artifact has no database lifecycle or automatic executor integration.
-Current exact-source closure evidence is retained under ignored `target/m7-*`;
-implementation and test additions alone do not declare M7 COMPLETE.
+Exact-source closure evidence is retained under ignored `target/m7-*`. The
+reconciliation covers all 34 criteria with explicit applicability and limitations.
+Deterministic qualification includes canonical/replay/corruption/ceiling tests,
+actual materialization/process/history perturbations, real PostgreSQL publication
+races and three actual controller SIGKILL recovery checkpoints. M7 is COMPLETE
+within this scope; no semantic CLEAR/PASS contributes to that decision.

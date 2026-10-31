@@ -24,19 +24,21 @@ criteria or infer completion from the amount of existing code.
 | --- | --- | --- |
 | M5.2 — Stoneward | Native Linux Runner Qualification & Operational Recovery | COMPLETE within the documented exact qualification scope |
 | M6 — Ironcrest | Artifact Binding, Reproducible Builds & Release Permit | COMPLETE within the documented single-file native qualification scope; development signing |
-| M7 — Asterwyn | Project Knowledge Engine & Change Impact Graph | SUBSTANTIALLY IMPLEMENTED AHEAD OF SEQUENCE; PENDING FORMAL MILESTONE RECONCILIATION |
-| M8 — Greywatch | Semantic Review, Agent Claims, Discoveries & Blind Spots | SUBSTANTIALLY IMPLEMENTED AHEAD OF SEQUENCE; PENDING FORMAL MILESTONE RECONCILIATION |
+| M7 — Asterwyn | Project Knowledge Engine & Change Impact Graph | COMPLETE within the bounded deterministic scope in ADR 0049 and the closure reconciliation below |
+| M8 — Greywatch | Semantic Review, Agent Claims, Discoveries & Blind Spots | IN PROGRESS due historical prework; pending its own formal closure |
 
 M7 includes immutable bounded knowledge, syntax/provenance/coverage vocabulary,
 authority knowledge and conservative baseline/impact handling. M8 includes bounded
 semantic requests, untrusted claims, retained discoveries/concerns/blind spots,
 semantic veto and registered authority challenges. Durable pre-admission sessions,
 recovery, frozen execution and issuance binding integrate these capabilities above
-the existing trust core. These descriptions map existing capabilities to roadmap
-scope, not a checked Definition of Done. Full canonical M7/M8 acceptance criteria
-have not been independently checked. Local exact replay is not qualified semantic
-model accuracy; syntax extraction is not compiler resolution. Neither milestone
-is declared COMPLETE.
+the existing trust core.
+
+At the October 21 reconciliation, these descriptions mapped existing capabilities
+to roadmap scope without a checked Definition of Done. The subsequent M7 closure
+below records the deterministic acceptance scope. M8 has no completed canonical
+reconciliation. Local exact replay is not qualified semantic model accuracy;
+syntax extraction is not compiler resolution.
 
 At reconciliation, M6 still required its own artifact binding, reproducible build
 and release permit design and implementation. [ADR 0048](0048-artifact-build-and-release-permit.md)
@@ -106,3 +108,46 @@ complete without their full acceptance criteria manufactures assurance. All are
 rejected. Retaining historical names costs explicit documentation and care in
 future development; a later compatibility-aware redesign may introduce versioned
 names with its own migration decision. Roadmap reconciliation itself needs none.
+
+## Asterwyn deterministic closure — October 31, 2026
+
+M7 — Asterwyn — COMPLETE within the deterministic bounded knowledge, conservative
+change-impact and authority scenario-selection scope in ADR 0049. The canonical
+34-criterion reconciliation and exact-source execution records remain under ignored
+`target/m7-*`; no milestone working report is added to Git. The sole criterion-level
+applicability exclusion is incremental operation: there is no incremental authority
+API, and both comparison states are fully regenerated. Missing evidence is never
+counted as a pass.
+
+The implemented mechanism binds immutable scope/source, schema, extractor registry,
+authority knowledge and configured limits. Exact restoration regenerates and compares
+canonical bytes. Qualification covers ordering/materialization/process/Git-layout
+independence, parser uncertainty, stable durable omissions, direct/transitive/cyclic
+closure, depth and serialization exhaustion, negative/topology cases, cross-scope
+replay, corruption, real PostgreSQL publication races and actual controller recovery.
+Authority catalogs preserve mandatory scenarios and retain a machine-readable
+relation witness or explicit conservative expansion reason. No provider availability
+or semantic CLEAR/PASS satisfies any M7 requirement.
+
+Known limits remain: syntax is not compiler resolution; manifest/schema/route/
+behavioral mapping and Git ancestry are unsupported dimensions with explicit
+uncertainty. Unknown relationships widen review, frequently to every bounded
+scenario. Complete inventory does not mean complete semantic knowledge. Automatic
+execution-plan optimization, incremental caches and a durable scenario-selection
+registry are not implemented or claimed. Existing knowledge/impact journal roles
+retain their exact persistence semantics. Authority provisioning, parser/OS/storage
+trust and lack of global availability proof remain documented assumptions.
+
+KEEP historical `ironcrest` modules, public types, SQL/migrations, artifact/protocol
+identities, policies/profiles, CLI/configuration fields, tests/harnesses, ADRs and
+immutable history. MIGRATE current authoritative roadmap attribution to Asterwyn.
+No compatibility ALIAS is required. New scenario artifact kinds are explicit; old
+knowledge/impact/profile bytes and meanings are preserved.
+
+M6 remains COMPLETE under its unchanged exact qualification scope. M7 changes no
+execution, release or signing mechanism, so it establishes no new OCI/Stoneward/M6
+native qualification. Existing deterministic and PostgreSQL release regressions
+remain required. M8 — Greywatch — remains IN PROGRESS due historical prework and
+was outside this implementation. Genesis / Firstwarden is NOT STARTED.
+
+> This is engineering self-validation under a shared implementation/authority context. It is not independent certification and does not replace Genesis / Firstwarden.

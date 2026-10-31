@@ -22,12 +22,13 @@ The canonical roadmap is:
 | --- | --- | --- |
 | M5.2 — Stoneward | Native Linux Runner Qualification & Operational Recovery | COMPLETE, within its documented qualification scope |
 | M6 — Ironcrest | Artifact Binding, Reproducible Builds & Release Permit | COMPLETE within the documented single-file native qualification scope; development signing |
-| M7 — Asterwyn | Project Knowledge Engine & Change Impact Graph | IN PROGRESS; deterministic closure expansion under ADR 0049 |
-| M8 — Greywatch | Semantic Review, Agent Claims, Discoveries & Blind Spots | SUBSTANTIALLY IMPLEMENTED ahead of sequence; pending formal milestone reconciliation |
+| M7 — Asterwyn | Project Knowledge Engine & Change Impact Graph | COMPLETE within the bounded deterministic scope in ADRs 0045 and 0049 |
+| M8 — Greywatch | Semantic Review, Agent Claims, Discoveries & Blind Spots | IN PROGRESS due historical prework; pending its own formal closure |
 
 The recent knowledge, semantic review and durable lifecycle work was incorrectly
-called M6/Ironcrest. Its implementation and validation remain valuable, but do not
-complete canonical M6 or establish the full Definition of Done for M7/M8.
+called M6/Ironcrest. The subsequent Asterwyn closure establishes its bounded
+deterministic scope.
+Greywatch remains IN PROGRESS; its historical prework does not establish completion.
 [ADR 0045](docs/adr/0045-roadmap-reconciliation.md) records the correction and name
 inventory. Existing `ironcrest` APIs, policy/profile IDs, schemas and commands are
 retained historical implementation labels, not claims of artifact binding,

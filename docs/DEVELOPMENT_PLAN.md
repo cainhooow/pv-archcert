@@ -144,7 +144,8 @@ review identifiers. See [ADR 0048](adr/0048-artifact-build-and-release-permit.md
 Acceptance includes independent native builds, collector/recovery regressions,
 exact-source engineering certification and a services-stopped offline Release
 Permit gate. Development signing and the documented limitations remain. Genesis /
-Firstwarden is NOT STARTED; M7/M8 retain their existing unreconciled status.
+Firstwarden is NOT STARTED. M7/M8 retained their unreconciled status at M6
+closure; the subsequent Asterwyn reconciliation is recorded below.
 
 ## Canonical M7 closure expansion
 
@@ -156,7 +157,10 @@ resource limits, graph cycles/closure, topology changes, conservative negative
 impact, actual materialization/process determinism and Git layout independence.
 These APIs require no AI provider and cannot remove mandatory validation.
 
-M7 remains IN PROGRESS pending exact-source closure evidence. Incremental updates,
+M7 — Asterwyn — COMPLETE within the bounded deterministic scope reconciled in
+ADR 0045. Exact-source gate logs, counts, immutable source/knowledge/impact
+identities and operational measurements remain under ignored `target/m7-*`.
+Incremental updates,
 compiler-quality resolution, Git ancestry analysis and automatic execution-plan
 optimization are not supported. Unsupported dimensions retain explicit blind spots
 and expand review. M8 is outside this closure expansion; Genesis / Firstwarden is
