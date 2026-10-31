@@ -298,7 +298,11 @@ impl IroncrestWorkflow<'_> {
                 "schema": 2,
                 "kind": "ARCHCERT_SEMANTIC_GATE",
                 "binding": request.binding(),
-                "algorithm": IRONCREST_GATE_ALGORITHM,
+                "algorithm": if request.semantic_identity().is_some() {
+                    GREYWATCH_GATE_ALGORITHM
+                } else {
+                    IRONCREST_GATE_ALGORITHM
+                },
                 "authority_profile_sha256": session.pin.authority_profile_sha256,
                 "request_sha256": request.artifact().digest(),
                 "review_sha256": review.artifact().digest(),

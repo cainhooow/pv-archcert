@@ -95,6 +95,7 @@ fn error(e: JobStoreError) -> Response {
         JobStoreError::Invalid => StatusCode::BAD_REQUEST,
         JobStoreError::Precondition => StatusCode::NOT_FOUND,
         JobStoreError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        JobStoreError::SemanticContextLimit => StatusCode::PAYLOAD_TOO_LARGE,
     };
     (status, e.to_string()).into_response()
 }

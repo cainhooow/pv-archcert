@@ -55,6 +55,9 @@ pub struct AuthorityGrant {
     /// Explicit new-profile opt-in. Target requests cannot override this selection.
     #[serde(default)]
     pub ironcrest: bool,
+    /// Explicit versioned Greywatch protocol; false preserves historical recovery.
+    #[serde(default)]
+    pub greywatch: bool,
     /// Authority-only lower request bound for Rust; exact policy/profile digest changes.
     #[serde(default)]
     pub semantic_request_bytes: Option<usize>,
@@ -118,6 +121,7 @@ impl ControlPlaneConfiguration {
             resolve_authority_plan(&g.profile, &g.image, &g.authority_toml)?;
 
             if (g.ironcrest && !["python", "rust-workspace-v1"].contains(&g.profile.as_str()))
+                || (g.greywatch && !g.ironcrest)
                 || (g.semantic_request_bytes.is_some()
                     && (!g.ironcrest || g.profile != "rust-workspace-v1"))
                 || g.semantic_request_bytes
@@ -389,6 +393,7 @@ mod tests {
                     .into(),
                 maximum_attempts: 2,
                 ironcrest: false,
+                greywatch: false,
                 semantic_request_bytes: None,
                 ironcrest_baseline: None,
             }],

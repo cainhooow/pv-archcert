@@ -3,8 +3,9 @@
 use super::*;
 use archcert_application::{ironcrest::*, semantic::ReviewBinding};
 
-fn valid_reference(reference: &ArtifactReference) -> Result<()> {
-    if ![1, 2].contains(&reference.schema)
+fn valid_reference(reference: &ArtifactReference, role: IroncrestEvidenceRole) -> Result<()> {
+    if ![1, 2, 3].contains(&reference.schema)
+        || (reference.schema == 3 && role != IroncrestEvidenceRole::Request)
         || reference.size == 0
         || reference.size > 32 * 1024 * 1024
         || reference.producer != "archcert-ironcrest-v1/0.1.0"
@@ -336,7 +337,7 @@ impl IroncrestRepository for PostgresJobRepository {
         reference: &ArtifactReference,
         invocation: Option<&ReviewInvocation>,
     ) -> Result<()> {
-        valid_reference(reference)?;
+        valid_reference(reference, role)?;
 
         let mut tx = self.pool.begin().await.map_err(db)?;
 
@@ -417,7 +418,7 @@ impl IroncrestRepository for PostgresJobRepository {
         role: IroncrestEvidenceRole,
         reference: &ArtifactReference,
     ) -> Result<()> {
-        valid_reference(reference)?;
+        valid_reference(reference, role)?;
 
         let mut tx = self.pool.begin().await.map_err(db)?;
         load_session(&mut tx, project, id).await?;
@@ -454,7 +455,7 @@ impl IroncrestRepository for PostgresJobRepository {
         binding: &ReviewBinding,
         request: &ArtifactReference,
     ) -> Result<Option<ReviewInvocation>> {
-        valid_reference(request)?;
+        valid_reference(request, IroncrestEvidenceRole::Request)?;
 
         let mut tx = self.pool.begin().await.map_err(db)?;
 

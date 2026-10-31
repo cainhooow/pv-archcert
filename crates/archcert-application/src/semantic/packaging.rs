@@ -153,7 +153,7 @@ impl SemanticReviewRequest {
     ) -> Result<Self, KnowledgeError> {
         // Shared validation, claims, observations and legacy identity checks remain
         // identical to schema 1. Projection occurs before any full graph encoding.
-        Self::prepare_impl(context, selection, limits, Some(policy))
+        Self::prepare_impl(context, selection, limits, Some(policy), 0)
     }
 
     pub(super) fn package_request(
@@ -163,6 +163,7 @@ impl SemanticReviewRequest {
         limits: SemanticLimits,
         policy: SemanticPackagingPolicy,
         claims: &[ClaimAssessment],
+        reserved_envelope_bytes: usize,
     ) -> Result<(BoundedSemanticPackage, CanonicalArtifact), KnowledgeError> {
         if limits.request_bytes != policy.maximum_request_bytes
             || limits.excerpt_bytes < policy.maximum_excerpt_bytes
@@ -311,7 +312,7 @@ impl SemanticReviewRequest {
 
         let base_size = canonical_bytes(&envelope(&body, &digest_bytes(b"")))?.len();
 
-        if base_size > policy.maximum_request_bytes {
+        if base_size.saturating_add(reserved_envelope_bytes) > policy.maximum_request_bytes {
             return Err(KnowledgeError::LimitExceeded);
         }
 
@@ -319,7 +320,7 @@ impl SemanticReviewRequest {
         // Actual full serialization below is always the final authority check.
         let mut budget = policy
             .maximum_request_bytes
-            .saturating_sub(base_size + 1024);
+            .saturating_sub(base_size + 1024 + reserved_envelope_bytes);
 
         let changed: BTreeSet<_> = i.changed_files.iter().chain(&i.added_files).collect();
         let impacted: BTreeSet<_> = i.dependent_nodes.iter().collect();

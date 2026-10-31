@@ -14,7 +14,7 @@ meaning of those bytes would break recovery and assurance identities.
 
 ## Decision
 
-Add `archcert-greywatch-v1/1.0.0`: request schema 3, package schema 2, provider
+Add `archcert-greywatch-v1/1.0.1`: request schema 3, package schema 2, provider
 response schema 2 and accepted review schema 2. The request pins the full protocol
 descriptor, template version, response/normalization schema, fixed authority
 instruction digest and citation/discovery/contradiction policies. Changes to these
@@ -26,6 +26,11 @@ actual job and every immutable source/authority input. Responses must reproduce 
 exact digest. Identical semantic inputs never authorize cross-session response
 replay. Existing bounded authority selection is reused. Final serialization after
 adding protocol context must fit the original ceilings or fail before invocation.
+Both mandatory descriptor copies and their envelope fields are reserved before
+optional context selection. This reservation changes no authority ceiling or
+historical package; selected/excluded counts describe the resulting new package.
+The new controller path retains `SemanticContextLimit` as an explicit incomplete
+coverage error before invocation; historical preparation error mapping is unchanged.
 
 Claims have local IDs, subject/proposition keys, assertion/denial polarity,
 untrusted explanation and separate supporting/contradicting citations. Provenance
@@ -84,8 +89,26 @@ protocol requires explicit authority opt-in and versioned profile identity;
 absence preserves historical selection. Recovery never silently selects latest.
 Changing a retained session's authority selection fails exact pin comparison.
 
+The private authority grant selects `greywatch: true` only alongside required
+controlled review. The controlled profile becomes 1.2.1 and the Rust profile 1.1.1,
+with gate `archcert-greywatch-gate-v1/1.0.0`. Both explicitly select bounded partial
+engineering context while retaining mandatory policy/invariant material and all
+deterministic execution obligations. Historical controlled 1.1.0/Rust 1.0.0 profiles
+retain their original context/gate semantics. Old sessions require the original
+authority configuration; switching the grant cannot reinterpret them.
+
+Protocol 1.0.1 explicitly reserves mandatory protocol-envelope bytes before optional
+selection. The initial 1.0.0 foundation and development profile 1.2.0/1.1.0 runs
+retain their original source/request identities; they are not reconstructed with
+this changed selection budget. Their recovery requires the original authority
+implementation, while already issued development certificates retain unchanged
+offline verification. No stored artifact or previous certificate is rewritten.
+
 The eight-role journal/manifest binds new REQUEST/REVIEW versions and therefore
 every normalized item. No new signing/execution API or retry is introduced.
+Manifest schema 2 recognizes REQUEST 3 only paired with REVIEW 2; historical
+REQUEST 1/2 still requires REVIEW 1. PostgreSQL permits schema 3 only for REQUEST.
+Existing migration checksums and role identities are unchanged.
 Offline verification needs retained digests and the selected public key, never a
 future provider call. There is no new human waiver workflow: unresolved sessions
 block and require a separately authorized new workflow/additional evidence.

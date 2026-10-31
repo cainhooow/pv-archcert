@@ -31,6 +31,9 @@ pub struct OpenArgs {
     session: String,
     #[arg(long)]
     token_file: PathBuf,
+    /// Authority-only recovery qualification after the committed session creation.
+    #[arg(long)]
+    hold_checkpoint: bool,
 }
 
 #[derive(Args)]
@@ -56,7 +59,7 @@ pub struct ReviewArgs {
     /// Private authority-provisioned exact replay. Absence means unavailable.
     #[arg(long)]
     response_file: Option<PathBuf>,
-    #[arg(long,value_parser=["claim","review","gate","plan","admitted"])]
+    #[arg(long,value_parser=["claim","response","review","gate","plan","admitted"])]
     stop_after: Option<String>,
     /// Authority-only regression hook: wait for the harness to send SIGKILL.
     #[arg(long)]
@@ -90,7 +93,10 @@ impl SemanticReviewer for ClaimCheckpoint<'_> {
         request: &SemanticReviewRequest,
     ) -> Result<ReviewerOutput, SemanticReviewError> {
         checkpoint(self.stop, "claim", self.hold);
-        self.inner.review(request).await
+        let output = self.inner.review(request).await;
+        checkpoint(self.stop, "response", self.hold);
+
+        output
     }
 }
 
@@ -110,6 +116,11 @@ pub async fn command(state: &ControlPlane, command: IroncrestCommand) -> Result<
                     JobId::parse(&args.session)?,
                 )
                 .await?;
+
+            if args.hold_checkpoint {
+                checkpoint(Some("session"), "session", true);
+            }
+
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
@@ -164,18 +175,22 @@ pub async fn command(state: &ControlPlane, command: IroncrestCommand) -> Result<
                     },
                 )
                 .await?;
-            println!(
-                "{}",
-                serde_json::json!({
-                    "session": prepared.id,
-                    "request_sha256": prepared.request.artifact().digest(),
-                    "binding": prepared.request.binding(),
-                    "reviewer": prepared.request.selection(),
-                    "measurements": prepared.measurements,
-                    "package_sha256": prepared.request.package().map(|p|p.artifact().digest()),
-                    "coverage": prepared.request.package().map(|p|p.coverage())
-                })
-            );
+
+            let mut summary = serde_json::json!({
+                "session": prepared.id,
+                "request_sha256": prepared.request.artifact().digest(),
+                "binding": prepared.request.binding(),
+                "reviewer": prepared.request.selection(),
+                "measurements": prepared.measurements,
+                "package_sha256": prepared.request.package().map(|p|p.artifact().digest()),
+                "coverage": prepared.request.package().map(|p|p.coverage())
+            });
+
+            if let Some(identity) = prepared.request.semantic_identity() {
+                summary["semantic_identity"] = serde_json::json!(identity);
+            }
+
+            println!("{summary}");
         }
         IroncrestCommand::Review(args) => {
             let prepared = state
@@ -218,19 +233,25 @@ pub async fn command(state: &ControlPlane, command: IroncrestCommand) -> Result<
             if decision == SemanticGateDecision::Block
                 || semantic_gate(&prepared.request, Some(&review)) != SemanticGateDecision::Continue
             {
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "session": prepared.id,
-                        "semantic_gate": decision,
-                        "status": if decision == SemanticGateDecision::Block {
-                            "SEMANTIC_BLOCK"
-                        } else {
-                            "INCONCLUSIVE"
-                        },
-                        "certificate": "NOT_ISSUED"
-                    })
-                );
+                let mut summary = serde_json::json!({
+                    "session": prepared.id,
+                    "semantic_gate": decision,
+                    "status": if decision == SemanticGateDecision::Block {
+                        "SEMANTIC_BLOCK"
+                    } else {
+                        "INCONCLUSIVE"
+                    },
+                    "certificate": "NOT_ISSUED"
+                });
+
+                if let Some(identity) = prepared.request.semantic_identity() {
+                    summary["semantic_identity"] = serde_json::json!(identity);
+                    summary["provider_outcome"] =
+                        serde_json::json!(review.supplement().map(|s| s.outcome));
+                    summary["provider_error"] = serde_json::json!(review.error());
+                }
+
+                println!("{summary}");
                 return Ok(());
             }
 

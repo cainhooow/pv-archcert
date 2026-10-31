@@ -6,7 +6,10 @@ use archcert_domain::source::SourcePath;
 use std::collections::BTreeMap;
 
 /// Authority-owned interpretation identity, included verbatim in each new request.
-pub const GREYWATCH_PROTOCOL: &str = "archcert-greywatch-v1/1.0.0";
+pub const GREYWATCH_PROTOCOL: &str = "archcert-greywatch-v1/1.0.1";
+
+/// Gate interpretation for typed claims, inherited coverage and provider outcomes.
+pub const GREYWATCH_GATE_ALGORITHM: &str = "archcert-greywatch-gate-v1/1.0.0";
 
 /// Separate template and parser identities make re-review requirements explicit.
 pub fn greywatch_protocol() -> serde_json::Value {
@@ -15,9 +18,18 @@ pub fn greywatch_protocol() -> serde_json::Value {
         "request_schema": 3,
         "response_schema": 2,
         "normalization_schema": 1,
-        "response_fields": ["schema", "request_sha256", "outcome", "complete", "items", "proposed_challenges", "claims", "discoveries"],
-        "claim_fields": ["id", "subject", "proposition", "polarity", "statement", "supporting", "contradicting"],
-        "discovery_fields": ["id", "kind", "statement", "citations"],
+        "gate_algorithm": GREYWATCH_GATE_ALGORITHM,
+        "response_fields": [
+            "schema", "request_sha256", "outcome", "complete",
+            "items", "proposed_challenges", "claims", "discoveries"
+        ],
+        "claim_fields": [
+            "id", "subject", "proposition", "polarity", "statement",
+            "supporting", "contradicting"
+        ],
+        "discovery_fields": [
+            "id", "kind", "statement", "citations"
+        ],
         "provider_outcomes": ["COMPLETED", "REFUSED", "CONTEXT_EXHAUSTED"],
         "claim_polarities": ["AFFIRMS", "DENIES"],
         "citation_kinds": ["SOURCE", "KNOWLEDGE", "OBSERVATION", "AUTHORITY"],
@@ -80,15 +92,22 @@ impl SemanticReviewRequest {
             .map(|o| canonical_bytes(o).map(|bytes| digest_bytes(&bytes).as_str().to_owned()))
             .collect::<Result<_, _>>()?;
 
-        // Reuse the historical selection mechanism under a fixed placeholder job.
-        // Its byte/count ceilings still apply before adding the new protocol context.
+        // Reserve both copies of mandatory protocol context before selecting optional
+        // repository data. Final serialization still checks the original exact ceiling.
+        let reserved_envelope_bytes = 2 * canonical_bytes(&greywatch_protocol())?.len() + 512;
         let job = context.job;
         let stable_context = ReviewContext {
             job: JobId::parse("00000000-0000-4000-8000-000000000000")
                 .map_err(|_| KnowledgeError::Invalid)?,
             ..context
         };
-        let mut request = Self::prepare_bounded(stable_context, selection, limits, policy)?;
+        let mut request = Self::prepare_impl(
+            stable_context,
+            selection,
+            limits,
+            Some(policy),
+            reserved_envelope_bytes,
+        )?;
         request.binding.job = job;
         let package = request.package.as_mut().ok_or(KnowledgeError::Invalid)?;
         let mut body: serde_json::Value = serde_json::from_slice(package.artifact.bytes())

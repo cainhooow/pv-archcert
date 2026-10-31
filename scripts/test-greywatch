@@ -1,0 +1,15 @@
+#!/bin/sh
+# Exact local replay qualification; no external model accuracy is asserted.
+set -eu
+
+cd "$(dirname "$0")/.."
+
+: "${ARCHCERT_DATABASE_URL:?set a dedicated migrated development PostgreSQL URL}"
+: "${ARCHCERT_TEST_DOCKER:?set an absolute trusted Docker client}"
+: "${ARCHCERT_TEST_ENDPOINT:?set an independently provisioned rootless Unix endpoint}"
+: "${ARCHCERT_TEST_IMAGE:?set the authority-pinned Python image}"
+
+export ARCHCERT_GREYWATCH=1
+export ARCHCERT_IRONCREST_OUTPUT="${ARCHCERT_IRONCREST_OUTPUT:-$PWD/target/m8-closure/live}"
+
+exec ./scripts/demo-ironcrest

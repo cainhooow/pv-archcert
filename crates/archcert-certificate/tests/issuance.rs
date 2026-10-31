@@ -1296,6 +1296,19 @@ fn ironcrest_manifest_extension_preserves_schema_one_and_binds_exact_roles() -> 
 
     assert!(extended.with_ironcrest(&binding).is_err());
 
+    // New REQUEST/REVIEW schemas compose only as an explicit pair. Every item
+    // remains transitively bound by the immutable review reference.
+    let mut greywatch = binding.clone();
+    greywatch.roles[3].1.schema = 3;
+    assert!(legacy.with_ironcrest(&greywatch).is_err());
+    greywatch.roles[4].1.schema = 2;
+    let bound = legacy.with_ironcrest(&greywatch)?;
+    assert_ne!(bound.digest(), extended.digest());
+    greywatch.roles[4].1.sha256 = digest_bytes(b"substituted-semantic-claims");
+    assert_ne!(legacy.with_ironcrest(&greywatch)?.digest(), bound.digest());
+    greywatch.roles[3].1.schema = 99;
+    assert!(legacy.with_ironcrest(&greywatch).is_err());
+
     Ok(())
 }
 

@@ -1,5 +1,16 @@
 # Current architecture snapshot — Stoneward with knowledge and semantic review
 
+Greywatch protocol extension: [ADR 0050](../adr/0050-greywatch-supplemental-claims.md)
+adds explicit private-grant `greywatch: true` selection, controlled profile 1.2.1 /
+Rust profile 1.1.1, request 3/package 2/provider response 2/review 2 and a separately
+versioned gate. Typed claims, discoveries, exact admitted citations, contradiction
+records and provider refusal/exhaustion remain supplemental. Stable semantic/package
+identity excludes operational UUIDs; exact invocation responses remain session-bound.
+Historical constructors, grants without opt-in, migrations, canonical artifacts,
+certificate and Release Permit semantics retain their meanings. The existing
+immutable journal/admission/manifest chain carries the new versions. No external
+provider, source disclosure, execution authority or signing capability is added.
+
 The canonical roadmap and historical naming inventory are defined in
 [ADR 0045](../adr/0045-roadmap-reconciliation.md). M5.2 Stoneward is COMPLETE within
 its documented qualification scope. M6 Ironcrest (Artifact Binding, Reproducible

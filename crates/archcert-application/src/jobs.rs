@@ -23,6 +23,9 @@ pub enum JobStoreError {
     /// Missing record or rejected state/lease precondition.
     #[error("state or ownership precondition failed")]
     Precondition,
+    /// New Greywatch packaging exceeded authority bounds before provider invocation.
+    #[error("semantic context exceeds authority bounds; coverage incomplete")]
+    SemanticContextLimit,
 }
 
 impl From<JobError> for JobStoreError {

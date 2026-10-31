@@ -30,6 +30,7 @@ pub struct IroncrestAuthorityProfile {
     extractor_registry: Sha256Digest,
     authority_bundles: Vec<Sha256Digest>,
     challenge_registry: Sha256Digest,
+    greywatch: bool,
 }
 
 impl IroncrestAuthorityProfile {
@@ -90,6 +91,7 @@ impl IroncrestAuthorityProfile {
             extractor_registry,
             authority_bundles,
             challenge_registry,
+            greywatch: false,
         })
     }
 
@@ -171,7 +173,43 @@ impl IroncrestAuthorityProfile {
             extractor_registry,
             authority_bundles,
             challenge_registry,
+            greywatch: false,
         })
+    }
+
+    /// Explicit new interpretation. Historical constructors keep their exact bytes.
+    /// This opts into bounded partial engineering context without a whole-source claim.
+    pub fn with_greywatch(mut self) -> Result<Self, KnowledgeError> {
+        let packaging = self
+            .packaging
+            .clone()
+            .unwrap_or_else(crate::semantic::SemanticPackagingPolicy::rust_controlled);
+        let mut body: serde_json::Value =
+            serde_json::from_slice(self.artifact.bytes()).map_err(|_| KnowledgeError::Invalid)?;
+
+        body["version"] = serde_json::json!(if body["id"] == RUST_PROFILE_ID {
+            "1.1.1"
+        } else {
+            "1.2.1"
+        });
+        body["greywatch_protocol"] = crate::semantic::greywatch_protocol();
+        body["gate_algorithm"] = serde_json::json!(crate::semantic::GREYWATCH_GATE_ALGORITHM);
+        body["packaging_policy"] =
+            serde_json::to_value(&packaging).map_err(|_| KnowledgeError::Invalid)?;
+        body["packaging_policy_sha256"] = serde_json::json!(packaging.digest()?);
+        body["coverage_acceptance"] =
+            serde_json::json!("EXPLICIT_PARTIAL_ENGINEERING_REVIEW_NO_COMPLETE_SOURCE_CLAIM");
+
+        self.artifact = CanonicalArtifact::freeze(&body, 65536)?;
+        self.packaging = Some(packaging);
+        self.greywatch = true;
+
+        Ok(self)
+    }
+
+    /// Authority selection, never inferred from repository text or a provider response.
+    pub fn greywatch_enabled(&self) -> bool {
+        self.greywatch
     }
 
     /// New explicit packaging policy, absent for historical Python profiles.
@@ -236,6 +274,7 @@ impl IroncrestAuthorityProfile {
         }
 
         if b.policy != self.policy
+            || request.semantic_identity().is_some() != self.greywatch
             || b.authority_profile_sha256 != *self.artifact.digest()
             || b.authority_bundles != self.authority_bundles
             || request.selection() != &self.reviewer()
@@ -426,6 +465,52 @@ mod tests {
         assert_eq!(body["external_disclosure"], "DENIED");
         assert_eq!(body["id"], IRONCREST_PROFILE_ID);
         assert_eq!(body["version"], IRONCREST_PROFILE_VERSION);
+
+        Ok(())
+    }
+
+    #[test]
+    fn greywatch_is_explicit_and_never_reinterprets_a_historical_profile()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut pin = pin()?;
+        let registry = AuthorityChallengeRegistry::controlled()?;
+        let historical = IroncrestAuthorityProfile::controlled(
+            pin.policy.clone(),
+            pin.extractor_registry_sha256.clone(),
+            vec![],
+            &registry,
+        )?;
+        pin.authority_profile_sha256 = historical.artifact().digest().clone();
+        pin.challenge_registry_sha256 = registry.artifact().digest().clone();
+        let retained = historical.artifact().bytes().to_vec();
+        historical.validate_pin(&pin)?;
+        assert!(!historical.greywatch_enabled());
+
+        let selected = IroncrestAuthorityProfile::controlled(
+            pin.policy.clone(),
+            pin.extractor_registry_sha256.clone(),
+            vec![],
+            &registry,
+        )?
+        .with_greywatch()?;
+
+        assert!(selected.greywatch_enabled());
+        assert!(selected.validate_pin(&pin).is_err());
+        pin.authority_profile_sha256 = selected.artifact().digest().clone();
+        selected.validate_pin(&pin)?;
+        assert!(historical.validate_pin(&pin).is_err());
+        assert_eq!(historical.artifact().bytes(), retained);
+        let body: serde_json::Value = serde_json::from_slice(selected.artifact().bytes())?;
+        assert_eq!(body["version"], "1.2.1");
+        assert_eq!(
+            body["greywatch_protocol"],
+            crate::semantic::greywatch_protocol()
+        );
+        assert_eq!(
+            body["gate_algorithm"],
+            crate::semantic::GREYWATCH_GATE_ALGORITHM
+        );
+        assert_eq!(body["external_disclosure"], "DENIED");
 
         Ok(())
     }

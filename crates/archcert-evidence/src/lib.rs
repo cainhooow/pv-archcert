@@ -299,8 +299,16 @@ impl EvidenceManifest {
             R::ChallengeResult,
         ];
 
+        let greywatch = binding
+            .roles
+            .iter()
+            .any(|(role, reference)| *role == R::Request && reference.schema == 3);
+
         for ((role, reference), expected) in binding.roles.iter().zip(expected) {
-            let schema = if matches!(role, R::Gate | R::ChallengePlan)
+            let schema = if *role == R::Request && greywatch {
+                3
+            } else if (*role == R::Review && greywatch)
+                || matches!(role, R::Gate | R::ChallengePlan)
                 || (*role == R::Request
                     && binding.pin.policy.id
                         == archcert_application::ironcrest::RUST_CONTROLLED_POLICY_ID)

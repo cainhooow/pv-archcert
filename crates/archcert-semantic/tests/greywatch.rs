@@ -16,6 +16,22 @@ fn prepare(
     files: Vec<SourceFile>,
     timestamp: u64,
 ) -> R<SemanticReviewRequest> {
+    prepare_with_limit(
+        job,
+        project,
+        files,
+        timestamp,
+        SemanticLimits::default().request_bytes,
+    )
+}
+
+fn prepare_with_limit(
+    job: JobId,
+    project: ProjectId,
+    files: Vec<SourceFile>,
+    timestamp: u64,
+    request_bytes: usize,
+) -> R<SemanticReviewRequest> {
     let source = SourceSnapshot::seal(
         project,
         RepositoryId::parse("controlled/greywatch")?,
@@ -49,8 +65,11 @@ fn prepare(
             claims: &[],
         },
         ReviewerSelection::replay(),
-        SemanticLimits::default(),
-        SemanticPackagingPolicy::rust_controlled(),
+        SemanticLimits {
+            request_bytes,
+            ..SemanticLimits::default()
+        },
+        SemanticPackagingPolicy::rust_controlled().with_request_limit(request_bytes)?,
     )?)
 }
 
@@ -550,6 +569,197 @@ async fn duplicate_exact_response_is_identical_and_foreign_response_never_satisf
         semantic_gate(&b, Some(&first)),
         SemanticGateDecision::RequireMoreEvidence
     );
+
+    Ok(())
+}
+
+#[test]
+fn package_identity_is_process_and_enumeration_independent() -> R {
+    let project: ProjectId = "a57e0000-0000-4000-8000-000000000008".parse()?;
+    let a = prepare(
+        JobId::new(),
+        project,
+        vec![
+            file("src/lib.rs", SOURCE)?,
+            file("README.md", b"untrusted context")?,
+        ],
+        1700000000,
+    )?;
+    let b = prepare(
+        JobId::new(),
+        project,
+        vec![
+            file("README.md", b"untrusted context")?,
+            file("src/lib.rs", SOURCE)?,
+        ],
+        1700000010,
+    )?;
+    let digest = a.package().ok_or("package")?.artifact().digest();
+    assert_eq!(digest, b.package().ok_or("package")?.artifact().digest());
+    assert_eq!(a.semantic_identity(), b.semantic_identity());
+
+    if std::env::var_os("ARCHCERT_GREYWATCH_PROCESS_CHILD").is_some() {
+        println!("GREYWATCH_PACKAGE={}", digest.as_str());
+        return Ok(());
+    }
+
+    for _ in 0..2 {
+        let child = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "package_identity_is_process_and_enumeration_independent",
+                "--nocapture",
+            ])
+            .env("ARCHCERT_GREYWATCH_PROCESS_CHILD", "1")
+            .output()?;
+        assert!(child.status.success());
+        let output = std::str::from_utf8(&child.stdout)?;
+        assert!(
+            output
+                .lines()
+                .any(|line| line == format!("GREYWATCH_PACKAGE={}", digest.as_str()))
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn provider_completion_preserves_coverage_and_debug_excludes_private_source() -> R {
+    let secret = b"// fixture-secret-canary-never-a-provider-credential\npub fn example() {}";
+    let request = prepare(
+        JobId::new(),
+        ProjectId::new(),
+        vec![file("src/lib.rs", secret)?],
+        1700000000,
+    )?;
+    let before: Value =
+        serde_json::from_slice(request.package().ok_or("package")?.artifact().bytes())?;
+    let provider = response(&request);
+    let artifact = accept(&request, &provider)?;
+    let after: Value =
+        serde_json::from_slice(request.package().ok_or("package")?.artifact().bytes())?;
+
+    assert_eq!(before, after);
+    assert!(before.get("coverage_dimensions").is_some());
+    assert!(
+        before["untrusted_repository_context"]["blind_spots"]
+            .as_array()
+            .is_some_and(|spots| !spots.is_empty())
+    );
+    assert!(artifact.response().ok_or("response")?.complete);
+    assert!(!format!("{request:?}").contains("fixture-secret-canary"));
+
+    Ok(())
+}
+
+#[test]
+fn oversized_claim_text_citation_counts_and_shared_ids_reject() -> R {
+    let request = request()?;
+    let mut provider = response(&request);
+    provider
+        .claims
+        .push(claim("bounded", ClaimPolarity::Affirms));
+    provider.claims[0].statement = "x".repeat(2049);
+    assert_eq!(
+        accept(&request, &provider)?.error(),
+        Some(SemanticReviewError::Malformed)
+    );
+
+    provider.claims[0].statement = "Bounded assertion".into();
+    provider.claims[0].supporting = vec![citation(&request)?; 33];
+    assert_eq!(
+        accept(&request, &provider)?.error(),
+        Some(SemanticReviewError::Malformed)
+    );
+
+    provider.claims[0].supporting.clear();
+    provider.discoveries.push(SemanticDiscovery {
+        id: "bounded".into(),
+        kind: DiscoveryKind::MissingValidation,
+        statement: "Duplicate local identity".into(),
+        citations: vec![],
+    });
+    assert_eq!(
+        accept(&request, &provider)?.error(),
+        Some(SemanticReviewError::Malformed)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn characterize_bounded_request_and_normalization() -> R {
+    let started = std::time::Instant::now();
+    let request = request()?;
+    let packaging_micros = started.elapsed().as_micros();
+    let provider = response(&request);
+    let started = std::time::Instant::now();
+    let artifact = accept(&request, &provider)?;
+    let normalization_micros = started.elapsed().as_micros();
+    let package = request.package().ok_or("package")?;
+    let body: Value = serde_json::from_slice(package.artifact().bytes())?;
+
+    println!(
+        "GREYWATCH_MEASUREMENT={}",
+        json!({
+            "packaging_micros": packaging_micros,
+            "normalization_micros": normalization_micros,
+            "package_bytes": package.artifact().bytes().len(),
+            "request_bytes": request.artifact().bytes().len(),
+            "review_bytes": artifact.artifact().bytes().len(),
+            "included": body["included"],
+            "excluded": body["excluded"],
+            "coverage": body["coverage"],
+            "provider_network_latency": null
+        })
+    );
+
+    Ok(())
+}
+
+#[test]
+fn protocol_overhead_and_file_excerpt_overflow_remain_within_original_ceilings() -> R {
+    let project = ProjectId::new();
+    let files = || -> R<Vec<SourceFile>> {
+        (0..129)
+            .map(|n| file(&format!("fixtures/file_{n:03}.txt"), &vec![b'x'; 8192]))
+            .collect()
+    };
+
+    for bound in [1, 1024] {
+        assert!(prepare_with_limit(JobId::new(), project, files()?, 1700000000, bound).is_err());
+    }
+
+    for bound in [16000, 32000, 65536, 1048576] {
+        let request = prepare_with_limit(JobId::new(), project, files()?, 1700000000, bound)?;
+        let package = request.package().ok_or("package")?;
+        let body: Value = serde_json::from_slice(package.artifact().bytes())?;
+        assert!(request.artifact().bytes().len() <= bound);
+        assert_eq!(
+            package.coverage(),
+            SemanticContextCoverage::PartialAcceptable
+        );
+        assert!(
+            body["excluded"]["files"]
+                .as_u64()
+                .is_some_and(|count| count > 0)
+        );
+        assert!(
+            body["excluded"]["excerpt_bytes"]
+                .as_u64()
+                .is_some_and(|count| count > 0)
+        );
+        assert_eq!(body["configured_request_bytes"], bound);
+        assert_eq!(body["packaging_policy"]["maximum_request_bytes"], bound);
+        assert!(!request.context_complete());
+        let artifact = accept(&request, &response(&request))?;
+        assert!(artifact.response().ok_or("response")?.complete);
+        assert_eq!(
+            package.coverage(),
+            SemanticContextCoverage::PartialAcceptable
+        );
+    }
 
     Ok(())
 }

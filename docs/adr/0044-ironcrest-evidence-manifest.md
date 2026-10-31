@@ -98,3 +98,11 @@ embeds the ADR 0046 semantic package/digest. This is an explicit new producer
 contract under the existing manifest schema 2; the eight-role order is unchanged.
 Historical policies still require schema-1 REQUEST references. No historical
 manifest bytes, certificate payloads or verification interpretation change.
+
+ADR 0050 adds explicit Greywatch authority profiles whose REQUEST role has schema
+3 and REVIEW role has schema 2. Manifest schema 2 accepts this pair together;
+historical REQUEST schemas 1/2 still require REVIEW schema 1. The complete request
+binds its new package and interpretation descriptor; the complete review binds raw
+response bytes and recomputable normalized claims/discoveries/contradictions.
+Role order, exact references, historical manifest bytes and certificate signing
+remain unchanged. A substituted artifact changes the signed manifest identity.

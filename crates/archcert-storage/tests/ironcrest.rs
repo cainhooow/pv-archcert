@@ -22,17 +22,40 @@ impl archcert_application::semantic::SemanticReviewer for CountingSemanticReview
         use archcert_application::semantic::*;
         self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-        Ok(ReviewerOutput {
-            reported: ReviewerSelection::replay(),
-            truncated: false,
-            bytes: serde_json::to_vec(&SemanticReviewResponse {
+        let bytes = if request.semantic_identity().is_some() {
+            serde_json::to_vec(&GreywatchProviderResponse {
+                schema: 2,
+                request_sha256: request.artifact().digest().clone(),
+                outcome: GreywatchProviderOutcome::Completed,
+                complete: true,
+                items: vec![],
+                proposed_challenges: vec![],
+                claims: vec![SemanticClaim {
+                    id: format!("claim-{}", request.binding().job),
+                    subject: "fixture".into(),
+                    proposition: "reviewed".into(),
+                    polarity: ClaimPolarity::Affirms,
+                    statement: "Unverified session-scoped fixture claim".into(),
+                    supporting: vec![],
+                    contradicting: vec![],
+                }],
+                discoveries: vec![],
+            })
+        } else {
+            serde_json::to_vec(&SemanticReviewResponse {
                 schema: 1,
                 request_sha256: request.artifact().digest().clone(),
                 complete: true,
                 items: vec![],
                 proposed_challenges: vec![],
             })
-            .map_err(|_| SemanticReviewError::Malformed)?,
+        }
+        .map_err(|_| SemanticReviewError::Malformed)?;
+
+        Ok(ReviewerOutput {
+            reported: ReviewerSelection::replay(),
+            truncated: false,
+            bytes,
         })
     }
 }
@@ -612,20 +635,32 @@ impl AdmissionFixture {
         id: JobId,
     ) -> R<archcert_application::semantic::SemanticReviewRequest> {
         use archcert_application::semantic::*;
+
+        let context = ReviewContext {
+            job: id,
+            source: &self.source,
+            knowledge: &self.knowledge,
+            impact: &self.impact,
+            bundles: &[],
+            policy: &self.inputs.policy,
+            policy_bytes: br#"{"kind":"controlled-admission-policy"}"#,
+            authority_profile_sha256: self.profile.artifact().digest().clone(),
+            authority_profile_bytes: Some(self.profile.artifact().bytes()),
+            observations: &[],
+            claims: &[],
+        };
+
+        if self.profile.greywatch_enabled() {
+            return Ok(SemanticReviewRequest::prepare_greywatch(
+                context,
+                self.profile.reviewer(),
+                self.profile.semantic_limits(),
+                self.profile.packaging_policy().ok_or("packaging")?.clone(),
+            )?);
+        }
+
         Ok(SemanticReviewRequest::prepare(
-            ReviewContext {
-                job: id,
-                source: &self.source,
-                knowledge: &self.knowledge,
-                impact: &self.impact,
-                bundles: &[],
-                policy: &self.inputs.policy,
-                policy_bytes: br#"{"kind":"controlled-admission-policy"}"#,
-                authority_profile_sha256: self.profile.artifact().digest().clone(),
-                authority_profile_bytes: None,
-                observations: &[],
-                claims: &[],
-            },
+            context,
             self.profile.reviewer(),
             self.profile.semantic_limits(),
         )?)
@@ -1418,6 +1453,255 @@ async fn asterwyn_knowledge_publication_is_concurrent_idempotent_and_fail_closed
     );
     assert!(retained.review_timestamp.is_none());
     assert!(repo.get(id).await.is_err());
+    pool.close().await;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL and private immutable artifact storage"]
+async fn greywatch_concurrent_sessions_responses_and_admission_remain_immutable() -> R {
+    use archcert_application::{ironcrest::*, knowledge::*, semantic::*};
+    use archcert_storage::artifacts::FilesystemArtifactStore;
+    use std::{
+        os::unix::fs::PermissionsExt,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    let (repo, pool) = database().await?;
+    let mut fixture = admission_fixture(&repo).await?;
+    fixture.profile = fixture.profile.with_greywatch()?;
+    fixture.pin.authority_profile_sha256 = fixture.profile.artifact().digest().clone();
+
+    let other_source = SourceSnapshot::seal(
+        fixture.inputs.project,
+        fixture.inputs.repository.clone(),
+        GitObjectId::parse("c".repeat(40))?,
+        GitObjectId::parse("d".repeat(40))?,
+        vec![SourceFile::new(
+            SourcePath::from_bytes(b"src/lib.rs")?,
+            SourceMode::File,
+            b"pub fn different_source() {}".to_vec(),
+        )],
+        1,
+        1700000001,
+    )?;
+    let mut other_inputs = fixture.inputs.clone();
+    other_inputs.source = other_source.identity().clone();
+    other_inputs.submission = SourceSubmissionId::new();
+    repo.register_source(&other_inputs.submission, &other_source)
+        .await?;
+    let mut other_pin = fixture.pin.clone();
+    other_pin.source = other_inputs.source.clone();
+    other_pin.submission = other_inputs.submission.clone();
+    let other_knowledge = KnowledgeEngine::new(vec![], KnowledgeLimits::default())?.extract(
+        &other_source,
+        &[],
+        None,
+    )?;
+    let other_impact = analyze_impact(&other_knowledge, None)?;
+    let other_registry =
+        archcert_application::challenges::AuthorityChallengeRegistry::controlled()?;
+    let other_profile = IroncrestAuthorityProfile::controlled(
+        other_inputs.policy.clone(),
+        other_pin.extractor_registry_sha256.clone(),
+        vec![],
+        &other_registry,
+    )?
+    .with_greywatch()?;
+    let other = AdmissionFixture {
+        pin: other_pin,
+        inputs: other_inputs,
+        source: other_source,
+        profile: other_profile,
+        knowledge: other_knowledge,
+        impact: other_impact,
+        registry: other_registry,
+    };
+
+    let root = tempfile::tempdir()?;
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700))?;
+    let artifacts =
+        FilesystemArtifactStore::open_unencrypted_development(&root.path().canonicalize()?)?;
+    let workflow = IroncrestWorkflow {
+        repository: &repo,
+        artifacts: &artifacts,
+    };
+    let reviewer = CountingSemanticReviewer(AtomicUsize::new(0));
+    let a = JobId::new();
+    let b = JobId::new();
+
+    let (first, duplicate, second) = tokio::join!(
+        repo.open_session(a, &fixture.pin),
+        repo.open_session(a, &fixture.pin),
+        repo.open_session(b, &other.pin),
+    );
+    assert_eq!(first?.id, duplicate?.id);
+    assert_eq!(second?.id, b);
+    let request_a = fixture.review_request(a)?;
+    let request_b = other.review_request(b)?;
+    assert_ne!(request_a.binding().source, request_b.binding().source);
+    assert_ne!(request_a.semantic_identity(), request_b.semantic_identity());
+    assert_ne!(request_a.artifact().digest(), request_b.artifact().digest());
+
+    let (prepared_a, prepared_b) = tokio::join!(
+        workflow.prepare(
+            &request_a,
+            &fixture.knowledge,
+            &fixture.impact,
+            fixture.profile.artifact()
+        ),
+        workflow.prepare(
+            &request_b,
+            &other.knowledge,
+            &other.impact,
+            other.profile.artifact()
+        ),
+    );
+    prepared_a?;
+    prepared_b?;
+    let (review_a, review_b) = tokio::join!(
+        workflow.review_or_restore(&request_a, &reviewer),
+        workflow.review_or_restore(&request_b, &reviewer),
+    );
+    let review_a = review_a?;
+    let review_b = review_b?;
+
+    assert_eq!(reviewer.0.load(Ordering::SeqCst), 2);
+    for (id, request, review) in [(a, &request_a, &review_a), (b, &request_b, &review_b)] {
+        let supplement = review.supplement().ok_or("supplement")?;
+        assert_eq!(supplement.claims.len(), 1);
+        assert_eq!(supplement.claims[0].claim.id, format!("claim-{id}"));
+        let restored = workflow.review_or_restore(request, &reviewer).await?;
+        assert_eq!(restored.artifact().bytes(), review.artifact().bytes());
+    }
+    assert_eq!(reviewer.0.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        semantic_gate(&request_b, Some(&review_a)),
+        SemanticGateDecision::RequireMoreEvidence
+    );
+    assert!(
+        SemanticReviewArtifact::restore(
+            &request_b,
+            review_a.artifact().bytes(),
+            review_a.artifact().digest()
+        )
+        .is_err()
+    );
+
+    let admission = workflow
+        .freeze_admission(fixture.context(a, &request_a, &review_a))
+        .await?;
+    let (job, repeated) = tokio::join!(
+        repo.admit_reviewed(&admission),
+        repo.admit_reviewed(&admission)
+    );
+    assert_eq!(job?.id, a);
+    assert_eq!(repeated?.id, a);
+    assert_eq!(reviewer.0.load(Ordering::SeqCst), 2);
+
+    // A separate request exercises exact duplicate and conflicting publication
+    // under the same original invocation capability, never another provider call.
+    let c = JobId::new();
+    repo.open_session(c, &fixture.pin).await?;
+    let request_c = fixture.review_request(c)?;
+    assert_eq!(request_a.semantic_identity(), request_c.semantic_identity());
+    workflow
+        .prepare(
+            &request_c,
+            &fixture.knowledge,
+            &fixture.impact,
+            fixture.profile.artifact(),
+        )
+        .await?;
+    let invocation = repo
+        .claim_review(
+            fixture.pin.project,
+            c,
+            request_c.binding(),
+            &ironcrest_reference(request_c.artifact()),
+        )
+        .await?
+        .ok_or("invocation")?;
+    let output = reviewer.review(&request_c).await?;
+    let accepted = SemanticReviewArtifact::accept(&request_c, Ok(output), invocation.timestamp)?;
+    let (published, duplicated) = tokio::join!(
+        workflow.persist(
+            fixture.pin.project,
+            c,
+            IroncrestEvidenceRole::Review,
+            accepted.artifact(),
+            Some(&invocation)
+        ),
+        workflow.persist(
+            fixture.pin.project,
+            c,
+            IroncrestEvidenceRole::Review,
+            accepted.artifact(),
+            Some(&invocation)
+        ),
+    );
+    assert_eq!(published?, duplicated?);
+
+    let conflict = SemanticReviewArtifact::accept(
+        &request_c,
+        Err(SemanticReviewError::Unavailable),
+        invocation.timestamp,
+    )?;
+    assert!(
+        workflow
+            .persist(
+                fixture.pin.project,
+                c,
+                IroncrestEvidenceRole::Review,
+                conflict.artifact(),
+                Some(&invocation)
+            )
+            .await
+            .is_err()
+    );
+    let retained = workflow.review_or_restore(&request_c, &reviewer).await?;
+    assert_eq!(retained.artifact().bytes(), accepted.artifact().bytes());
+    assert_eq!(reviewer.0.load(Ordering::SeqCst), 3);
+    assert!(
+        repo.claim_review(
+            fixture.pin.project,
+            c,
+            request_c.binding(),
+            &ironcrest_reference(request_c.artifact())
+        )
+        .await?
+        .is_none()
+    );
+
+    let session = repo.review_session(fixture.pin.project, c).await?;
+    assert_eq!(
+        session
+            .evidence
+            .iter()
+            .filter(|e| e.role == IroncrestEvidenceRole::Review)
+            .count(),
+        1
+    );
+    let mutation = sqlx::query("UPDATE ironcrest_evidence SET reference=jsonb_set(reference,'{sha256}',to_jsonb(repeat('a',64))) WHERE session=$1 AND role='REVIEW'")
+        .bind(c.to_string())
+        .execute(&pool)
+        .await;
+
+    assert!(mutation.is_err());
+    assert!(
+        sqlx::query("DELETE FROM ironcrest_evidence WHERE session=$1 AND role='REVIEW'")
+            .bind(c.to_string())
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    let final_session = repo.review_session(fixture.pin.project, c).await?;
+    assert_eq!(
+        serde_json::to_value(session)?,
+        serde_json::to_value(final_session)?
+    );
+
     pool.close().await;
 
     Ok(())

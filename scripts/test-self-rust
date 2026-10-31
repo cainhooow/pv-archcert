@@ -31,6 +31,10 @@ def main():
     parser.add_argument('--docker', type=Path, required=True)
     parser.add_argument('--endpoint', required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument(
+        '--greywatch', action='store_true',
+        help='Select the versioned Greywatch protocol explicitly',
+    )
     args = parser.parse_args()
     output = args.output.resolve()
 
@@ -235,6 +239,10 @@ def main():
             ironcrest=True,
             ironcrest_baseline=None,
         )
+
+        if args.greywatch:
+            grant['greywatch'] = True
+
         authority = fixture.authority / 'control-plane.json'
         settings = dict(source_store=str(fixture.store), artifact_root=str(objects), grants=[grant])
         authority.write_text(json.dumps(settings))
@@ -242,7 +250,7 @@ def main():
         prefix = [BIN / 'archcert-controller', '--config', authority]
         command(prefix + ['provision'])
         result['authority'] = dict(
-            profile='rust-workspace-review-v1/1.0.0',
+            profile='rust-workspace-review-v1/' + ('1.1.1' if args.greywatch else '1.0.0'),
             image=args.image,
             endpoint=args.endpoint,
             baseline=None,
@@ -315,6 +323,11 @@ def main():
             )
             path.chmod(0o600)
 
+            if args.greywatch:
+                structured = json.loads(path.read_text())
+                structured.update(schema=2, outcome='COMPLETED', claims=[], discoveries=[])
+                path.write_text(json.dumps(structured))
+
             return path
 
         def review(session, replay=None, crash=None):
@@ -372,6 +385,9 @@ def main():
         )
 
         assert failed.returncode != 0
+
+        if args.greywatch:
+            assert b'semantic context exceeds authority bounds; coverage incomplete' in failed.stderr
 
         journal = inspect(insufficient, insufficient_prefix)['session']
 

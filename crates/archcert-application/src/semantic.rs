@@ -210,7 +210,7 @@ impl SemanticReviewRequest {
         selection: ReviewerSelection,
         limits: SemanticLimits,
     ) -> Result<Self, KnowledgeError> {
-        Self::prepare_impl(context, selection, limits, None)
+        Self::prepare_impl(context, selection, limits, None, 0)
     }
 
     fn prepare_impl(
@@ -218,6 +218,7 @@ impl SemanticReviewRequest {
         selection: ReviewerSelection,
         limits: SemanticLimits,
         packaging: Option<SemanticPackagingPolicy>,
+        reserved_envelope_bytes: usize,
     ) -> Result<Self, KnowledgeError> {
         limits.validate()?;
 
@@ -384,8 +385,15 @@ impl SemanticReviewRequest {
         };
 
         if let Some(policy) = packaging {
-            let (package, artifact) =
-                Self::package_request(&context, &binding, &selection, limits, policy, &claims)?;
+            let (package, artifact) = Self::package_request(
+                &context,
+                &binding,
+                &selection,
+                limits,
+                policy,
+                &claims,
+                reserved_envelope_bytes,
+            )?;
             return Ok(Self {
                 complete: package.coverage() == SemanticContextCoverage::FullContext,
                 package: Some(package),
@@ -796,7 +804,9 @@ impl SemanticReviewArtifact {
         &self.artifact
     }
 
-    /// Structured semantic evidence; no deterministic proof conversion exists.
+    /// Shared validated concern/proposal view; no deterministic proof conversion.
+    /// Greywatch's raw schema-2 response and typed supplement remain separately
+    /// retained; this schema-1 vocabulary view is not its raw provider encoding.
     pub fn response(&self) -> Option<&SemanticReviewResponse> {
         self.response.as_ref()
     }

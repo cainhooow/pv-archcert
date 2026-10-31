@@ -187,3 +187,28 @@ impact, packaging and total duration in the intentionally untracked
 `docs/PRE_GENESIS_SELF_TEST_2_REPORT.md`. A successful run may be described only as
 **PRE-GENESIS ENGINEERING SELF-VALIDATION: PASSED**. It remains shared implementation/
 authority validation and does not replace independent Genesis / Firstwarden work.
+
+## Explicit Greywatch protocol
+
+Add `--greywatch` to `scripts/test-self-rust` to select ADR 0050 protocol 1.0.1
+and Rust authority profile 1.1.1. Absence retains historical profile 1.0.0 and its
+request/response semantics. This is a private authority choice, never a repository
+configuration request. Existing image, commands, resource ceilings, denied network,
+mandatory challenge and deterministic issuance requirements remain necessary.
+
+The new request schema 3 binds package schema 2, the stable semantic identity and
+the full interpretation descriptor. The invocation request additionally binds its
+operational session UUID. REVIEW schema 2 retains raw provider response schema 2
+and recomputable normalized supplemental evidence. The same eight-role manifest
+binds both exact references; offline verification never calls a provider. Explicit
+partial coverage and inherited M7 uncertainty remain visible even under a complete
+provider response. The lower-budget probe reports incomplete semantic coverage
+before any provider claim or execution admission.
+
+Only local deterministic replay is configured. This fixture measures boundary
+behavior and request reproducibility, not external model correctness, repeatability
+or absence of defects. Retain every failed/inconclusive run with its original
+source and reached stages. Protocol 1.0.0 development artifacts require their
+original authority implementation for recovery and keep their original assurance.
+
+> This is engineering self-validation under a shared implementation/authority context. It is not independent certification and does not replace Genesis / Firstwarden.

@@ -120,3 +120,36 @@ mutated accepted object remains infrastructure/integrity failure even when its
 immutable database reference is still retained for audit. This is not semantic
 empty knowledge. Finite bounds do not establish global availability or parser
 memory safety. M6 mechanisms and M8 acceptance semantics are unchanged.
+
+## Versioned Greywatch supplemental interpretation
+
+ADR 0050 adds explicit authority-selected typed claims, discoveries, citation
+validation and refusal/context-exhaustion outcomes. Historical response schema 1
+is never reinterpreted. New request identity pins template, parser/normalization,
+system instructions and gate semantics; operational UUIDs remain response-replay
+fences while stable semantic/package identity excludes them. Wrong source/path/
+line/node/evidence/policy citations reject before acceptance. Citation validity
+proves object identity only, never the provider's interpretation.
+
+Opposite explicit polarities for equal subject/proposition keys create retained
+contradiction records and require authority resolution. Arbitrary prose consistency,
+faithful provider categorization and complete discovery remain NOT PROVEN. Providers
+may omit defects or mislabel assertions; CONTINUE still establishes no deterministic
+property. Discovery types are supplemental; UNREVIEWED_AREA requires more evidence
+and authority-related BLOCKING_CONCERN retains its veto. No provider text can waive
+mandatory checks or impersonate human disposition.
+
+Raw bounded accepted output and normalized supplemental artifacts persist together
+under one immutable REVIEW role. Restore revalidates raw output and recomputes
+normalization before reuse. Duplicate publication is exact; different bytes under
+the same invocation cannot replace acceptance. The existing claim remains uncertain
+after controller death before durable response publication, including death after
+receiving a response in memory. It never permits automatic re-invocation.
+
+Local replay/unavailable are still the only adapters. There is no external egress,
+provider API key or remote transport qualification. Local deadline fixtures prove
+conservative timeout handling only. Transitive provider graphs exclude runtime,
+source acquisition, persistence and signing capability; inward layers also exclude
+provider SDK/HTTP-client families. Release Permit and target network controls are
+unchanged. Private development artifact retention can contain committed source
+secrets and remains subject to the existing trusted host/store assumptions.

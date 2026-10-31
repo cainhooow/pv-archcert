@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 F = runpy.run_path(str(ROOT / 'scripts/test-northgate'))
 run, NorthgateFixture = F['run'], F['NorthgateFixture']
 BIN = ROOT / 'target/debug'
+GREYWATCH = os.environ.get('ARCHCERT_GREYWATCH') == '1'
 OUTPUT = Path(
     os.environ.get('ARCHCERT_IRONCREST_OUTPUT', ROOT / 'target/m6/ironcrest-live')
 ).resolve()
@@ -159,7 +160,7 @@ try:
     config = fixture.authority / 'control-plane.json'
 
     def grant(repository, toml, ironcrest):
-        return dict(
+        selected = dict(
             project=F['PROJECT'],
             repository=repository,
             actor=F['ACTOR'],
@@ -171,6 +172,11 @@ try:
             ironcrest=ironcrest,
             ironcrest_baseline=baseline['submission'] if ironcrest else None,
         )
+
+        if GREYWATCH and ironcrest:
+            selected['greywatch'] = True
+
+        return selected
 
     config.write_text(
         json.dumps(
@@ -200,25 +206,29 @@ try:
             ).stdout
         )
 
-    def opened(src):
+    def opened(src, crash=False):
         session = str(uuid.uuid4())
-        command(
-            prefix
-            + [
-                'ironcrest',
-                'open',
-                '--project',
-                F['PROJECT'],
-                '--repository',
-                src['repository'],
-                '--submission',
-                src['submission'],
-                '--session',
-                session,
-                '--token-file',
-                token_file,
-            ]
-        )
+        argv = prefix + [
+            'ironcrest',
+            'open',
+            '--project',
+            F['PROJECT'],
+            '--repository',
+            src['repository'],
+            '--submission',
+            src['submission'],
+            '--session',
+            session,
+            '--token-file',
+            token_file,
+        ]
+
+        if crash:
+            killed = crash_command(argv, 'session')
+            assert killed.returncode == -signal.SIGKILL
+            checkpoints.append(dict(stage='session', session=session, evidence=inspect(session)))
+        else:
+            command(argv)
 
         return session
 
@@ -279,6 +289,26 @@ try:
         )
         path.chmod(0o600)
 
+        if GREYWATCH:
+            structured = json.loads(path.read_text())
+            structured.update(
+                schema=2,
+                outcome='COMPLETED',
+                claims=[] if block else [
+                    dict(
+                        id='settlement-claim',
+                        subject='settlement',
+                        proposition='idempotent',
+                        polarity='AFFIRMS',
+                        statement='Unverified provider assertion, not deterministic proof.',
+                        supporting=[],
+                        contradicting=[],
+                    )
+                ],
+                discoveries=[],
+            )
+            path.write_text(json.dumps(structured))
+
         return path
 
     def review(session, replay=None, stop=None, ok=True):
@@ -328,12 +358,13 @@ try:
 
         return r
 
-    session = opened(good)
+    session = opened(good, crash=GREYWATCH)
 
     for stage in ['knowledge', 'impact', 'request']:
         prepare(session, stage)
 
     prepared = prepare(session)
+    result['measurements'] = prepared['measurements']
     replay = response(prepared)
 
     for stage in ['review', 'gate', 'plan', 'admitted']:
@@ -397,6 +428,13 @@ try:
     assert manifest['ironcrest']['pin']['baseline']['source'] == baseline['source']
     assert manifest['ironcrest']['pin']['source'] == good['source']
 
+    if GREYWATCH:
+        request_ref = next(ref for role, ref in manifest['ironcrest']['roles'] if role == 'REQUEST')
+        review_ref = next(ref for role, ref in manifest['ironcrest']['roles'] if role == 'REVIEW')
+        assert request_ref['schema'] == 3 and review_ref['schema'] == 2
+        accepted_review = json.loads((objects / F['PROJECT'] / review_ref['sha256']).read_bytes())
+        assert accepted_review['normalized']['claims'][0]['disposition'] == 'UNVERIFIED'
+
     gate_reference = next(ref for role, ref in manifest['ironcrest']['roles'] if role == 'GATE')
     gate = json.loads((objects / F['PROJECT'] / gate_reference['sha256']).read_bytes())
 
@@ -421,6 +459,43 @@ try:
     assert inspect(uncertain)['review_recovery'] == 'OPERATOR_RECOVERY_REQUIRED'
 
     result['uncertain_claim'] = inspect(uncertain)
+
+    if GREYWATCH:
+        # A response received only in process memory is still an uncertain durable
+        # request after SIGKILL. Its invocation claim must never be issued again.
+        lost_response = opened(good)
+        review(lost_response, response(prepare(lost_response)), 'response')
+        assert review(lost_response, ok=False).returncode != 0
+        assert inspect(lost_response)['review_recovery'] == 'OPERATOR_RECOVERY_REQUIRED'
+        result['response_received_before_publication'] = inspect(lost_response)
+
+        cases = ['contradiction', 'hallucinated-citation', 'refusal', 'malformed', 'unknown-schema']
+        for case in cases:
+            scoped = opened(good)
+            replay_file = response(prepare(scoped))
+            payload = json.loads(replay_file.read_text())
+            if case == 'contradiction':
+                denied = dict(payload['claims'][0], id='opposite-claim', polarity='DENIES')
+                payload['claims'].append(denied)
+            elif case == 'hallucinated-citation':
+                payload['claims'][0]['supporting'] = [dict(kind='AUTHORITY', id='fake-human-approval')]
+            elif case == 'refusal':
+                payload.update(outcome='REFUSED', complete=False, claims=[], proposed_challenges=[])
+            elif case == 'unknown-schema':
+                payload['schema'] = 999
+
+            serialized = (
+                'Sure! Here is the result: {}' if case == 'malformed' else json.dumps(payload)
+            )
+            replay_file.write_text(serialized)
+
+            rejected_case = json.loads(review(scoped, replay_file).stdout)
+            assert rejected_case['status'] == 'INCONCLUSIVE'
+            assert command(prefix + ['show', scoped], ok=False).returncode != 0
+            retained = inspect(scoped)
+            assert json.loads(review(scoped).stdout) == rejected_case
+            assert inspect(scoped) == retained
+            result['corpus-' + case] = dict(outcome=rejected_case, journal=retained)
 
     # Establish mechanical eligibility independently, without entering any signer.
     baseline_run = command(

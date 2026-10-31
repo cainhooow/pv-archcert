@@ -50,6 +50,7 @@ fn authority(
     policy: &PolicyPin,
     rust: bool,
     request_bound: Option<usize>,
+    greywatch: bool,
 ) -> Result<
     (
         KnowledgeEngine,
@@ -110,6 +111,14 @@ fn authority(
         )
     }
     .map_err(|_| JobStoreError::Invalid)?;
+
+    let profile = if greywatch {
+        profile
+            .with_greywatch()
+            .map_err(|_| JobStoreError::Invalid)?
+    } else {
+        profile
+    };
 
     Ok((engine, bundles, registry, profile))
 }
@@ -192,8 +201,13 @@ impl ControlPlane {
 
         let rust = grant.profile == "rust-workspace-v1";
         let policy = policy_pin(rust)?;
-        let (engine, bundles, registry, profile) =
-            authority(project, &policy, rust, grant.semantic_request_bytes)?;
+        let (engine, bundles, registry, profile) = authority(
+            project,
+            &policy,
+            rust,
+            grant.semantic_request_bytes,
+            grant.greywatch,
+        )?;
         let plan = resolve_authority_plan(&grant.profile, &grant.image, &grant.authority_toml)?;
 
         self.repository
@@ -253,8 +267,13 @@ impl ControlPlane {
             return Err(JobStoreError::Precondition);
         }
 
-        let (engine, bundles, registry, profile) =
-            authority(project, &policy, rust, grant.semantic_request_bytes)?;
+        let (engine, bundles, registry, profile) = authority(
+            project,
+            &policy,
+            rust,
+            grant.semantic_request_bytes,
+            grant.greywatch,
+        )?;
         profile.validate_pin(pin)?;
         let base_inputs = JobInputs {
             project,
@@ -328,7 +347,17 @@ impl ControlPlane {
             observations: &[],
             claims: &[],
         };
-        let request = if let Some(packaging) = profile.packaging_policy() {
+        let request = if profile.greywatch_enabled() {
+            SemanticReviewRequest::prepare_greywatch(
+                context,
+                profile.reviewer(),
+                profile.semantic_limits(),
+                profile
+                    .packaging_policy()
+                    .ok_or(JobStoreError::Invalid)?
+                    .clone(),
+            )
+        } else if let Some(packaging) = profile.packaging_policy() {
             SemanticReviewRequest::prepare_bounded(
                 context,
                 profile.reviewer(),
@@ -338,7 +367,13 @@ impl ControlPlane {
         } else {
             SemanticReviewRequest::prepare(context, profile.reviewer(), profile.semantic_limits())
         }
-        .map_err(|_| JobStoreError::Invalid)?;
+        .map_err(|error| {
+            if profile.greywatch_enabled() && error == KnowledgeError::LimitExceeded {
+                JobStoreError::SemanticContextLimit
+            } else {
+                JobStoreError::Invalid
+            }
+        })?;
         profile.validate_request(&request)?;
 
         let measurements = serde_json::json!({
