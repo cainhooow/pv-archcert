@@ -236,3 +236,10 @@ public package caches (~/.rustup and ~/.cargo). They contain no ArchCert runtime
 state or authority credentials and remain available for reproducibility. Host
 runtime packages, subordinate-ID/bootstrap settings and unrelated services were
 operator-provisioned and left alone. No qualification image or data is retained.
+
+## Separate M6 release qualification
+
+The October 30, 2026 [M6 qualification](NATIVE_LINUX_M6_RELEASE.md) records the new
+single-file build/collector/permit mechanism on its explicitly selected native
+profile. This October 20 Stoneward record keeps its original mechanism, source
+identities and limitations; the later acceptance does not reinterpret its evidence.

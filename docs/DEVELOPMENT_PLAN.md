@@ -139,6 +139,9 @@ independent certification.
 The initial single-file Rust build/reproducibility/development Release Permit and
 local offline artifact gate are implemented separately from historical `ironcrest`
 review identifiers. See [ADR 0048](adr/0048-artifact-build-and-release-permit.md) and
-[release operations](release/README.md). M6 remains in progress pending native
-qualification and final acceptance. This does not start Genesis / Firstwarden or
-declare M7/M8 complete.
+[release operations](release/README.md). M6 — Ironcrest — COMPLETE within the
+[exact single-file native qualification scope](qualification/NATIVE_LINUX_M6_RELEASE.md).
+Acceptance includes independent native builds, collector/recovery regressions,
+exact-source engineering certification and a services-stopped offline Release
+Permit gate. Development signing and the documented limitations remain. Genesis /
+Firstwarden is NOT STARTED; M7/M8 retain their existing unreconciled status.

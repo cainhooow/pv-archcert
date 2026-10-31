@@ -21,7 +21,7 @@ The canonical roadmap is:
 | Milestone | Scope | Status |
 | --- | --- | --- |
 | M5.2 — Stoneward | Native Linux Runner Qualification & Operational Recovery | COMPLETE, within its documented qualification scope |
-| M6 — Ironcrest | Artifact Binding, Reproducible Builds & Release Permit | IN PROGRESS: initial development path implemented; native qualification pending |
+| M6 — Ironcrest | Artifact Binding, Reproducible Builds & Release Permit | COMPLETE within the documented single-file native qualification scope; development signing |
 | M7 — Asterwyn | Project Knowledge Engine & Change Impact Graph | SUBSTANTIALLY IMPLEMENTED ahead of sequence; pending formal milestone reconciliation |
 | M8 — Greywatch | Semantic Review, Agent Claims, Discoveries & Blind Spots | SUBSTANTIALLY IMPLEMENTED ahead of sequence; pending formal milestone reconciliation |
 
@@ -34,6 +34,8 @@ retained historical implementation labels, not claims of artifact binding,
 reproducible builds or release permits. Git history is preserved.
 
 See the [M6 release lifecycle and offline deployment gate](docs/release/README.md).
+The [native M6 qualification](docs/qualification/NATIVE_LINUX_M6_RELEASE.md) records
+the exact supported profile, source-specific acceptance evidence and limitations.
 Source certificates retain EXACT_SOURCE scope. They cannot authorize arbitrary
 artifacts, and the new permit does not broaden historical Stoneward qualification.
 

@@ -52,8 +52,9 @@ Follow [ADR 0045](docs/adr/0045-roadmap-reconciliation.md):
 
 - M5.2 Stoneward is COMPLETE within its documented exact qualification scope.
 - M6 Ironcrest means Artifact Binding, Reproducible Builds & Release Permit. It
-  is IN PROGRESS. The initial development release path is implemented under
-  ADR 0048; native qualification and final milestone acceptance remain pending.
+  is COMPLETE within the exact single-file native qualification scope in
+  [the M6 qualification record](docs/qualification/NATIVE_LINUX_M6_RELEASE.md).
+  ADR 0048 retains development signing and the documented assurance limits.
 - M7 Asterwyn covers knowledge and impact; M8 Greywatch covers semantic review,
   claims, discoveries and blind spots. Both are substantially implemented ahead
   of sequence, pending formal milestone reconciliation; neither is declared complete.

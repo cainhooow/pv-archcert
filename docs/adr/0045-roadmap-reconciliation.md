@@ -23,7 +23,7 @@ criteria or infer completion from the amount of existing code.
 | Milestone | Canonical scope | Current status |
 | --- | --- | --- |
 | M5.2 — Stoneward | Native Linux Runner Qualification & Operational Recovery | COMPLETE within the documented exact qualification scope |
-| M6 — Ironcrest | Artifact Binding, Reproducible Builds & Release Permit | IN PROGRESS; initial development implementation under ADR 0048; native qualification pending |
+| M6 — Ironcrest | Artifact Binding, Reproducible Builds & Release Permit | COMPLETE within the documented single-file native qualification scope; development signing |
 | M7 — Asterwyn | Project Knowledge Engine & Change Impact Graph | SUBSTANTIALLY IMPLEMENTED AHEAD OF SEQUENCE; PENDING FORMAL MILESTONE RECONCILIATION |
 | M8 — Greywatch | Semantic Review, Agent Claims, Discoveries & Blind Spots | SUBSTANTIALLY IMPLEMENTED AHEAD OF SEQUENCE; PENDING FORMAL MILESTONE RECONCILIATION |
 
@@ -40,11 +40,13 @@ is declared COMPLETE.
 
 At reconciliation, M6 still required its own artifact binding, reproducible build
 and release permit design and implementation. [ADR 0048](0048-artifact-build-and-release-permit.md)
-now defines the separate initial development implementation; milestone completion
-and native qualification remain pending. Existing source/certificate/evidence binding alone does
-not satisfy that scope. Genesis / Firstwarden bootstrap and independent trust
-establishment remain separate and are not started by this decision or a development
-self-validation experiment.
+defines the separate release implementation. The October 30, 2026
+[native M6 qualification](../qualification/NATIVE_LINUX_M6_RELEASE.md) records
+completed acceptance for its exact single-file profile, including source-specific
+certification, independent builds and offline artifact authorization. Existing
+source/certificate/evidence binding alone does not satisfy that scope. Genesis /
+Firstwarden bootstrap and independent trust establishment remain separate and are
+not started by this decision or a development self-validation experiment.
 
 ## History and implementation-name inventory
 

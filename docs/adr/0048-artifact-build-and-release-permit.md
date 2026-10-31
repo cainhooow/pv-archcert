@@ -1,6 +1,7 @@
 # ADR 0048: Artifact binding, independent builds and release permits
 
-Status: Accepted design; implementation and qualification tracked separately.
+Status: Accepted design; implemented and natively qualified within the exact
+single-file scope in [the M6 qualification record](../qualification/NATIVE_LINUX_M6_RELEASE.md).
 Date: October 22, 2026. Extends ADRs 0006, 0011–0018, 0025–0027 and 0035–0040.
 
 ## Context
@@ -150,3 +151,16 @@ The controller requires an explicit --recipe-version on both admission and resum
 An upgraded authority executable must reject an unsupported retained version rather
 than silently select its newer recipe and create a different invocation. Recipe
 content and cryptographic schemas are unchanged by this CLI guard.
+
+## Native acceptance
+
+M6 — Ironcrest — COMPLETE on October 30, 2026 (America/Sao_Paulo), within the
+qualified Ubuntu/KVM/rootless profile and recipe 1.0.2. The qualification record
+identifies exact source/image/inventory/collector bytes, independent A/B execution,
+collector rejection and recovery tests, development certificate/permit identities,
+services-stopped offline verification and retained failures. It separately records
+the corrected advisory-image freshness provisioning without relaxing a check.
+Historical images, recipes, failed runs, source certificates and permits keep
+their original meanings. Later source identities require their own validation.
+Production custody, broader reproducibility/platforms, revocation, transparency,
+M7/M8 acceptance and Genesis / Firstwarden remain outside this bounded completion.

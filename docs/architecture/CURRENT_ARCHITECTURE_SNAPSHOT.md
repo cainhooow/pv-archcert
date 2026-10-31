@@ -3,10 +3,12 @@
 The canonical roadmap and historical naming inventory are defined in
 [ADR 0045](../adr/0045-roadmap-reconciliation.md). M5.2 Stoneward is COMPLETE within
 its documented qualification scope. M6 Ironcrest (Artifact Binding, Reproducible
-Builds & Release Permit) is IN PROGRESS: an initial development release path is
-implemented under ADR 0048; native qualification and final acceptance remain pending. M7 Asterwyn (Project
-Knowledge Engine & Change Impact Graph) and M8 Greywatch (Semantic Review, Agent
-Claims, Discoveries & Blind Spots) are SUBSTANTIALLY IMPLEMENTED ahead of sequence,
+Builds & Release Permit) is COMPLETE within the exact single-file native profile
+recorded in [the M6 qualification](../qualification/NATIVE_LINUX_M6_RELEASE.md)
+under ADR 0048. Development signing and the documented assurance limits remain.
+M7 Asterwyn (Project Knowledge Engine & Change Impact Graph) and M8 Greywatch
+(Semantic Review, Agent Claims, Discoveries & Blind Spots) are SUBSTANTIALLY
+IMPLEMENTED ahead of sequence,
 pending formal milestone reconciliation. Their full canonical Definitions of Done
 have not been checked here; neither is declared complete.
 
@@ -201,7 +203,9 @@ Project configuration cannot select signer/key/algorithm/authority or weaken pol
 No AI participates in issuance. Ravenport now implements authenticated durable
 HTTP job admission/status and PostgreSQL metadata. No web UI, production artifact certification,
 waiver, policy inheritance, production KMS/HSM/PKCS#11, revocation or transparency
-service is added. Only the exact Stoneward native profile is qualified; see qualification/NATIVE_LINUX_RUNNER.md.
+service is added. Native qualification is limited to the documented Stoneward
+profile and the separate M6 single-file profile; see qualification/NATIVE_LINUX_RUNNER.md
+and qualification/NATIVE_LINUX_M6_RELEASE.md.
 
 See ADRs 0025–0027, MILESTONE_4B_REPORT.md, the certificate/signing threat model,
 TCB_AND_DEPENDENCIES.md and CRYPTO_DEPENDENCY_REVIEW.md.
@@ -453,6 +457,12 @@ release key and checks actual artifact bytes plus project/repository. A source
 certificate alone, another scope, wrong key or substituted binary cannot pass.
 It is a local gate: external deployment integration, OCI/package formats, expiry,
 revocation and production signer custody are not implemented. Inventory assertions
-are not toolchain/runtime attestation. The new mechanism remains outside historical
-Stoneward native qualification until separately requalified. Development fixture
-validation and exact-source engineering self-validation are separate claims.
+are not toolchain/runtime attestation. The new mechanism has its own exact native
+qualification in qualification/NATIVE_LINUX_M6_RELEASE.md; the historical Stoneward
+report keeps its original mechanism and source scope. Native collector, independent
+equal/unequal build, real PostgreSQL and seven-SIGKILL release regressions passed.
+The separately identified ArchCert source passed engineering self-validation,
+independent native A/B builds and selected-key offline artifact authorization with
+the dedicated database/runtime stopped. Development fixture validation and each
+exact-source engineering run retain separate identities. M6 is COMPLETE within
+that bounded scope; Genesis / Firstwarden is NOT STARTED and M7/M8 are unchanged.

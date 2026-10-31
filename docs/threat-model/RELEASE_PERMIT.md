@@ -24,6 +24,8 @@ local deployment gate. Source certification and artifact authorization differ.
 
 This is engineering self-validation under a shared implementation/authority context.
 It is not independent certification and does not replace Genesis / Firstwarden.
-Stoneward's exact historical native qualification does not qualify the new output
-collection mechanism. Default and simulated tests cannot establish OCI enforcement,
-PostgreSQL locking, native deployment or production release authority.
+The output collection mechanism has a separate exact native qualification in
+[the M6 record](../qualification/NATIVE_LINUX_M6_RELEASE.md). Stoneward's historical
+qualification retains its original scope. Default and simulated tests cannot
+establish OCI enforcement, PostgreSQL locking, native deployment or production
+release authority.

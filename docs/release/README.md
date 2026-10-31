@@ -103,11 +103,14 @@ artifact gate, including a substituted-file rejection. Run it against a dedicate
 migrated database with explicit `--image`, `--docker`, `--endpoint`, `--dependencies`,
 `--toolchain` and a new `--output` below ignored `target/`.
 
-These commands are reproduction instructions, not claims that they passed. Actual
-validation is recorded separately. The new collection mechanism and explicit
-large-offline-image control profile require native Linux requalification; historical
-Stoneward qualification applies only to its documented mechanism and environment.
-Colima runs remain development evidence. Canonical M6 completion must not be
-inferred from historical `ironcrest` review lifecycle names or prior reports.
+These commands are reproduction instructions. Executed native results and the
+exact supported profile are recorded in the
+[M6 qualification](../qualification/NATIVE_LINUX_M6_RELEASE.md): M6 — Ironcrest — COMPLETE
+within its single-file Rust scope, with development signing. The collector and
+explicit large-offline-image control profile were qualified separately from the
+historical Stoneward mechanism. Colima runs remain development evidence, and
+historical `ironcrest` review names retain their original meanings. Every later
+source commit requires its own source certificate, independent builds and permit;
+the qualification record never certifies future repository bytes.
 
 This is engineering self-validation under a shared implementation/authority context. It is not independent certification and does not replace Genesis / Firstwarden.
