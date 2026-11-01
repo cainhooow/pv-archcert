@@ -63,7 +63,8 @@ Follow [ADR 0045](docs/adr/0045-roadmap-reconciliation.md):
   spots. It is COMPLETE within the bounded supplemental-review scope in ADR 0050
   and the Greywatch closure in ADR 0045. Local replay qualification establishes
   no model correctness, complete semantic coverage or independent certification.
-- M9 is NOT STARTED by this closure.
+- M9 Glassmere is IN PROGRESS under ADR 0051. Its panel observes authority;
+  it does not become authority. M10 Crownvale and M11 Thornwick are NOT STARTED.
 - Genesis / Firstwarden is NOT STARTED. Engineering self-validation does not start it.
 
 Existing `ironcrest` identifiers are historical implementation names for the

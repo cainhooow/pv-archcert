@@ -23,12 +23,15 @@ The canonical roadmap is:
 | M5.2 — Stoneward | Native Linux Runner Qualification & Operational Recovery | COMPLETE, within its documented qualification scope |
 | M6 — Ironcrest | Artifact Binding, Reproducible Builds & Release Permit | COMPLETE within the documented single-file native qualification scope; development signing |
 | M7 — Asterwyn | Project Knowledge Engine & Change Impact Graph | COMPLETE within the bounded deterministic scope in ADRs 0045 and 0049 |
-| M8 — Greywatch | Semantic Review, Agent Claims, Discoveries & Blind Spots | IN PROGRESS due historical prework; pending its own formal closure |
+| M8 — Greywatch | Semantic Review, Agent Claims, Discoveries & Blind Spots | COMPLETE within the bounded supplemental-review scope in ADRs 0045 and 0050 |
+| M9 — Glassmere | Web Panel & Release Readiness | IN PROGRESS under ADR 0051 |
+| M10 — Crownvale | Policy governance | NOT STARTED |
+| M11 — Thornwick | Capability extensions | NOT STARTED |
 
 The recent knowledge, semantic review and durable lifecycle work was incorrectly
 called M6/Ironcrest. The subsequent Asterwyn closure establishes its bounded
 deterministic scope.
-Greywatch remains IN PROGRESS; its historical prework does not establish completion.
+Greywatch is COMPLETE within its separately reconciled bounded supplemental-review scope.
 [ADR 0045](docs/adr/0045-roadmap-reconciliation.md) records the correction and name
 inventory. Existing `ironcrest` APIs, policy/profile IDs, schemas and commands are
 retained historical implementation labels, not claims of artifact binding,
@@ -318,3 +321,11 @@ rejection. The development adapter uses unencrypted scoped filesystem objects,
 loopback authority authentication and explicit cleanup confirmation for lost running
 workers. Production IAM/TLS, remote workers, encrypted storage/KMS and deployment
 qualification remain separate work. Offline verification still needs no database.
+
+## Glassmere operational visibility (M9 in progress)
+
+Glassmere observes existing authority; it does not become authority. The private
+panel design and its readiness/query/session boundaries are recorded in
+[ADR 0051](docs/adr/0051-glassmere-observation-boundary.md) and the
+[Glassmere threat model](docs/threat-model/GLASSMERE.md). M9 is not closed.
+M10, M11 and Genesis / Firstwarden remain NOT STARTED.

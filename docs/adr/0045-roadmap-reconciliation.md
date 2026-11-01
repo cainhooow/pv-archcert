@@ -26,6 +26,9 @@ criteria or infer completion from the amount of existing code.
 | M6 — Ironcrest | Artifact Binding, Reproducible Builds & Release Permit | COMPLETE within the documented single-file native qualification scope; development signing |
 | M7 — Asterwyn | Project Knowledge Engine & Change Impact Graph | COMPLETE within the bounded deterministic scope in ADR 0049 and the closure reconciliation below |
 | M8 — Greywatch | Semantic Review, Agent Claims, Discoveries & Blind Spots | COMPLETE within the bounded supplemental-review scope in ADR 0050 and the Greywatch closure below |
+| M9 — Glassmere | Web Panel & Release Readiness | IN PROGRESS under ADR 0051; no closure claimed |
+| M10 — Crownvale | Policy governance | NOT STARTED |
+| M11 — Thornwick | Capability extensions | NOT STARTED |
 
 M7 includes immutable bounded knowledge, syntax/provenance/coverage vocabulary,
 authority knowledge and conservative baseline/impact handling. M8 includes bounded
@@ -222,3 +225,12 @@ paragraph records M8's status at that earlier time, not the current status above
 M9 is NOT STARTED by this task. Genesis / Firstwarden remains NOT STARTED.
 
 > This is engineering self-validation under a shared implementation/authority context. It is not independent certification and does not replace Genesis / Firstwarden.
+
+## Glassmere commencement
+
+November 1, 2026: M9 starts from accepted Greywatch HEAD
+`2f73c2aeb69dae080ca78e0d66915cefcccaff59`.
+[ADR 0051](0051-glassmere-observation-boundary.md) defines the private observation,
+readiness, authentication and query boundaries. M9 is IN PROGRESS; a preview or
+UI existence does not establish completion. M6–M8 retain their accepted scopes.
+M10, M11 and Genesis / Firstwarden remain NOT STARTED.

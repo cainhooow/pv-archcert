@@ -165,3 +165,12 @@ compiler-quality resolution, Git ancestry analysis and automatic execution-plan
 optimization are not supported. Unsupported dimensions retain explicit blind spots
 and expand review. M8 is outside this closure expansion; Genesis / Firstwarden is
 NOT STARTED. M6 remains COMPLETE within its unchanged qualification scope.
+
+## M9 Glassmere — in progress
+
+Start from accepted Greywatch `2f73c2a`. Reconcile existing APIs, durable records,
+verifiers and scopes before implementation. ADR 0051 defines a private observation
+surface, backend readiness, coherent bounded reads and provisioned sessions.
+Required closure evidence remains under ignored `target/m9-closure/`; unfinished
+requirements remain explicit. M10 Crownvale, M11 Thornwick and Genesis are not
+started by this work.

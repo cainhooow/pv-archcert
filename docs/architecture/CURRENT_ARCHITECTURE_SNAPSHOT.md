@@ -24,7 +24,8 @@ milestone closure does not make unsupported relationships complete. M8 Greywatch
 (Semantic Review, Agent Claims, Discoveries & Blind Spots) is COMPLETE within the
 bounded supplemental-review scope in ADR 0050 and its closure reconciliation in
 ADR 0045. Local replay establishes no semantic correctness or complete source
-coverage. M9 and Genesis / Firstwarden are NOT STARTED.
+coverage. M9 Glassmere is IN PROGRESS under ADR 0051. M10, M11 and
+Genesis / Firstwarden are NOT STARTED.
 
 ADRs 0041–0044 describe the implemented knowledge, semantic review and durable
 lifecycle controls. They were historically mislabeled M6/Ironcrest. The retained
@@ -502,3 +503,15 @@ Deterministic qualification includes canonical/replay/corruption/ceiling tests,
 actual materialization/process/history perturbations, real PostgreSQL publication
 races and three actual controller SIGKILL recovery checkpoints. M7 is COMPLETE
 within this scope; no semantic CLEAR/PASS contributes to that decision.
+
+## Glassmere observation boundary (M9 in progress)
+
+[ADR 0051](../adr/0051-glassmere-observation-boundary.md) defines private
+presentation and query over M0–M8 authority. Application owns categorical readiness;
+the existing verifier checks exact certificate/build/permit bindings. Presentation
+receives explicit bounded read models, never signing/runtime/acquisition/provider
+capabilities. Read-only repeatable snapshots and immutable-byte verification avoid
+merging independent latest records. No persistent Glassmere projection is needed.
+Browser sessions are separate from project/role authorization. See the
+[threat model](../threat-model/GLASSMERE.md). Implementation and qualification
+remain in progress; M10, M11 and Genesis are NOT STARTED.
