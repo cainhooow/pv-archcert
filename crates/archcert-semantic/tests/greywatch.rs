@@ -608,7 +608,7 @@ fn package_identity_is_process_and_enumeration_independent() -> R {
             .args([
                 "--exact",
                 "package_identity_is_process_and_enumeration_independent",
-                "--nocapture",
+                "--show-output",
             ])
             .env("ARCHCERT_GREYWATCH_PROCESS_CHILD", "1")
             .output()?;
