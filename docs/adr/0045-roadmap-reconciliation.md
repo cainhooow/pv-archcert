@@ -25,7 +25,7 @@ criteria or infer completion from the amount of existing code.
 | M5.2 — Stoneward | Native Linux Runner Qualification & Operational Recovery | COMPLETE within the documented exact qualification scope |
 | M6 — Ironcrest | Artifact Binding, Reproducible Builds & Release Permit | COMPLETE within the documented single-file native qualification scope; development signing |
 | M7 — Asterwyn | Project Knowledge Engine & Change Impact Graph | COMPLETE within the bounded deterministic scope in ADR 0049 and the closure reconciliation below |
-| M8 — Greywatch | Semantic Review, Agent Claims, Discoveries & Blind Spots | IN PROGRESS due historical prework; pending its own formal closure |
+| M8 — Greywatch | Semantic Review, Agent Claims, Discoveries & Blind Spots | COMPLETE within the bounded supplemental-review scope in ADR 0050 and the Greywatch closure below |
 
 M7 includes immutable bounded knowledge, syntax/provenance/coverage vocabulary,
 authority knowledge and conservative baseline/impact handling. M8 includes bounded
@@ -36,9 +36,9 @@ the existing trust core.
 
 At the October 21 reconciliation, these descriptions mapped existing capabilities
 to roadmap scope without a checked Definition of Done. The subsequent M7 closure
-below records the deterministic acceptance scope. M8 has no completed canonical
-reconciliation. Local exact replay is not qualified semantic model accuracy;
-syntax extraction is not compiler resolution.
+below records the deterministic acceptance scope. The subsequent Greywatch closure
+records its separate supplemental-review acceptance. Local exact replay is not
+qualified semantic model accuracy; syntax extraction is not compiler resolution.
 
 At reconciliation, M6 still required its own artifact binding, reproducible build
 and release permit design and implementation. [ADR 0048](0048-artifact-build-and-release-permit.md)
@@ -149,5 +149,76 @@ execution, release or signing mechanism, so it establishes no new OCI/Stoneward/
 native qualification. Existing deterministic and PostgreSQL release regressions
 remain required. M8 — Greywatch — remains IN PROGRESS due historical prework and
 was outside this implementation. Genesis / Firstwarden is NOT STARTED.
+
+> This is engineering self-validation under a shared implementation/authority context. It is not independent certification and does not replace Genesis / Firstwarden.
+
+## Greywatch supplemental-review closure — November 1, 2026
+
+M8 — Greywatch — COMPLETE.
+
+Closure covers the existing controlled review lifecycle plus the explicitly
+selected ADR 0050 protocol `archcert-greywatch-v1/1.0.1`, controlled authority
+profile 1.2.1 and Rust authority profile 1.1.1. Historical implementations were
+evaluated by capability and trust boundary, not their retained Ironcrest names.
+The 67-criterion reconciliation, execution logs and exact-source identities remain
+under ignored `target/m8-closure/`. No milestone working report is added to Git.
+Multiple-provider aggregation is the criterion-level applicability exclusion:
+there is one local replay provider and an unavailable default, with no consensus
+or remote transport implementation.
+
+The qualified mechanism binds exact source/scope, M7 knowledge/impact, policy,
+authority bundles/profile/challenge registry, provider selection, bounded package,
+template/system instructions and parser/normalization/gate interpretation. Stable
+semantic/package identity excludes the operational UUID; exact invocation response
+acceptance still binds that UUID through the request digest. Claims, discoveries,
+citations, provider outcomes and explicit typed contradictions remain supplemental.
+Contradictions, missing evidence and refusal/exhaustion require more evidence;
+authority-related semantic veto blocks conservatively. Semantic CONTINUE adds zero
+deterministic properties and cannot erase FAILED or missing mandatory evidence.
+
+Qualification exercises strict framing/schema/encoding/count/byte/reference checks,
+prompt-injection serialization, explicit omissions and inherited M7 blind spots,
+ordering/process/session independence, replay/corruption/substitution and exact
+raw-response/normalization restoration. Real PostgreSQL exercises concurrent
+different-source sessions, one non-expiring invocation claim, duplicate/conflicting
+publication, immutable records and transactional admission races. Actual controller
+SIGKILL covers eighteen observed checkpoints, including committed session creation
+and response receipt before publication. Raw response and normalization publish
+together in one immutable REVIEW artifact. An uncertain claimed request never
+authorizes automatic reinvocation. Accepted review/execution restores without
+another provider call or target attempt.
+
+The existing authority registry freezes additive challenges before immutable
+execution admission. Independently evaluated deterministic policy and exact
+challenge/cleanup evidence remain necessary for certification. The evidence
+manifest binds REQUEST 3 with REVIEW 2 and all other exact immutable roles.
+Offline signature/digest verification requires no provider or private API key.
+Architecture guards exclude direct/transitive signing, runtime, acquisition and
+persistence capability from semantic adapters, and provider SDK/HTTP-client
+dependencies from inward layers. M6 source/artifact and Release Permit checks,
+M7 deterministic regressions and historical review behavior remain separate gates.
+
+Known limits remain: typed subject/proposition conflicts are not arbitrary NLP
+contradiction detection; valid citations identify objects, not truthful reasoning;
+providers may omit or misclassify concerns. Bounded PARTIAL_ACCEPTABLE context is
+not whole-source semantic review. Syntax/impact uncertainty remains M7 evidence.
+Local replay and deadline fixtures establish containment, not external model
+correctness, remote delivery semantics, model repeatability or universal injection
+resistance. No external source disclosure, multi-provider consensus, semantic TTL,
+manual waiver workflow, production signer custody or broader native runtime
+qualification is introduced. Host/authority provisioning, storage and same-UID
+development trust retain their documented limits. Initial failures and diagnostics
+remain with their original source; successful reruns do not erase them.
+
+KEEP historical modules, public/durable identities, SQL/migration checksums,
+profiles/policies, CLI/protocol names and immutable history. MIGRATE current roadmap
+prose to Greywatch; no compatibility ALIAS is needed. Protocol 1.0.0 development
+artifacts require their original implementation for recovery. Historical manifests,
+certificates, source identities and assurance are never rewritten or reinterpreted.
+
+M6 remains COMPLETE within its exact native single-file qualification. M7 remains
+COMPLETE within ADR 0049's bounded deterministic scope. The preceding M7 closure
+paragraph records M8's status at that earlier time, not the current status above.
+M9 is NOT STARTED by this task. Genesis / Firstwarden remains NOT STARTED.
 
 > This is engineering self-validation under a shared implementation/authority context. It is not independent certification and does not replace Genesis / Firstwarden.

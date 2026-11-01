@@ -58,10 +58,12 @@ Follow [ADR 0045](docs/adr/0045-roadmap-reconciliation.md):
 - M7 Asterwyn covers deterministic knowledge, conservative impact, structural
   blind spots and authority scenario selection under ADR 0049. It is COMPLETE
   within the bounded deterministic scope recorded in ADR 0045 and ADR 0049;
-  artifact coverage and unsupported dimensions remain explicit. M8 Greywatch
-  covers semantic review,
-  claims, discoveries and semantic blind spots; its historical prework remains
-  IN PROGRESS and outside the M7 closure expansion.
+  artifact coverage and unsupported dimensions remain explicit.
+- M8 Greywatch covers semantic review, claims, discoveries and semantic blind
+  spots. It is COMPLETE within the bounded supplemental-review scope in ADR 0050
+  and the Greywatch closure in ADR 0045. Local replay qualification establishes
+  no model correctness, complete semantic coverage or independent certification.
+- M9 is NOT STARTED by this closure.
 - Genesis / Firstwarden is NOT STARTED. Engineering self-validation does not start it.
 
 Existing `ironcrest` identifiers are historical implementation names for the

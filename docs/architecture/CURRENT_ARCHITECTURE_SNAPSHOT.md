@@ -21,9 +21,10 @@ M7 Asterwyn (Project Knowledge Engine & Change Impact Graph) is COMPLETE within
 its bounded deterministic scope under ADR 0049 and the closure reconciliation in
 ADR 0045. Dimensional knowledge coverage retains every Partial/NotAvailable state;
 milestone closure does not make unsupported relationships complete. M8 Greywatch
-(Semantic Review, Agent Claims, Discoveries & Blind Spots) remains IN PROGRESS due
-to historical prework, pending its own formal closure. Genesis / Firstwarden is
-NOT STARTED.
+(Semantic Review, Agent Claims, Discoveries & Blind Spots) is COMPLETE within the
+bounded supplemental-review scope in ADR 0050 and its closure reconciliation in
+ADR 0045. Local replay establishes no semantic correctness or complete source
+coverage. M9 and Genesis / Firstwarden are NOT STARTED.
 
 ADRs 0041–0044 describe the implemented knowledge, semantic review and durable
 lifecycle controls. They were historically mislabeled M6/Ironcrest. The retained
