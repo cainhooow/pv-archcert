@@ -275,6 +275,9 @@ pub struct EvidenceObservation {
     pub producer: String,
     /// Retained STAGING/AVAILABLE state.
     pub state: String,
+    /// Explicit selected-key verification observations, separate from record existence.
+    #[serde(default)]
+    pub verification: Vec<ObservationField>,
 }
 
 /// A durable event retains its own stream ordering; independent streams do not merge.

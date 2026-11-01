@@ -315,3 +315,30 @@ impl ImmutableArtifactStore for FilesystemArtifactStore {
         Self::read(&self.scope(project, false)?, r)
     }
 }
+
+/// Observation-only filesystem capability. No publication or delete method is
+/// exposed; deployment must additionally use an OS-level read-only mount.
+pub struct ReadOnlyFilesystemArtifactStore {
+    store: FilesystemArtifactStore,
+}
+
+impl ReadOnlyFilesystemArtifactStore {
+    /// Open the existing private development store without creating anything.
+    pub fn open_unencrypted_development(path: &Path) -> Result<Self> {
+        Ok(Self {
+            store: FilesystemArtifactStore::open_unencrypted_development(path)?,
+        })
+    }
+
+    /// Read exact immutable bytes through existing no-follow size/digest checks.
+    pub fn get(&self, project: ProjectId, reference: &ArtifactReference) -> Result<Vec<u8>> {
+        let scope = self.store.scope(project, false)?;
+
+        FilesystemArtifactStore::read(&scope, reference)
+    }
+
+    /// Availability is separate from any release authorization.
+    pub fn healthy(&self) -> bool {
+        metadata(&self.store.root, true).is_ok()
+    }
+}

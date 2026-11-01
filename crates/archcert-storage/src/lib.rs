@@ -926,3 +926,6 @@ impl JobRepository for PostgresJobRepository {
         tx.commit().await.map_err(db)
     }
 }
+
+/// SELECT-only bounded Glassmere observation adapter.
+pub mod glassmere;
