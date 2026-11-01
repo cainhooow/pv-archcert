@@ -62,6 +62,7 @@ impl ObservationRepository {
     /// grants SELECT on required tables; migrations never run in the panel process.
     pub async fn connect(url: &str) -> Result<Self> {
         let pool = PgPoolOptions::new()
+            .min_connections(2)
             .max_connections(4)
             .acquire_timeout(std::time::Duration::from_secs(3))
             .after_connect(|connection, _| {

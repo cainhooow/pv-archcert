@@ -114,7 +114,7 @@ must restrict access to the loopback listener/proxy boundary.
 Escape all repository/provider/evidence text. Evidence bytes use attachment plus
 application/octet-stream and digest-only filenames. Bound page/filter/query/body,
 response, preview, download and timeline sizes. Strict CSP uses self-hosted static
-assets without inline scripts/styles, frame-ancestors none, nosniff, no-referrer,
+assets without inline scripts/styles, frame-ancestors none, nosniff, same-origin Referrer-Policy,
 Permissions-Policy and HSTS for the configured TLS mode. Health is independent
 from release readiness and exposes no connection strings or authority secrets.
 

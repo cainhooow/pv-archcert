@@ -239,6 +239,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "archcert-glassmere"
+version = "0.1.0"
+dependencies = [
+ "archcert-application",
+ "archcert-domain",
+ "async-trait",
+ "axum",
+ "getrandom",
+ "hex",
+ "http-body-util",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "archcert-knowledge"
 version = "0.1.0"
 dependencies = [
@@ -260,6 +280,25 @@ dependencies = [
  "rustix",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "archcert-panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "archcert-application",
+ "archcert-certificate",
+ "archcert-crypto",
+ "archcert-domain",
+ "archcert-glassmere",
+ "archcert-storage",
+ "async-trait",
+ "clap",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

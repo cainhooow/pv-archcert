@@ -22,6 +22,10 @@ fn allowed_inward_dependency(package: &str, dependency: &str) -> bool {
         return false;
     }
 
+    if package == "archcert-glassmere" && dependency.starts_with("archcert-") {
+        return ["archcert-domain", "archcert-application"].contains(&dependency);
+    }
+
     if package == "archcert-runner"
         && (dependency == "archcert-semantic" || is_semantic_provider_dependency(dependency))
     {
@@ -306,6 +310,7 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
     // not acquire signing authority, directly or through an intermediate crate.
     for root in [
         "archcertd",
+        "archcert-glassmere",
         "archcert-control-plane",
         "archcert-worker",
         "archcert-gateway",
@@ -355,6 +360,23 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
         }
     }
 
+    for root in ["archcert-glassmere", "archcert-panel"] {
+        for name in dependency_closure(&graph, root) {
+            assert!(
+                !is_runtime_dependency(&name)
+                    && !is_semantic_provider_dependency(&name)
+                    && ![
+                        "archcert-source",
+                        "archcert-gateway",
+                        "archcert-materialization",
+                        "archcert-semantic"
+                    ]
+                    .contains(&name.as_str()),
+                "runtime, provider or acquisition enters Glassmere graph {root}: {name}"
+            );
+        }
+    }
+
     for root in ["archcert-gateway", "archcert-gateway-cli"] {
         let mut pending = vec![root.to_owned()];
         let mut seen = BTreeSet::new();
@@ -386,6 +408,11 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
 #[test]
 fn guard_rejects_forbidden_dependencies_including_renamed_package_names() {
     for (owner, dep) in [
+        ("archcert-glassmere", "archcert-certificate"),
+        ("archcert-glassmere", "archcert-storage"),
+        ("archcert-glassmere", "archcert-runner"),
+        ("archcert-glassmere", "archcert-source"),
+        ("archcert-glassmere", "archcert-semantic"),
         ("archcert-domain", "archcert-application"),
         ("archcert-domain", "archcert-source"),
         ("archcert-domain", "axum"),
