@@ -1,0 +1,174 @@
+#!/usr/bin/env node
+/* Real integrated browser journeys. Test tooling is excluded from production. */
+"use strict";
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+
+async function main() {
+  const root = path.resolve(__dirname, "..");
+  const directory = path.resolve(process.env.GLASSMERE_PREVIEW || path.join(root, "target/m9-preview"));
+  const output = path.resolve(process.env.GLASSMERE_RESULTS || path.join(root, "target/m9-closure/browser"));
+  assert(output.startsWith(path.join(root, "target") + path.sep));
+  fs.mkdirSync(output, { recursive: true });
+  const moduleRoot = process.env.PLAYWRIGHT_MODULE || path.join(root, "tools/glassmere-browser/node_modules/playwright");
+  const { chromium } = require(moduleRoot);
+  assert.equal(require(path.join(moduleRoot, "package.json")).version, "1.56.1");
+  const preview = JSON.parse(fs.readFileSync(path.join(directory, "preview.json")));
+  const base = new URL(preview.url).origin;
+  const access = JSON.parse(fs.readFileSync(path.join(directory, "access.json")));
+  const dataset = JSON.parse(fs.readFileSync(path.join(directory, "dataset.json")));
+  const eligible = dataset.find(item => item.scenario === "eligible-historical-exact-source");
+  const project = eligible.project;
+  const browser = await chromium.launch({ headless: true, channel: "chrome" });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const page = await context.newPage();
+  const dialogs = [];
+  const networkFailures = [];
+  const externalRequests = [];
+  const results = [];
+  page.on("dialog", async dialog => { dialogs.push(dialog.message()); await dialog.dismiss(); });
+  page.on("response", response => {
+    if (response.url().includes("/assets/") && response.status() >= 400) networkFailures.push(response.url());
+  });
+  page.on("request", request => {
+    if (new URL(request.url()).origin !== base) externalRequests.push(request.url());
+  });
+
+  async function check(name, action) {
+    const started = performance.now();
+    try {
+      await action();
+      results.push({ name, status: "PASS", milliseconds: performance.now() - started });
+      console.log("PASS", name);
+    } catch (error) {
+      results.push({ name, status: "FAILED", error: error.message, page: page.url() });
+      await page.screenshot({ path: path.join(output, "failure.png"), fullPage: true });
+      throw error;
+    }
+  }
+
+  async function login(role = "viewer") {
+    await page.goto(base + "/login");
+    await page.getByLabel("Access credential").fill(access[role]);
+    await page.getByRole("button", { name: "Sign in to Glassmere" }).click();
+    await page.waitForURL(base + "/projects");
+  }
+
+  try {
+    await check("unauthenticated-denial", async () => {
+      assert.equal((await context.request.get(base + "/projects")).status(), 401);
+    });
+    await check("login-and-project-list", async () => {
+      await login();
+      assert(await page.getByRole("heading", { name: "Projects", exact: true }).isVisible());
+      assert(await page.getByText("DEVELOPMENT / DEMONSTRATION DATA", { exact: false }).first().isVisible());
+      await page.screenshot({ path: path.join(output, "projects.png"), fullPage: true });
+    });
+    await check("project-overview-and-certification", async () => {
+      await page.goto(`${base}/projects/${project}`);
+      assert(await page.getByRole("heading", { name: "Source identity", exact: true }).isVisible());
+      await page.goto(`${base}/projects/${project}/certifications`);
+      const link = page.locator("table tbody a").first();
+      await link.click();
+      assert(await page.getByRole("heading", { name: "Bound immutable evidence", exact: true }).isVisible());
+      await page.screenshot({ path: path.join(output, "certification.png"), fullPage: true });
+    });
+    await check("release-readiness-allowed-through-backend-verifier", async () => {
+      const route = `${base}/projects/${project}/readiness/${eligible.invocation}`;
+      await page.goto(route);
+      assert(await page.getByRole("heading", { name: "RELEASE_ALLOWED", exact: true }).isVisible());
+      await page.waitForFunction(() => document.querySelector(".freshness").textContent.startsWith("SNAPSHOT REVISION CONFIRMED"));
+      const response = await context.request.get(`${base}/api/v1/projects/${project}/readiness/${eligible.invocation}`);
+      const value = await response.json();
+      assert.equal(value.state, "RELEASE_ALLOWED");
+      assert.deepEqual(value.blockers, []);
+      await page.screenshot({ path: path.join(output, "readiness-allowed.png"), fullPage: true });
+    });
+    await check("denied-release-corpus", async () => {
+      for (const item of dataset.filter(item => item.scenario !== "eligible-historical-exact-source" && item.invocation)) {
+        await page.goto(`${base}/projects/${project}/readiness/${item.invocation}`);
+        assert(await page.getByRole("heading", { name: "RELEASE_DENIED", exact: true }).isVisible(), item.scenario);
+        await page.waitForFunction(() => document.querySelector(".freshness").textContent.startsWith("SNAPSHOT REVISION CONFIRMED"));
+        const response = await context.request.get(`${base}/api/v1/projects/${project}/readiness/${item.invocation}`);
+        assert.equal(response.status(), 200, item.scenario + " API response");
+        const value = await response.json();
+        assert.equal(value.state, "RELEASE_DENIED", item.scenario);
+        assert(value.blockers.length > 0);
+      }
+      await page.screenshot({ path: path.join(output, "readiness-denied.png"), fullPage: true });
+    });
+    await check("evidence-knowledge-semantic-certificate-permit-and-timeline", async () => {
+      for (const [view, role, text] of [
+        ["knowledge", "KNOWLEDGE", "Asterwyn coverage & blind spots"],
+        ["semantic", "REVIEW", "SUPPLEMENTAL / NON-AUTHORITATIVE"],
+        ["evidence", "CERTIFICATE", "Selected-key verification"],
+        ["evidence", "PERMIT_ENVELOPE", "Selected-key verification"],
+      ]) {
+        let found = false;
+        for (let offset = 0; offset < 200; offset += 50) {
+          await page.goto(`${base}/projects/${project}/${view}?offset=${offset}`);
+          const link = page.getByRole("link", { name: new RegExp("^" + role + "\\b") }).first();
+          if (await link.count()) {
+            await link.click();
+            assert(await page.getByText(text, { exact: false }).first().isVisible(), role);
+            if (role === "CERTIFICATE") assert((await page.locator("main").innerText()).includes("VALID under explicitly selected"));
+            if (role === "PERMIT_ENVELOPE") assert((await page.locator("main").innerText()).includes("VALID permit signature"));
+            await page.screenshot({ path: path.join(output, role.toLowerCase() + ".png"), fullPage: true });
+            found = true;
+            break;
+          }
+        }
+        assert(found, `missing ${role} fixture`);
+      }
+      await page.goto(`${base}/projects/${project}/timeline`);
+      assert(await page.getByRole("heading", { name: "Forensic timeline", exact: true }).isVisible());
+      assert((await page.locator("tbody tr").count()) > 0);
+    });
+    await check("cross-project-role-and-csrf-denial", async () => {
+      for (const suffix of ["", "/evidence/forged/forged", "/download/forged/forged", "/readiness/forged", "/semantic/forged"]) {
+        assert.equal((await context.request.get(`${base}/projects/20000000-0000-4000-8000-000000000002${suffix}`)).status(), 404);
+      }
+      assert.equal((await context.request.get(base + "/audit")).status(), 403);
+      assert.equal((await context.request.post(base + "/admin/users", { headers: { Origin: base }, data: "" })).status(), 403);
+      assert.equal((await context.request.post(base + "/logout", { headers: { Origin: "https://attacker.invalid" }, form: { csrf: "forged" } })).status(), 403);
+    });
+    await check("backend-outage-and-revision-change-invalidate-freshness", async () => {
+      const route = `${base}/projects/${project}/readiness/${eligible.invocation}`;
+      await page.goto(route);
+      await page.waitForFunction(() => document.querySelector(".readiness").classList.contains("confirmed"));
+      await page.route("**/api/v1/**", route => route.abort());
+      await page.waitForFunction(() => document.querySelector(".freshness").textContent.includes("DEGRADED"));
+      assert.equal(await page.locator(".confirmed").count(), 0);
+      await page.unroute("**/api/v1/**");
+      await page.route("**/api/v1/**", async route => {
+        const response = await route.fetch();
+        const value = await response.json();
+        await route.fulfill({ response, json: { ...value, revision: "changed-authoritative-fixture-revision" } });
+      });
+      await page.waitForFunction(() => document.querySelector(".freshness").textContent.includes("revision changed"));
+      assert.equal(await page.locator(".confirmed").count(), 0);
+      await page.unroute("**/api/v1/**");
+    });
+    await check("keyboard-small-screen-and-logout", async () => {
+      await page.setViewportSize({ width: 760, height: 900 });
+      await page.goto(`${base}/projects/${project}/knowledge`);
+      await page.keyboard.press("Tab");
+      assert(await page.locator("a.skip").evaluate(el => el === document.activeElement));
+      await page.getByRole("button", { name: "Sign out" }).click();
+      await page.waitForURL(base + "/login");
+      assert.equal((await context.request.get(base + "/projects")).status(), 401);
+    });
+    assert.deepEqual(dialogs, []);
+    assert.deepEqual(networkFailures, []);
+    assert.deepEqual(externalRequests, []);
+  } finally {
+    fs.writeFileSync(path.join(output, "results.json"), JSON.stringify({
+      head: preview.head, fixture: "explicit historical demonstration imports", results,
+      dialogs, asset_failures: networkFailures, external_requests: externalRequests,
+      browser_version: browser.version(), playwright: "1.56.1",
+    }, null, 2) + "\n");
+    await browser.close();
+  }
+}
+main().catch(error => { console.error(error.message); process.exitCode = 1; });

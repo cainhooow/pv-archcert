@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+"""Provision and retain a loopback Glassmere preview from explicit historical data.
+
+Requires an optimized built archcert-panel and an operator-owned PostgreSQL container. It
+creates a NEW demonstration database and copies immutable historical evidence;
+source directories are never modified. No signing or execution service is started.
+Credentials stay in private ignored files. Re-running refuses an existing database.
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import secrets
+import subprocess
+import time
+import urllib.error
+import urllib.request
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def literal(value):
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def private_write(path, value):
+    with open(path, 'x', opener=lambda p, flags: os.open(p, flags, 0o600)) as output:
+        output.write(json.dumps(value, indent=2) + '\n')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--container', required=True)
+    parser.add_argument('--context', default='colima')
+    parser.add_argument('--release', type=Path, required=True,
+                        help='M6 retained directory with released/, build-a/b and reproducibility')
+    parser.add_argument('--certificate', type=Path, required=True)
+    parser.add_argument('--source-key', type=Path, required=True)
+    parser.add_argument('--release-key', type=Path, required=True)
+    parser.add_argument('--review-run', type=Path,
+                        help='Optional retained reviewed job with objects and evidence-manifest.json')
+    parser.add_argument('--output', type=Path, default=ROOT / 'target/m9-preview')
+    parser.add_argument('--port', type=int, default=8090)
+    parser.add_argument('--database-port', type=int, default=55439)
+    parser.add_argument('--launch', action='store_true')
+    args = parser.parse_args()
+    output = args.output.resolve()
+    if not output.is_relative_to(ROOT / 'target') or output.exists():
+        raise RuntimeError('Use a new ignored directory below target/')
+    output.mkdir(mode=0o700)
+    objects = output / 'objects'
+    objects.mkdir(mode=0o700)
+    docker = ['docker', '--context', args.context, 'exec', '-i', args.container,
+              'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres']
+
+    def sql(text, database='glassmere_demo'):
+        result = subprocess.run(docker + ['-d', database], input=text.encode(),
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        if result.returncode:
+            # SQL may contain private bootstrap material; do not echo it.
+            (output / 'provision-error.log').write_bytes(result.stderr)
+            raise RuntimeError('Database provisioning failed; inspect private local log')
+        return result.stdout
+
+    password = secrets.token_hex(32)
+    sql('CREATE DATABASE glassmere_demo;', 'postgres')
+    for migration in sorted((ROOT / 'crates/archcert-storage/migrations').glob('*.sql')):
+        sql(migration.read_text())
+    sql("CREATE ROLE glassmere_preview LOGIN PASSWORD " + literal(password) + ';'
+        'GRANT CONNECT ON DATABASE glassmere_demo TO glassmere_preview;'
+        'GRANT USAGE ON SCHEMA public TO glassmere_preview;'
+        'GRANT SELECT ON ALL TABLES IN SCHEMA public TO glassmere_preview;')
+
+    release = args.release.resolve()
+    original_input = json.loads((release / 'released/build-input.json').read_text())
+    permit_bytes = (release / 'released/release-permit.json').read_bytes()
+    permit = json.loads(permit_bytes)
+    certificate_bytes = args.certificate.read_bytes()
+    source_key = args.source_key.read_text().strip()
+    source_keys = [source_key]
+    if args.review_run:
+        source_keys.append((args.review_run / 'public-key.hex').read_text().strip())
+    release_key = args.release_key.read_text().strip()
+    source = original_input['certified_source']
+    project, repository = source['project'], source['repository']
+    actor = '40000000-0000-4000-8000-000000000004'
+    submission = '10000000-0000-4000-8000-000000000001'
+    recipes = []
+    dataset = []
+
+    def publish(scope, data):
+        directory = objects / scope
+        directory.mkdir(mode=0o700, exist_ok=True)
+        sha = digest(data)
+        path = directory / sha
+        if not path.exists():
+            path.write_bytes(data)
+            path.chmod(0o400)
+        return dict(sha256=sha, size=len(data), schema=1, producer='archcert-release-v1/0.1.0')
+
+    sql('INSERT INTO repository_grants VALUES (' + ','.join(map(literal, [project, repository, actor])) + ');'
+        'INSERT INTO accepted_sources VALUES (' + ','.join(map(literal, [submission, project, repository, json.dumps(source['source'])])) + ');')
+
+    for index, scenario in enumerate(['eligible-historical-exact-source', 'missing-certificate',
+                                      'artifact-mismatch', 'missing-permit', 'invalid-permit',
+                                      'wrong-source', 'non-reproducible']):
+        input_manifest = json.loads(json.dumps(original_input))
+        if index:
+            # Versioned negative demonstration inputs differ by an explicit bound
+            # assertion. Their retained results/permits cannot authorize that tuple.
+            input_manifest['source_policy_sha256'] = digest(scenario.encode())
+        if scenario == 'wrong-source':
+            input_manifest['certified_source']['source']['commit'] = '9' * 40
+        invocation = digest(canonical(input_manifest))
+        input_bytes = canonical(input_manifest)
+        admission = dict(input=input_manifest, submission=submission, actor=actor,
+                         input_reference=publish(project, input_bytes))
+        sql('INSERT INTO release_invocations(project,invocation,admission) VALUES (' +
+            ','.join(map(literal, [project, invocation, json.dumps(admission)])) + ');')
+        raw = {
+            'INPUT': input_bytes,
+            'SOURCE_CERTIFICATE': certificate_bytes,
+            'RESULT_A': (release / 'build-a.json').read_bytes(),
+            'RESULT_B': (release / 'build-b.json').read_bytes(),
+            'ARTIFACT_A': (release / 'released/artifact').read_bytes(),
+            'ARTIFACT_B': (release / 'released/artifact').read_bytes(),
+            'REPRODUCIBILITY': (release / 'reproducibility.json').read_bytes(),
+            'PERMIT_PAYLOAD': canonical(permit['payload']),
+            'PERMIT_ENVELOPE': permit_bytes,
+        }
+        if scenario == 'missing-certificate':
+            del raw['SOURCE_CERTIFICATE']
+        if scenario == 'missing-permit':
+            del raw['PERMIT_ENVELOPE']
+        if scenario == 'artifact-mismatch':
+            raw['ARTIFACT_A'] += b'DEMONSTRATION SUBSTITUTION'
+        if scenario == 'invalid-permit':
+            raw['PERMIT_ENVELOPE'] = b'{"schema":"unsupported"}'
+        if scenario == 'non-reproducible':
+            raw['ARTIFACT_B'] += b'DEMONSTRATION DIFFERENT BUILD'
+        for role, data in raw.items():
+            reference = publish(project, data)
+            sql('INSERT INTO release_evidence(project,invocation,role,reference,available) VALUES (' +
+                ','.join(map(literal, [project, invocation, role, json.dumps(reference)])) + ',TRUE);')
+        sql('INSERT INTO release_audit(project,invocation,event) VALUES (' +
+            ','.join(map(literal, [project, invocation, 'DEMONSTRATION_IMPORT_' + scenario.upper().replace('-', '_')])) + ');')
+        dataset.append(dict(scenario=scenario, project=project, invocation=invocation))
+
+    # A separate project is intentionally unavailable to the preview viewer.
+    foreign_project = '20000000-0000-4000-8000-000000000002'
+    sql('INSERT INTO repository_grants VALUES (' + ','.join(map(literal, [foreign_project, 'private/other-project', actor])) + ');')
+
+    if args.review_run:
+        run = args.review_run.resolve()
+        manifest = json.loads((run / 'evidence-manifest.json').read_text())
+        journal = manifest['ironcrest']
+        session, pin = journal['session'], journal['pin']
+        review_project = pin['project']
+        # Retain every historical identity and source binding unchanged. This is a
+        # distinct project from the historical M6 release where applicable.
+        sql('INSERT INTO repository_grants VALUES (' + ','.join(map(literal, [review_project, pin['repository'], actor])) + ') ON CONFLICT DO NOTHING;'
+            'INSERT INTO ironcrest_sessions(id,project,pin,created_at) VALUES (' +
+            ','.join(map(literal, [session, review_project, json.dumps(pin), 1793491200])) + ');')
+        for role, reference in journal['roles']:
+            data = (run / 'objects' / review_project / reference['sha256']).read_bytes()
+            if len(data) != reference['size'] or digest(data) != reference['sha256']:
+                raise RuntimeError('Historical review bytes failed identity verification')
+            publish(review_project, data)
+            sql('INSERT INTO ironcrest_evidence(session,role,reference,state) VALUES (' +
+                ','.join(map(literal, [session, role, json.dumps(reference), 'AVAILABLE'])) + ');')
+        job = json.loads((run / 'successful-job.json').read_text())
+        inputs = job['inputs']
+        sql('INSERT INTO accepted_sources VALUES (' + ','.join(map(literal, [
+            inputs['submission'], review_project, inputs['repository'], json.dumps(inputs['source'])
+        ])) + ') ON CONFLICT DO NOTHING;')
+        columns = ['id', 'project', 'repository', 'actor', 'idempotency_key', 'inputs',
+                   'state', 'created_at', 'evaluation_at', 'evaluation', 'eligible', 'issuance', 'certificate']
+        values = [job['id'], review_project, inputs['repository'], inputs['actor'],
+                  'demonstration-historical-import', json.dumps(inputs), job['state'],
+                  job['created_at'], job['evaluation_at'], json.dumps(job['evaluation']),
+                  'true', json.dumps(job['issuance']), json.dumps(job['certificate'])]
+        sql('INSERT INTO certification_jobs(' + ','.join(columns) + ') VALUES (' +
+            ','.join(map(literal, values)) + ');')
+        for ordinal, attempt in enumerate(job['attempts']):
+            columns = ['id', 'job', 'ordinal', 'worker', 'token', 'state', 'leased_at', 'lease_until', 'ended_at']
+            values = [attempt['id'], job['id'], attempt['ordinal'], 'DEMONSTRATION_HISTORY',
+                      'NOT_AN_EXECUTION_CAPABILITY', attempt['state'], attempt['leased_at'],
+                      attempt['lease_until'], attempt['ended_at']]
+            sql('INSERT INTO certification_attempts(' + ','.join(columns) + ') VALUES (' +
+                ','.join(map(literal, values)) + ');')
+        for kind, reference in [('EVALUATION', job['evaluation']),
+                                ('CERTIFICATE', job['certificate']['artifact'])]:
+            data = (run / 'objects' / review_project / reference['sha256']).read_bytes()
+            if digest(data) != reference['sha256'] or len(data) != reference['size']:
+                raise RuntimeError('Historical certification bytes failed verification')
+            publish(review_project, data)
+            sql('INSERT INTO artifacts(job,attempt,kind,reference,state) VALUES (' +
+                ','.join(map(literal, [job['id'], '', kind, json.dumps(reference), 'AVAILABLE'])) + ');')
+        pending = '30000000-0000-4000-8000-000000000003'
+        sql('INSERT INTO certification_jobs(id,project,repository,actor,idempotency_key,inputs,state) VALUES (' +
+            ','.join(map(literal, [pending, review_project, inputs['repository'], inputs['actor'],
+                                   'demonstration-pending-no-dispatcher', json.dumps(inputs), 'QUEUED'])) + ');')
+        for entity, event in [(job['id'], 'DEMONSTRATION_HISTORICAL_CERTIFICATION_IMPORTED'),
+                              (pending, 'DEMONSTRATION_QUEUED_NO_DISPATCHER')]:
+            sql('INSERT INTO audit_events(job,event) VALUES (' + ','.join(map(literal, [entity, event])) + ');')
+        if review_project != project:
+            dataset.append(dict(scenario='retained-greywatch-history', project=review_project, session=session))
+
+    # Recipe capability is reconstructed only from this explicitly selected
+    # historical input, never from browser or target configuration.
+    recipe = original_input['recipe']
+    binary = recipe['command']['args'][-2]
+    recipes.append(dict(environment=recipe['environment'], binary=binary))
+    projects = sorted(set(item['project'] for item in dataset))
+    credentials = {role: secrets.token_hex(32) for role in ['viewer', 'administrator']}
+    config = dict(schema=1, origin=f'http://127.0.0.1:{args.port}', development_http=True,
+                  demonstration_data=True, audit_path=str(output / 'audit.jsonl'),
+                  principals=[dict(id='preview-' + role, token_sha256=digest(token.encode()),
+                                   role=role.upper(), projects=projects) for role, token in credentials.items()])
+    private_write(output / 'panel.json', config)
+    private_write(output / 'query.json', dict(schema=1, artifact_root=str(objects),
+                  source_public_keys=sorted(set(source_keys)), release_public_keys=[release_key], recipes=recipes))
+    private_write(output / 'access.json', credentials)
+    private_write(output / 'database.json', dict(url=f'postgres://glassmere_preview:{password}@127.0.0.1:{args.database_port}/glassmere_demo'))
+    private_write(output / 'dataset.json', dataset)
+    if args.launch:
+        launch(output, args.port)
+    print('Private preview prepared at', output)
+
+
+def launch(output, port):
+    head = subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip()
+    log_path = output / 'panel.log'
+    with open(log_path, 'ab', opener=lambda p, flags: os.open(p, flags, 0o600)) as log:
+        process = subprocess.Popen([str(ROOT / 'target/release/archcert-panel'), '--config',
+                    str(output / 'panel.json'), '--query-config', str(output / 'query.json'),
+                    '--listen', f'127.0.0.1:{port}'], cwd=ROOT,
+                    env=dict(PATH='/usr/bin:/bin', ARCHCERT_OBSERVATION_DATABASE_URL=json.loads(
+                        (output / 'database.json').read_text())['url']),
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    deadline = time.monotonic() + 20
+    while True:
+        if process.poll() is not None:
+            raise RuntimeError('Preview exited during startup; inspect its private log')
+        try:
+            with urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=3) as response:
+                if response.status == 200:
+                    break
+        except (OSError, urllib.error.URLError):
+            pass
+        if time.monotonic() >= deadline:
+            process.terminate()
+            raise RuntimeError('Preview dependencies did not become ready within startup bounds')
+        time.sleep(0.2)
+
+    private_write(output / 'preview.json', dict(head=head, url=f'http://127.0.0.1:{port}/login',
+                  mode='development HTTP; optimized Rust/Axum production build; loopback only',
+                  binary_sha256=digest((ROOT / 'target/release/archcert-panel').read_bytes()),
+                  cargo_lock_sha256=digest((ROOT / 'Cargo.lock').read_bytes()),
+                  rustc=subprocess.check_output(['rustc', '-Vv'], text=True).strip(),
+                  services=['archcert-panel', 'dedicated PostgreSQL demonstration database'],
+                  pid=process.pid, started_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                  fixture_set='historical exact M6 bytes plus explicit negative demonstration variants',
+                  log_locations=[str(log_path)]))
+
+
+if __name__ == '__main__':
+    main()

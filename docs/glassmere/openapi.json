@@ -1,0 +1,703 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Glassmere private observation API",
+    "version": "1.0.0",
+    "description": "Presentation DTOs only. No HTTP input accepts readiness facts. Additive fields preserve schema-1 meaning; unknown versions/enums must render UNSUPPORTED and never green. No workflow mutation API is implemented."
+  },
+  "paths": {
+    "/api/v1/projects/{project}": {
+      "get": {
+        "operationId": "getProjectSnapshot",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Private no-store schema-1 observation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bounded error; no SQL or private configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Bounded error; no SQL or private configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bounded error; no SQL or private configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bounded error; no SQL or private configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Bounded error; no SQL or private configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Bounded error; no SQL or private configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Bounded error; no SQL or private configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/readiness/{invocation}": {
+      "get": {
+        "operationId": "getReleaseReadiness",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "invocation",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Private no-store schema-1 observation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseReadiness"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bounded error; no SQL or private configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Bounded error; no SQL or private configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bounded error; no SQL or private configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bounded error; no SQL or private configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Bounded error; no SQL or private configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Bounded error; no SQL or private configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Bounded error; no SQL or private configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "session": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "archcert_session"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "schema",
+          "error"
+        ],
+        "properties": {
+          "schema": {
+            "const": 1
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "UNAUTHENTICATED",
+                  "FORBIDDEN",
+                  "NOT_FOUND",
+                  "CONFLICT",
+                  "STALE_STATE",
+                  "INVALID_REQUEST",
+                  "LIMIT_EXCEEDED",
+                  "INFRASTRUCTURE_UNAVAILABLE"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "ObservationField": {
+        "type": "object",
+        "required": [
+          "label",
+          "value",
+          "provenance"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "provenance": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectSnapshot": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "revision",
+          "database_snapshot",
+          "schema",
+          "project",
+          "evaluated_at",
+          "offset",
+          "page_size",
+          "has_more",
+          "limitations",
+          "sources",
+          "jobs",
+          "sessions",
+          "releases",
+          "evidence",
+          "timeline"
+        ],
+        "properties": {
+          "revision": {
+            "type": "string"
+          },
+          "database_snapshot": {
+            "type": "string"
+          },
+          "schema": {
+            "const": 1
+          },
+          "project": {
+            "type": "object",
+            "required": [
+              "project",
+              "repository"
+            ],
+            "properties": {
+              "project": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "repository": {
+                "type": "string"
+              }
+            }
+          },
+          "evaluated_at": {
+            "type": "integer",
+            "description": "UTC Unix seconds, never ordering authority"
+          },
+          "offset": {
+            "type": "integer",
+            "maximum": 100000
+          },
+          "page_size": {
+            "const": 50
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sources": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "state",
+                "fields"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string",
+                  "description": "Exact durable vocabulary; unknown must remain unsupported, never success"
+                },
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ObservationField"
+                  }
+                }
+              }
+            }
+          },
+          "jobs": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "state",
+                "fields"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string",
+                  "description": "Exact durable vocabulary; unknown must remain unsupported, never success"
+                },
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ObservationField"
+                  }
+                }
+              }
+            }
+          },
+          "sessions": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "state",
+                "fields"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string",
+                  "description": "Exact durable vocabulary; unknown must remain unsupported, never success"
+                },
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ObservationField"
+                  }
+                }
+              }
+            }
+          },
+          "releases": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "state",
+                "fields"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string",
+                  "description": "Exact durable vocabulary; unknown must remain unsupported, never success"
+                },
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ObservationField"
+                  }
+                }
+              }
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "required": [
+                "entity",
+                "role",
+                "sha256",
+                "size",
+                "schema",
+                "producer",
+                "state",
+                "verification"
+              ],
+              "properties": {
+                "entity": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string"
+                },
+                "producer": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "integer",
+                  "maximum": 67108864
+                },
+                "schema": {
+                  "type": "integer"
+                },
+                "verification": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ObservationField"
+                  }
+                }
+              }
+            }
+          },
+          "timeline": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "required": [
+                "stream",
+                "sequence",
+                "entity",
+                "event",
+                "timestamp"
+              ],
+              "properties": {
+                "stream": {
+                  "type": "string"
+                },
+                "entity": {
+                  "type": "string"
+                },
+                "event": {
+                  "type": "string"
+                },
+                "sequence": {
+                  "type": "integer"
+                },
+                "timestamp": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ReleaseReadiness": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema",
+          "state",
+          "subject",
+          "revision",
+          "evaluated_at",
+          "provenance",
+          "blockers"
+        ],
+        "properties": {
+          "schema": {
+            "const": 1
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "RELEASE_ALLOWED",
+              "RELEASE_DENIED"
+            ]
+          },
+          "subject": {
+            "type": "object",
+            "required": [
+              "project",
+              "repository",
+              "source",
+              "certificate",
+              "invocation",
+              "artifact",
+              "permit"
+            ],
+            "properties": {
+              "project": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "repository": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "certificate": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "invocation": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "artifact": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "permit": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source": {
+                "type": "object",
+                "required": [
+                  "commit",
+                  "tree",
+                  "snapshot_sha256"
+                ],
+                "properties": {
+                  "commit": {
+                    "type": "string"
+                  },
+                  "tree": {
+                    "type": "string"
+                  },
+                  "snapshot_sha256": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "revision": {
+            "type": "string"
+          },
+          "evaluated_at": {
+            "type": "integer"
+          },
+          "provenance": {
+            "type": "string"
+          },
+          "blockers": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "required": [
+                "code",
+                "summary",
+                "affected_identity",
+                "evidence_reference",
+                "remediation_category"
+              ],
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "affected_identity": {
+                  "type": "string"
+                },
+                "remediation_category": {
+                  "type": "string"
+                },
+                "evidence_reference": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

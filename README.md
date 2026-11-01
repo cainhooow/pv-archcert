@@ -80,6 +80,8 @@ The implemented development path is:
 ## Workspace
 
 - `apps/archcertd`: authenticated loopback durable job admission/status API.
+- `apps/archcert-panel`: private Glassmere observation composition with public-key verification.
+- `crates/archcert-glassmere`: presentation/session boundary without persistence, signing or runtime adapters.
 - `apps/archcert-cli`: command-line client and offline verification.
 - `apps/archcert-controller`: durable trusted execution/issuance orchestration.
 - `apps/archcert-worker`: credential-free execution process.
@@ -327,5 +329,7 @@ qualification remain separate work. Offline verification still needs no database
 Glassmere observes existing authority; it does not become authority. The private
 panel design and its readiness/query/session boundaries are recorded in
 [ADR 0051](docs/adr/0051-glassmere-observation-boundary.md) and the
-[Glassmere threat model](docs/threat-model/GLASSMERE.md). M9 is not closed.
+[Glassmere threat model](docs/threat-model/GLASSMERE.md). The Rust panel now provides
+authenticated read-only project, evidence, release-readiness and forensic views;
+see [Glassmere operations and limitations](docs/glassmere/README.md). M9 is not closed.
 M10, M11 and Genesis / Firstwarden remain NOT STARTED.

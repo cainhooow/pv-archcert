@@ -1,5 +1,14 @@
 # Initial Development Plan
 
+## Current delivery status
+
+M6 Ironcrest, M7 Asterwyn and M8 Greywatch are COMPLETE within their separately
+recorded exact scopes in ADR 0045. M9 Glassmere is IN PROGRESS / INCOMPLETE; its
+private read-only implementation and remaining limits are documented in
+[Glassmere operations](glassmere/README.md). M10 Crownvale, M11 Thornwick and
+Genesis / Firstwarden remain NOT STARTED. The numbered plan below is retained
+historical planning, not a replacement for the current roadmap.
+
 ## Current milestone scope
 
 The broad bootstrap sequence below is historical planning with its original

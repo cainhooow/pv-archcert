@@ -515,3 +515,19 @@ merging independent latest records. No persistent Glassmere projection is needed
 Browser sessions are separate from project/role authorization. See the
 [threat model](../threat-model/GLASSMERE.md). Implementation and qualification
 remain in progress; M10, M11 and Genesis are NOT STARTED.
+
+Glassmere now composes `archcert-glassmere` presentation and sessions with a narrow
+application query port in `archcert-panel`. The outer query adapter uses SELECT-only
+`ObservationRepository`, the observation-only filesystem reader and existing
+public-key certificate/M6 verification. It never configures a signer, runtime or
+acquisition/provider adapter. The browser receives explicit versioned fields,
+project-bound downloads, exact readiness blockers and original-stream timeline
+sequences. Query collections are bounded and attempt metadata is batched.
+
+The server embeds buildless HTML/CSS/JavaScript. Private provisioned random bearer
+credentials exchange for expiring HttpOnly same-origin sessions; role/project
+revocation invalidates the session's grant revision. Viewer, Operator and Reviewer
+have read-only scope; Administrator additionally inspects panel audit. No authority
+command/user/policy administration is implemented. See
+[operations and known limits](../glassmere/README.md). This is an INCOMPLETE M9
+visibility implementation, not milestone closure or independent certification.
