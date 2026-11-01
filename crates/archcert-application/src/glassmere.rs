@@ -253,7 +253,7 @@ pub struct EntityObservation {
 pub struct ProjectObservation {
     /// Project UUID.
     pub project: ProjectId,
-    /// Registered repository identity.
+    /// Registry label; multiple repositories require exact entity selection.
     pub repository: String,
 }
 

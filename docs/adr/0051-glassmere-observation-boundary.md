@@ -55,7 +55,9 @@ immutable object references and independently verify retrieved bytes. Do not
 merge independently selected latest certificates, artifacts or sources. There is
 no authoritative current source in the existing registry: label selected source
 and bounded history explicitly rather than inventing a branch head or latest
-accepted identity. Timeline sequence numbers remain scoped to their original
+accepted identity. Multi-repository projects require exact entity selection;
+never project one first repository name onto unrelated jobs/reviews/releases.
+Timeline sequence numbers remain scoped to their original
 certification or release stream; independent streams have no invented total order.
 
 No persistent Glassmere projection tables are introduced. Query state is disposable

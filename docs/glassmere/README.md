@@ -103,6 +103,10 @@ object bound 64 MiB. A snapshot has a content revision, original MVCC snapshot t
 and explicit UTC Unix evaluation seconds. IDs and stream sequences determine
 presentation ordering; wall clocks do not reorder authority history.
 
+A project can register multiple repositories. Its overview explicitly requires
+exact entity selection; each job, review session and release retains its own
+repository binding. No lexicographically first repository is presented as primary.
+
 The current registry has no authoritative current/latest source pointer. Source
 history is exact and prominently labeled; no branch or lexicographic UUID is called
 current or certified. Collection offsets are independent: a later timeline page

@@ -57,7 +57,7 @@ pub fn login() -> String {
 
 pub fn projects(projects: &[ProjectObservation], after: Option<String>) -> String {
     let mut result = String::from(
-        "<p class=lede>Inspect exact source, evidence and release authorization. Select a project to open its durable operational history.</p><section class=panel><div class=panel-heading><h2>Authorized projects</h2><span class=tag>PRIVATE · PROJECT SCOPED</span></div><div class=table-scroll><table><thead><tr><th scope=col>Project identity</th><th scope=col>Repository identity</th><th scope=col>Observation</th></tr></thead><tbody>",
+        "<p class=lede>Inspect exact source, evidence and release authorization. Select a project to open its durable operational history.</p><section class=panel><div class=panel-heading><h2>Authorized projects</h2><span class=tag>PRIVATE · PROJECT SCOPED</span></div><div class=table-scroll><table><thead><tr><th scope=col>Project identity</th><th scope=col>Repository registry</th><th scope=col>Observation</th></tr></thead><tbody>",
     );
     for project in projects {
         let _ = write!(
@@ -87,7 +87,7 @@ pub fn projects(projects: &[ProjectObservation], after: Option<String>) -> Strin
 
 pub fn project_nav(project: &ProjectSnapshot, section: &str) -> String {
     let mut result = format!(
-        "<div class=project-heading><div><span class=muted>PROJECT</span><p class=mono>{}</p></div><div><span class=muted>REPOSITORY</span><p>{}</p></div></div><nav class=tabs aria-label=\"Project views\">",
+        "<div class=project-heading><div><span class=muted>PROJECT</span><p class=mono>{}</p></div><div><span class=muted>REPOSITORY REGISTRY</span><p>{}</p></div></div><nav class=tabs aria-label=\"Project views\">",
         project.project.project,
         escape(&project.project.repository)
     );

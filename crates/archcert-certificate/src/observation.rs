@@ -173,8 +173,9 @@ pub fn observe_release(context: ReleaseObservationContext<'_>) -> ReadinessCheck
         reproducibility,
         artifact,
         permit: permit_check,
-        // Certificate validation already enforces supported mandatory property
-        // and issuance semantics. CLEAR text is never consulted as a success flag.
+        // Selected-key verification authenticates the original authority policy
+        // and required-review issuance claims; it does not rerun those checks.
+        // Supplemental CLEAR text is never consulted as a success flag.
         policy: certificate_check.map_err(|_| MandatoryEvidenceMissing),
         review: certificate_check.map_err(|_| ReviewInconclusive),
         environment: input

@@ -153,6 +153,30 @@ async fn readonly_queries_scope_objects_bound_pages_and_reconstruct_after_restar
         request.idempotency = IdempotencyKey::parse(format!("page-{ordinal}"))?;
         db.repository.create(request).await?;
     }
+
+    let second_repository = RepositoryId::parse("glassmere/second-repository")?;
+    let second_submission = SourceSubmissionId::new();
+    let second_source = SourceSnapshot::seal(
+        project,
+        second_repository.clone(),
+        GitObjectId::parse("c".repeat(40))?,
+        GitObjectId::parse("d".repeat(40))?,
+        vec![],
+        1,
+        1700000000,
+    )?;
+    db.repository
+        .grant(project, &second_repository, &request.inputs.actor)
+        .await?;
+    db.repository
+        .register_source(&second_submission, &second_source)
+        .await?;
+    let mut second_request = request.clone();
+    second_request.inputs.repository = second_repository.clone();
+    second_request.inputs.submission = second_submission;
+    second_request.inputs.source = second_source.identity().clone();
+    db.repository.create(second_request).await?;
+
     let reader = ObservationRepository::connect(&db.reader_url).await?;
 
     let projects = reader.projects(&[project], None).await?;
@@ -161,7 +185,17 @@ async fn readonly_queries_scope_objects_bound_pages_and_reconstruct_after_restar
 
     assert_eq!(projects.len(), 1);
     assert_eq!(first.jobs.len(), MAX_PAGE_SIZE);
-    assert_eq!(second.jobs.len(), 5);
+    assert_eq!(second.jobs.len(), 6);
+    assert_eq!(
+        projects[0].repository,
+        "MULTIPLE_REPOSITORIES / SELECT EXACT ENTITY"
+    );
+    assert_eq!(first.project.repository, projects[0].repository);
+    assert!(first.jobs.iter().chain(&second.jobs).any(|job| {
+        job.fields
+            .iter()
+            .any(|field| field.label == "Repository" && field.value == second_repository.as_str())
+    }));
     assert!(first.has_more);
     // Admission writes CertificationRequested and JobCreated, so timeline
     // pagination continues after the final job page.

@@ -118,7 +118,7 @@ impl ObservationRepository {
         }
 
         let rows = sqlx::query(
-            "SELECT project,min(repository) AS repository FROM repository_grants WHERE project=ANY($1) AND ($2::text IS NULL OR project>$2) GROUP BY project ORDER BY project LIMIT 50",
+            "SELECT project,CASE WHEN count(DISTINCT repository)>1 THEN 'MULTIPLE_REPOSITORIES / SELECT EXACT ENTITY' ELSE min(repository) END AS repository FROM repository_grants WHERE project=ANY($1) AND ($2::text IS NULL OR project>$2) GROUP BY project ORDER BY project LIMIT 50",
         )
         .bind(allowed.iter().map(ToString::to_string).collect::<Vec<_>>())
         .bind(after.map(|p| p.to_string()))
@@ -147,7 +147,7 @@ impl ObservationRepository {
 
         let mut tx = self.begin().await?;
         let repository: Option<String> =
-            sqlx::query_scalar("SELECT min(repository) FROM repository_grants WHERE project=$1")
+            sqlx::query_scalar("SELECT CASE WHEN count(DISTINCT repository)>1 THEN 'MULTIPLE_REPOSITORIES / SELECT EXACT ENTITY' ELSE min(repository) END FROM repository_grants WHERE project=$1")
                 .bind(project.to_string())
                 .fetch_one(&mut *tx)
                 .await
@@ -181,7 +181,7 @@ impl ObservationRepository {
             });
         }
 
-        let rows = sqlx::query("SELECT id,state,inputs->'source' AS source,inputs->'policy' AS policy,inputs->>'profile' AS profile,created_at,evaluation_at,failure,evaluation,certificate FROM certification_jobs WHERE project=$1 ORDER BY id LIMIT 51 OFFSET $2")
+        let rows = sqlx::query("SELECT id,state,inputs->>'repository' AS repository,inputs->'source' AS source,inputs->'policy' AS policy,inputs->>'profile' AS profile,created_at,evaluation_at,failure,evaluation,certificate FROM certification_jobs WHERE project=$1 ORDER BY id LIMIT 51 OFFSET $2")
             .bind(project.to_string()).bind(i64::from(offset)).fetch_all(&mut *tx).await.map_err(db)?;
         has_more |= rows.len() > MAX_PAGE_SIZE;
         let mut jobs = Vec::new();
@@ -203,6 +203,11 @@ impl ObservationRepository {
             let id: String = row.try_get("id").map_err(db)?;
             let source: Value = row.try_get("source").map_err(db)?;
             let mut fields = source_fields(&source, "Durable job source binding");
+            fields.push(field(
+                "Repository",
+                row.try_get::<String, _>("repository").map_err(db)?,
+                "Durable job source binding",
+            ));
             fields.extend([
                 field(
                     "Policy",
@@ -279,13 +284,18 @@ impl ObservationRepository {
             });
         }
 
-        let rows = sqlx::query("SELECT id,pin->'source' AS source,pin->>'knowledge_mode' AS knowledge_mode,created_at,review_timestamp,invocation IS NOT NULL AS invoked FROM ironcrest_sessions WHERE project=$1 ORDER BY id LIMIT 51 OFFSET $2")
+        let rows = sqlx::query("SELECT id,pin->>'repository' AS repository,pin->'source' AS source,pin->>'knowledge_mode' AS knowledge_mode,created_at,review_timestamp,invocation IS NOT NULL AS invoked FROM ironcrest_sessions WHERE project=$1 ORDER BY id LIMIT 51 OFFSET $2")
             .bind(project.to_string()).bind(i64::from(offset)).fetch_all(&mut *tx).await.map_err(db)?;
         has_more |= rows.len() > MAX_PAGE_SIZE;
         let mut sessions = Vec::new();
         for row in rows.into_iter().take(MAX_PAGE_SIZE) {
             let source: Value = row.try_get("source").map_err(db)?;
             let mut fields = source_fields(&source, "Frozen review session");
+            fields.push(field(
+                "Repository",
+                row.try_get::<String, _>("repository").map_err(db)?,
+                "Frozen review session",
+            ));
             fields.push(field(
                 "Authority",
                 "SUPPLEMENTAL / NON-AUTHORITATIVE",
@@ -308,13 +318,18 @@ impl ObservationRepository {
             });
         }
 
-        let rows = sqlx::query("SELECT invocation,admission->'input'->'certified_source'->'source' AS source,admission->'input'->'recipe_identity' AS recipe,admission->'input'->'environment_identity' AS environment,claim_a IS NOT NULL AS a,claim_b IS NOT NULL AS b FROM release_invocations WHERE project=$1 ORDER BY invocation LIMIT 51 OFFSET $2")
+        let rows = sqlx::query("SELECT invocation,admission->'input'->'certified_source'->>'repository' AS repository,admission->'input'->'certified_source'->'source' AS source,admission->'input'->'recipe_identity' AS recipe,admission->'input'->'environment_identity' AS environment,claim_a IS NOT NULL AS a,claim_b IS NOT NULL AS b FROM release_invocations WHERE project=$1 ORDER BY invocation LIMIT 51 OFFSET $2")
             .bind(project.to_string()).bind(i64::from(offset)).fetch_all(&mut *tx).await.map_err(db)?;
         has_more |= rows.len() > MAX_PAGE_SIZE;
         let mut releases = Vec::new();
         for row in rows.into_iter().take(MAX_PAGE_SIZE) {
             let source: Value = row.try_get("source").map_err(db)?;
             let mut fields = source_fields(&source, "M6 frozen input manifest");
+            fields.push(field(
+                "Repository",
+                row.try_get::<String, _>("repository").map_err(db)?,
+                "M6 frozen input manifest",
+            ));
             fields.extend([
                 field(
                     "Recipe",
