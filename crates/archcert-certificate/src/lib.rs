@@ -706,3 +706,6 @@ impl IssuedCertificate {
         &self.verified
     }
 }
+
+/// Read-only observations using existing certificate and release verifiers.
+pub mod observation;

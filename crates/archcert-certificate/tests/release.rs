@@ -186,3 +186,165 @@ fn every_payload_binding_is_signed_and_unknown_duplicate_and_oversized_objects_r
 
     Ok(())
 }
+
+fn observation_evidence(f: &Fixture) -> R<Vec<(ReleaseRole, Vec<u8>)>> {
+    Ok(vec![
+        (ReleaseRole::Input, release_bytes(&f.input)?),
+        (ReleaseRole::SourceCertificate, f.certificate.to_json()?),
+        (ReleaseRole::ResultA, release_bytes(&f.a)?),
+        (ReleaseRole::ResultB, release_bytes(&f.b)?),
+        (ReleaseRole::ArtifactA, b"deployable".to_vec()),
+        (ReleaseRole::ArtifactB, b"deployable".to_vec()),
+        (ReleaseRole::Reproducibility, release_bytes(&f.comparison)?),
+        (ReleaseRole::PermitPayload, f.draft()?.bytes().to_vec()),
+        (
+            ReleaseRole::PermitEnvelope,
+            serde_json::to_vec(&f.envelope()?)?,
+        ),
+    ])
+}
+
+#[test]
+fn glassmere_rechecks_complete_m6_authority_and_rejects_substitution() -> R {
+    use archcert_application::glassmere::{BlockerCode, ReleaseState};
+    use archcert_certificate::observation::*;
+
+    let f = Fixture::new()?;
+    let evidence = observation_evidence(&f)?;
+    let observe = |evidence: &[(ReleaseRole, Vec<u8>)]| {
+        observe_release(ReleaseObservationContext {
+            input: &f.input,
+            recipe: &f.recipe,
+            source_key: &f.source_key,
+            release_key: &f.release_key,
+            evidence,
+        })
+        .evaluate("fixture-revision".into(), 1700000000)
+    };
+
+    let allowed = observe(&evidence);
+
+    assert_eq!(allowed.state, ReleaseState::ReleaseAllowed);
+    assert_eq!(
+        allowed.subject.artifact.as_deref(),
+        Some(digest_bytes(b"deployable").as_str())
+    );
+
+    for (role, code) in [
+        (
+            ReleaseRole::SourceCertificate,
+            BlockerCode::NoSourceCertificate,
+        ),
+        (ReleaseRole::ResultB, BlockerCode::MandatoryEvidenceMissing),
+        (
+            ReleaseRole::ArtifactA,
+            BlockerCode::MandatoryEvidenceMissing,
+        ),
+        (
+            ReleaseRole::PermitEnvelope,
+            BlockerCode::ReleasePermitMissing,
+        ),
+        (
+            ReleaseRole::PermitPayload,
+            BlockerCode::ReleasePermitInvalid,
+        ),
+    ] {
+        let missing = evidence
+            .iter()
+            .filter(|(r, _)| *r != role)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let denied = observe(&missing);
+
+        assert_eq!(denied.state, ReleaseState::ReleaseDenied);
+        assert!(
+            denied.blockers.iter().any(|b| b.code == code),
+            "{role:?}: {:?}",
+            denied.blockers
+        );
+    }
+
+    for (role, code) in [
+        (
+            ReleaseRole::SourceCertificate,
+            BlockerCode::CertificateInvalid,
+        ),
+        (ReleaseRole::ArtifactA, BlockerCode::ArtifactMismatch),
+        (ReleaseRole::ArtifactB, BlockerCode::ArtifactMismatch),
+        (
+            ReleaseRole::PermitEnvelope,
+            BlockerCode::ReleasePermitInvalid,
+        ),
+    ] {
+        let mut changed = evidence.clone();
+        let bytes = &mut changed
+            .iter_mut()
+            .find(|(r, _)| *r == role)
+            .ok_or("missing fixture role")?
+            .1;
+        bytes.extend_from_slice(b"substitution");
+
+        let denied = observe(&changed);
+
+        assert_eq!(denied.state, ReleaseState::ReleaseDenied);
+        assert!(denied.blockers.iter().any(|b| b.code == code), "{role:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+fn glassmere_denies_valid_foreign_source_permit_and_unqualified_recipe() -> R {
+    use archcert_application::glassmere::{BlockerCode, ReleaseState};
+    use archcert_certificate::observation::*;
+
+    let f = Fixture::new()?;
+    let evidence = observation_evidence(&f)?;
+    let mut wrong_source = f.input.clone();
+    wrong_source.certified_source.source.commit =
+        archcert_domain::GitObjectId::parse("9".repeat(40))?;
+
+    let denied = observe_release(ReleaseObservationContext {
+        input: &wrong_source,
+        recipe: &f.recipe,
+        source_key: &f.source_key,
+        release_key: &f.release_key,
+        evidence: &evidence,
+    })
+    .evaluate("fixture".into(), 1700000000);
+
+    assert_eq!(denied.state, ReleaseState::ReleaseDenied);
+    assert!(
+        denied
+            .blockers
+            .iter()
+            .any(|b| b.code == BlockerCode::SourceIdentityMismatch)
+    );
+    assert!(
+        denied
+            .blockers
+            .iter()
+            .any(|b| b.code == BlockerCode::ReleasePermitInvalid)
+    );
+
+    let wrong_recipe = RustReleaseRecipe::new(f.input.recipe.environment.clone(), "other-binary")?;
+    let denied = observe_release(ReleaseObservationContext {
+        input: &f.input,
+        recipe: &wrong_recipe,
+        source_key: &f.source_key,
+        release_key: &f.release_key,
+        evidence: &evidence,
+    })
+    .evaluate("fixture".into(), 1700000000);
+
+    assert_eq!(denied.state, ReleaseState::ReleaseDenied);
+    assert!(
+        denied
+            .blockers
+            .iter()
+            .any(|b| b.code == BlockerCode::EnvironmentNotQualified)
+    );
+
+    Ok(())
+}

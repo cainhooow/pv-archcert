@@ -99,3 +99,6 @@ pub struct CertificationJobRequest {
     /// Authority execution profile selection, independent of ingress.
     pub execution_profile: String,
 }
+
+/// Private operational visibility and exact release-readiness queries.
+pub mod glassmere;
