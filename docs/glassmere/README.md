@@ -119,6 +119,14 @@ show `UNSUPPORTED` and establish no positive authority result. The separate raw
 preview is collapsed by default. Parsing, displayed runtime observations and
 semantic CLEAR create no proof or new runtime qualification.
 
+Job inspection includes the pinned attempt budget, evaluation phase time and
+each retained attempt's identity, worker, state, lease/ending times, failure,
+runtime fence and cleanup state. Missing timestamps remain `NOT RECORDED`;
+execution completion does not imply certificate issuance. Runtime endpoints,
+gate paths and lease capabilities are excluded. Recovery eligibility is explicitly
+left to the controller's existing exact-attempt preconditions, rather than
+inferred from a displayed deadline or cleanup label.
+
 A project can register multiple repositories. Its overview explicitly requires
 exact entity selection; each job, review session and release retains its own
 repository binding. No lexicographically first repository is presented as primary.

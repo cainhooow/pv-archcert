@@ -284,3 +284,156 @@ async fn writable_roles_are_rejected_and_concurrent_aggregate_reads_are_coherent
 
     db.close().await
 }
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL and role provisioning"]
+async fn job_inspection_preserves_attempt_phases_and_nested_certificate_identity_without_capabilities()
+-> R {
+    let db = Database::open().await?;
+    let request = db.request().await?;
+    let project = request.inputs.project;
+    let id = db.repository.create(request).await?.id;
+    let reference = ArtifactReference {
+        sha256: digest_bytes(b"observation-only-test-metadata"),
+        size: b"observation-only-test-metadata".len() as u64,
+        schema: 1,
+        producer: "observation-fixture".into(),
+    };
+    let reader = ObservationRepository::connect(&db.reader_url).await?;
+    let queued = reader.snapshot(project, 0).await?;
+    assert_eq!(queued.jobs[0].state, "QUEUED");
+    assert!(queued.jobs[0].fields.iter().any(|field| {
+        field.label == "Evaluation started UTC Unix seconds" && field.value == "NOT RECORDED"
+    }));
+
+    let assignment = db
+        .repository
+        .claim("named-fixture-worker", 30)
+        .await?
+        .ok_or("claim")?;
+    db.repository.start(&assignment.lease).await?;
+    let binding = RuntimeBinding {
+        endpoint: "unix:///private/ENDPOINT_MUST_NOT_LEAK.sock".into(),
+        daemon_id: "DAEMON_MUST_NOT_LEAK".into(),
+        gate_root: "/private/GATE_MUST_NOT_LEAK".into(),
+    };
+    db.repository
+        .bind_runtime(&assignment.lease, &binding)
+        .await?;
+    let running = reader.snapshot(project, 0).await?;
+    assert!(
+        running.jobs[0].fields.iter().any(|field| {
+            field.label == "Attempt 1: runtime cleanup" && field.value == "PENDING"
+        })
+    );
+    assert!(running.jobs[0].fields.iter().any(|field| {
+        field.label == "Attempt 1: execution ended UTC Unix seconds"
+            && field.value == "NOT RECORDED"
+    }));
+
+    // These are metadata fixtures, not cryptographic certificates or runtime proof.
+    // The test exercises the existing repository transitions, then SELECT-only projection.
+    db.repository
+        .stage_artifact(id, Some(assignment.lease.attempt), "EXECUTION", &reference)
+        .await?;
+    db.repository
+        .artifact_available(id, Some(assignment.lease.attempt), "EXECUTION", &reference)
+        .await?;
+    db.repository
+        .accept_evidence(&assignment.lease, &reference)
+        .await?;
+    db.repository
+        .fence_runtime(id, assignment.lease.attempt, &binding)
+        .await?;
+    db.repository
+        .finish_cleanup(
+            id,
+            assignment.lease.attempt,
+            &binding,
+            RuntimeCleanupState::Succeeded,
+        )
+        .await?;
+
+    for kind in ["EVALUATION", "CERTIFICATE"] {
+        db.repository
+            .stage_artifact(id, None, kind, &reference)
+            .await?;
+        db.repository
+            .artifact_available(id, None, kind, &reference)
+            .await?;
+    }
+    db.repository
+        .record_evaluation(id, &reference, EvaluationDecision::Eligible)
+        .await?;
+    let issuance = PreparedIssuance {
+        certificate_sha256: digest_bytes(b"canonical-payload-identity"),
+        signing_key_id: "a".repeat(64),
+        issued_at: 1700000000,
+    };
+    db.repository.prepare_issuance(id, &issuance).await?;
+    db.repository
+        .complete(
+            id,
+            &PersistedCertificate {
+                issuance: issuance.clone(),
+                artifact: reference,
+                signature: "a".repeat(128),
+                verified: true,
+            },
+        )
+        .await?;
+
+    let complete = reader.snapshot(project, 0).await?;
+    let job = &complete.jobs[0];
+    assert_eq!(job.state, "COMPLETED");
+    for (label, expected) in [
+        (
+            "Certificate identity",
+            issuance.certificate_sha256.as_str().to_string(),
+        ),
+        ("Attempt 1: identity", assignment.lease.attempt.to_string()),
+        ("Attempt 1: worker", "named-fixture-worker".into()),
+        ("Attempt 1: state", "COMPLETED".into()),
+        ("Attempt 1: runtime cleanup", "SUCCEEDED".into()),
+        ("Attempt 1: runtime fenced", "true".into()),
+    ] {
+        assert!(
+            job.fields
+                .iter()
+                .any(|field| field.label == label && field.value == expected),
+            "{label}"
+        );
+    }
+    for label in [
+        "Evaluation started UTC Unix seconds",
+        "Attempt 1: leased UTC Unix seconds",
+        "Attempt 1: execution ended UTC Unix seconds",
+    ] {
+        let field = job
+            .fields
+            .iter()
+            .find(|field| field.label == label)
+            .ok_or("timestamp")?;
+        assert!(field.value.parse::<i64>()? > 0);
+    }
+    let json = serde_json::to_string(&complete)?;
+    for excluded in [
+        "ENDPOINT_MUST_NOT_LEAK",
+        "DAEMON_MUST_NOT_LEAK",
+        "GATE_MUST_NOT_LEAK",
+        "token",
+        "authority_toml",
+        "SENSITIVE_MUST_NOT_LEAK",
+    ] {
+        assert!(!json.contains(excluded), "{excluded}");
+    }
+    assert!(
+        job.fields
+            .iter()
+            .any(|field| field.label == "Recovery eligibility"
+                && field.value.starts_with("NOT EVALUATED BY PANEL"))
+    );
+
+    drop(reader);
+    db.close().await
+}

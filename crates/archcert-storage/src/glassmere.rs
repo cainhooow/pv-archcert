@@ -181,7 +181,7 @@ impl ObservationRepository {
             });
         }
 
-        let rows = sqlx::query("SELECT id,state,inputs->>'repository' AS repository,inputs->'source' AS source,inputs->'policy' AS policy,inputs->>'profile' AS profile,created_at,evaluation_at,failure,evaluation,certificate FROM certification_jobs WHERE project=$1 ORDER BY id LIMIT 51 OFFSET $2")
+        let rows = sqlx::query("SELECT id,state,inputs->>'repository' AS repository,inputs->'source' AS source,inputs->'policy' AS policy,inputs->>'profile' AS profile,inputs->>'maximum_attempts' AS maximum_attempts,created_at,evaluation_at,failure,evaluation,certificate FROM certification_jobs WHERE project=$1 ORDER BY id LIMIT 51 OFFSET $2")
             .bind(project.to_string()).bind(i64::from(offset)).fetch_all(&mut *tx).await.map_err(db)?;
         has_more |= rows.len() > MAX_PAGE_SIZE;
         let mut jobs = Vec::new();
@@ -191,7 +191,7 @@ impl ObservationRepository {
             .map(|row| row.try_get::<String, _>("id").map_err(db))
             .collect::<Result<Vec<_>>>()?;
         let attempt_rows = sqlx::query(
-            "SELECT job,ordinal,state,leased_at,lease_until,ended_at,failure FROM certification_attempts WHERE job=ANY($1) ORDER BY job,ordinal LIMIT 150",
+            "SELECT a.job,a.id,a.ordinal,a.worker,a.state,a.leased_at,a.lease_until,a.ended_at,a.failure,r.cleanup,r.fenced FROM certification_attempts a LEFT JOIN attempt_runtime r ON r.job=a.job AND r.attempt=a.id WHERE a.job=ANY($1) ORDER BY a.job,a.ordinal LIMIT 150",
         ).bind(&job_ids).fetch_all(&mut *tx).await.map_err(db)?;
         let mut attempts_by_job = std::collections::BTreeMap::<String, Vec<PgRow>>::new();
         for attempt in attempt_rows {
@@ -231,6 +231,24 @@ impl ObservationRepository {
                         .unwrap_or_else(|| "NONE RECORDED".into()),
                     "Durable job",
                 ),
+                field(
+                    "Evaluation started UTC Unix seconds",
+                    row.try_get::<Option<i64>, _>("evaluation_at")
+                        .map_err(db)?
+                        .map(|time| time.to_string())
+                        .unwrap_or_else(|| "NOT RECORDED".into()),
+                    "Durable job phase timestamp",
+                ),
+                field(
+                    "Maximum attempts",
+                    row.try_get::<String, _>("maximum_attempts").map_err(db)?,
+                    "Immutable authority attempt budget",
+                ),
+                field(
+                    "Recovery eligibility",
+                    "NOT EVALUATED BY PANEL; exact controller preconditions, lease expiry, fencing, cleanup and pinned attempt budget remain mandatory. Terminal jobs cannot retry.",
+                    "ADR 0036 / ADR 0039; observation grants no recovery capability",
+                ),
             ]);
 
             // Evaluation/certificate internals are deliberately not copied. Only
@@ -246,7 +264,7 @@ impl ObservationRepository {
             let certificate: Option<Value> = row.try_get("certificate").map_err(db)?;
             if let Some(certificate) = certificate
                 && let Some(identity) = certificate
-                    .get("certificate_sha256")
+                    .pointer("/issuance/certificate_sha256")
                     .and_then(Value::as_str)
             {
                 fields.push(field(
@@ -258,22 +276,67 @@ impl ObservationRepository {
 
             let attempts = attempts_by_job.remove(&id).unwrap_or_default();
             for attempt in attempts {
-                fields.push(field(
-                    &format!(
-                        "Attempt {}",
-                        attempt.try_get::<i16, _>("ordinal").map_err(db)?
+                let ordinal = attempt.try_get::<i16, _>("ordinal").map_err(db)?;
+                let provenance =
+                    "Durable attempt; execution end is distinct from certificate issuance";
+                for (label, value) in [
+                    ("identity", attempt.try_get::<String, _>("id").map_err(db)?),
+                    (
+                        "worker",
+                        attempt.try_get::<String, _>("worker").map_err(db)?,
                     ),
-                    format!(
-                        "{}; lease until {} UTC Unix seconds; failure {}",
-                        attempt.try_get::<String, _>("state").map_err(db)?,
-                        attempt.try_get::<i64, _>("lease_until").map_err(db)?,
+                    ("state", attempt.try_get::<String, _>("state").map_err(db)?),
+                    (
+                        "leased UTC Unix seconds",
+                        attempt
+                            .try_get::<i64, _>("leased_at")
+                            .map_err(db)?
+                            .to_string(),
+                    ),
+                    (
+                        "lease until UTC Unix seconds",
+                        attempt
+                            .try_get::<i64, _>("lease_until")
+                            .map_err(db)?
+                            .to_string(),
+                    ),
+                    (
+                        "execution ended UTC Unix seconds",
+                        attempt
+                            .try_get::<Option<i64>, _>("ended_at")
+                            .map_err(db)?
+                            .map(|time| time.to_string())
+                            .unwrap_or_else(|| "NOT RECORDED".into()),
+                    ),
+                    (
+                        "failure",
                         attempt
                             .try_get::<Option<String>, _>("failure")
                             .map_err(db)?
-                            .unwrap_or_else(|| "NONE RECORDED".into())
+                            .unwrap_or_else(|| "NONE RECORDED".into()),
                     ),
-                    "Durable attempt; fencing credentials excluded",
-                ));
+                    (
+                        "runtime cleanup",
+                        attempt
+                            .try_get::<Option<String>, _>("cleanup")
+                            .map_err(db)?
+                            .unwrap_or_else(|| "NO RUNTIME BINDING RECORDED".into()),
+                    ),
+                    (
+                        "runtime fenced",
+                        attempt
+                            .try_get::<Option<bool>, _>("fenced")
+                            .map_err(db)?
+                            .map(|fenced| fenced.to_string())
+                            .unwrap_or_else(|| "NO RUNTIME BINDING RECORDED".into()),
+                    ),
+                ] {
+                    fields.push(field(
+                        &format!("Attempt {ordinal}: {label}"),
+                        value,
+                        provenance,
+                    ));
+                }
             }
 
             jobs.push(EntityObservation {
