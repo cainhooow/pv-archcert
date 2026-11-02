@@ -106,6 +106,19 @@ object bound 64 MiB. A snapshot has a content revision, original MVCC snapshot t
 and explicit UTC Unix evaluation seconds. IDs and stream sequences determine
 presentation ordering; wall clocks do not reorder authority history.
 
+Registered JSON evidence has a structured display separate from selected-key
+verification and original downloads. Known role/schema pairs up to 8 MiB expose
+bounded identity/provenance fields and collection links. Collection pages retain
+original array order and show at most 50 items (`collection` and `item_offset`);
+nested object links allow focused inspection. Field count, depth and text length
+are bounded, with explicit omission notices. Raw byte arrays and credential-like
+fields are excluded. This conservative display redaction cannot establish that
+source evidence contains no secrets; original downloads remain private and exact.
+Unknown schemas, mismatched metadata, invalid JSON and oversized display inputs
+show `UNSUPPORTED` and establish no positive authority result. The separate raw
+preview is collapsed by default. Parsing, displayed runtime observations and
+semantic CLEAR create no proof or new runtime qualification.
+
 A project can register multiple repositories. Its overview explicitly requires
 exact entity selection; each job, review session and release retains its own
 repository binding. No lexicographically first repository is presented as primary.

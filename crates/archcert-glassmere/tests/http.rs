@@ -424,6 +424,28 @@ async fn hostile_metadata_preview_and_download_are_inert_and_original_bytes_are_
     .await?;
     assert!(!page.contains(HOSTILE));
     assert!(page.contains("SUPPLEMENTAL / NON-AUTHORITATIVE"));
+    assert!(page.contains("UNSUPPORTED structured inspection"));
+    assert!(page.contains("<details><summary>Raw data:"));
+
+    for query in [
+        "item_offset=100001",
+        "item_offset=-1",
+        "collection=a..b",
+        "collection=%3Cscript%3E",
+        "collection=claims&collection=claims",
+        "unknown=value",
+    ] {
+        let response = f
+            .request(
+                "GET",
+                &format!("{path}?{query}"),
+                Some(&cookie),
+                None,
+                String::new(),
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
+    }
 
     let path = format!("/projects/{}/download/owned/{digest}", f.project);
     let response = f

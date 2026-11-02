@@ -1,6 +1,7 @@
 //! Private Glassmere HTTP presentation. No signing, runtime or persistence adapter.
 
 pub mod auth;
+mod inspection;
 mod render;
 
 use archcert_application::{glassmere::*, jobs::JobStoreError};
@@ -471,6 +472,7 @@ async fn evidence(
     State(panel): State<Arc<Panel>>,
     headers: HeaderMap,
     Path((project, entity, digest)): Path<(String, String, String)>,
+    Query(page): Query<inspection::Page>,
 ) -> Response {
     let id = match identity(&panel, &headers) {
         Ok(id) => id,
@@ -480,11 +482,15 @@ async fn evidence(
         Ok(p) => p,
         Err(e) => return e.into_response(),
     };
+    if !page.valid() {
+        return error(StatusCode::BAD_REQUEST, "INVALID_REQUEST");
+    }
+
     match panel.query.evidence(project, &entity, &digest).await {
         Ok((item, bytes)) => html(
             &panel,
             "Evidence inspection",
-            &render::evidence(&item, &bytes, project),
+            &render::evidence(&item, &bytes, project, &page),
             Some(&id),
         ),
         Err(e) => query_error(e),

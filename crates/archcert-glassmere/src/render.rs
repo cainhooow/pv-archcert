@@ -423,6 +423,7 @@ pub fn evidence(
     item: &EvidenceObservation,
     bytes: &[u8],
     project: archcert_domain::ProjectId,
+    page: &crate::inspection::Page,
 ) -> String {
     let preview = String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_PREVIEW_BYTES)]);
     let mut result = format!(
@@ -444,34 +445,14 @@ pub fn evidence(
         result.push_str("</section>");
     }
 
-    if item.role == "KNOWLEDGE"
-        && let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes)
-    {
-        let spots = value["blind_spots"].as_array().map(Vec::len);
-        let nodes = value["nodes"].as_array().map(Vec::len);
-        let edges = value["edges"].as_array().map(Vec::len);
-        let _ = write!(
-            result,
-            "<section class=panel><h2>Asterwyn coverage & blind spots</h2><p><strong>Coverage: inspect each dimension · Blind spots: {} · Nodes: {} · Edges: {}</strong></p><p>Unsupported dimensions remain explicit. Full-review requirement is defined in the bound IMPACT artifact.</p><pre>{}</pre></section>",
-            spots
-                .map(|n| n.to_string())
-                .unwrap_or_else(|| "UNKNOWN / UNSUPPORTED".into()),
-            nodes
-                .map(|n| n.to_string())
-                .unwrap_or_else(|| "UNKNOWN".into()),
-            edges
-                .map(|n| n.to_string())
-                .unwrap_or_else(|| "UNKNOWN".into()),
-            escape(&serde_json::to_string_pretty(&value["coverage"]).unwrap_or_default())
-        );
-    }
-
     if item.role == "REVIEW" {
         result.push_str("<div class=callout><strong>SUPPLEMENTAL / NON-AUTHORITATIVE</strong><p>CONTRADICTION / AUTHORITY RESOLUTION REQUIRED when recorded. CLEAR contributes zero deterministic proof. Only typed accepted citations establish object identity; arbitrary URLs remain inert text.</p></div>");
     }
+    result.push_str(&crate::inspection::render(item, bytes, project, page));
+
     let _ = write!(
         result,
-        "<section class=panel><h2>Bounded inert preview</h2><p>Showing at most {} of {} bytes. Binary or truncated text may be incomplete.</p><pre>{}</pre></section>",
+        "<section class=panel><details><summary>Raw data: bounded inert preview</summary><p>Showing at most {} of {} bytes. Binary or truncated text may be incomplete.</p><pre>{}</pre></details></section>",
         MAX_PREVIEW_BYTES,
         item.size,
         escape(&redact_preview(&preview))
@@ -481,7 +462,7 @@ pub fn evidence(
 }
 
 /// Preview redaction is conservative and never changes immutable download bytes.
-fn redact_preview(text: &str) -> String {
+pub(crate) fn redact_preview(text: &str) -> String {
     let mut private_key = false;
     let mut output = Vec::new();
     for line in text.lines() {
