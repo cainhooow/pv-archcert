@@ -1227,6 +1227,11 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+    // Concurrent Python client startup can exhaust these tests' real I/O budgets
+    // on a contended host. Acquire this test-only resource before setup and the
+    // measured operation. Production deadlines and unrelated tests stay unchanged.
+    static MOCK_PROCESS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn daemon() -> Value {
         serde_json::json!({
             "OSType": "linux",
@@ -1275,6 +1280,7 @@ mod tests {
 
     #[test]
     fn shared_runtime_fixture_keeps_configuration_and_call_logs_isolated() -> TestResult {
+        let _process_guard = MOCK_PROCESS_LOCK.lock().map_err(|_| "mock process lock")?;
         let (_first_root, first) = mock("removed")?;
         let (_second_root, second) = mock("disconnected")?;
 
@@ -1405,6 +1411,7 @@ mod tests {
 
     #[test]
     fn malformed_inspect_oom_state_cannot_become_success() -> TestResult {
+        let _process_guard = MOCK_PROCESS_LOCK.lock().map_err(|_| "mock process lock")?;
         let stream = CapturedStream {
             sha256: archcert_domain::source::digest_bytes(b""),
             observed_bytes: 0,
@@ -1674,6 +1681,7 @@ mod tests {
 
     #[test]
     fn bounded_mock_io_and_runtime_environment_exclusion() -> TestResult {
+        let _process_guard = MOCK_PROCESS_LOCK.lock().map_err(|_| "mock process lock")?;
         let (_temp, runtime) = mock("removed")?;
 
         assert_eq!(runtime.preflight()?.server_version, "test");
@@ -1733,6 +1741,8 @@ mod tests {
 
     #[test]
     fn cleanup_distinguishes_destroyed_absent_disconnected_and_orphan() -> TestResult {
+        let _process_guard = MOCK_PROCESS_LOCK.lock().map_err(|_| "mock process lock")?;
+
         for (mode, expected) in [
             ("removed", CleanupStatus::Destroyed),
             ("absent", CleanupStatus::Destroyed),
@@ -1757,6 +1767,7 @@ mod tests {
 
     #[test]
     fn panic_unwinding_attempts_sandbox_destruction() -> TestResult {
+        let _process_guard = MOCK_PROCESS_LOCK.lock().map_err(|_| "mock process lock")?;
         let (_temp, runtime) = mock("removed")?;
         let result = std::panic::catch_unwind(|| {
             let _lease = SandboxLease {
@@ -1785,6 +1796,7 @@ mod tests {
 
     #[test]
     fn runtime_failure_never_becomes_target_test_failure_or_success() -> TestResult {
+        let _process_guard = MOCK_PROCESS_LOCK.lock().map_err(|_| "mock process lock")?;
         let (_temp, runtime) = mock("removed")?;
         let mut output = process::run(
             runtime.command(&strings(&["mock-output"])),
@@ -1830,6 +1842,7 @@ mod tests {
 
     #[test]
     fn controller_deadline_kills_a_hung_runtime_client() -> TestResult {
+        let _process_guard = MOCK_PROCESS_LOCK.lock().map_err(|_| "mock process lock")?;
         let (_temp, runtime) = mock("removed")?;
         let mut terminated = false;
         let started = Instant::now();
