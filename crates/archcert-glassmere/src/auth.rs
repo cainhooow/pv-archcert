@@ -423,6 +423,152 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    fn provision(path: &Path, args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
+        let script =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/glassmere-provision");
+        let output = std::process::Command::new("/usr/bin/python3")
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .arg(script)
+            .arg("--config")
+            .arg(path)
+            .args(["--operator", "authentication-regression"])
+            .args(args)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(format!(
+                "private provisioning failed for {}",
+                args.first().copied().unwrap_or("missing action")
+            )
+            .into());
+        }
+
+        Ok(())
+    }
+
+    fn delivered(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+        let value: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+
+        Ok(value["credential"].as_str().ok_or("credential")?.into())
+    }
+
+    #[test]
+    fn provisioned_grant_rotation_and_revocation_invalidate_existing_sessions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().canonicalize()?;
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
+        let configuration = root.join("panel.json");
+        let initial_access = root.join("initial-access.json");
+        let rotated_access = root.join("rotated-access.json");
+        let reader_access = root.join("reader-access.json");
+        let initial_path = initial_access.to_str().ok_or("path")?;
+        let rotated_path = rotated_access.to_str().ok_or("path")?;
+        let reader_path = reader_access.to_str().ok_or("path")?;
+
+        provision(
+            &configuration,
+            &[
+                "bootstrap",
+                "--principal",
+                "admin",
+                "--origin",
+                "https://glassmere.internal",
+                "--credential-file",
+                initial_path,
+            ],
+        )?;
+        let initial_credential = delivered(&initial_access)?;
+        let auth = Authentication::open(configuration.clone()).map_err(|_| "authentication")?;
+        let (original_session, cookie) = auth.login(&initial_credential).map_err(|_| "login")?;
+
+        assert!(cookie.contains("; Secure"));
+        assert_eq!(
+            auth.authenticate(&original_session)
+                .map_err(|_| "session")?
+                .role,
+            Role::Administrator
+        );
+
+        provision(
+            &configuration,
+            &["set-grant", "--principal", "admin", "--role", "VIEWER"],
+        )?;
+
+        assert!(matches!(
+            auth.authenticate(&original_session),
+            Err(AuthError::Unauthenticated)
+        ));
+        let (viewer_session, _) = auth
+            .login(&initial_credential)
+            .map_err(|_| "viewer login")?;
+        assert_eq!(
+            auth.authenticate(&viewer_session)
+                .map_err(|_| "session")?
+                .role,
+            Role::Viewer
+        );
+
+        provision(
+            &configuration,
+            &[
+                "rotate",
+                "--principal",
+                "admin",
+                "--credential-file",
+                rotated_path,
+            ],
+        )?;
+        let rotated_credential = delivered(&rotated_access)?;
+
+        assert!(matches!(
+            auth.authenticate(&viewer_session),
+            Err(AuthError::Unauthenticated)
+        ));
+        assert!(matches!(
+            auth.login(&initial_credential),
+            Err(AuthError::Unauthenticated)
+        ));
+        let (rotated_session, _) = auth
+            .login(&rotated_credential)
+            .map_err(|_| "rotated login")?;
+
+        provision(
+            &configuration,
+            &[
+                "add",
+                "--principal",
+                "reader",
+                "--role",
+                "VIEWER",
+                "--credential-file",
+                reader_path,
+            ],
+        )?;
+        provision(&configuration, &["revoke", "--principal", "admin"])?;
+
+        assert!(matches!(
+            auth.authenticate(&rotated_session),
+            Err(AuthError::Unauthenticated)
+        ));
+        assert!(matches!(
+            auth.login(&rotated_credential),
+            Err(AuthError::Unauthenticated)
+        ));
+        assert!(auth.login(&delivered(&reader_access)?).is_ok());
+
+        let provisioning_audit =
+            std::fs::read_to_string(root.join("panel.json.provisioning.jsonl"))?;
+
+        assert!(!provisioning_audit.contains(&initial_credential));
+        assert!(!provisioning_audit.contains(&rotated_credential));
+        assert!(provisioning_audit.contains("authentication-regression"));
+        assert!(provisioning_audit.contains("revoke"));
+
+        Ok(())
+    }
+
     #[test]
     fn expired_sessions_and_restarts_do_not_preserve_access()
     -> Result<(), Box<dyn std::error::Error>> {

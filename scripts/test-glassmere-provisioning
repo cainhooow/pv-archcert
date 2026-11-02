@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""Exercise real private provisioning files, locking and interrupted publication."""
+import json
+from pathlib import Path
+import runpy
+import subprocess
+import tempfile
+import unittest
+from unittest import mock
+
+SCRIPT = Path(__file__).resolve().with_name('glassmere-provision')
+API = runpy.run_path(str(SCRIPT))
+Provisioning = API['Provisioning']
+ProvisionError = API['ProvisionError']
+PROJECT = '10000000-0000-4000-8000-000000000001'
+
+
+class ProvisioningTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='glassmere-provisioning-')
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.path = self.root / 'panel.json'
+        self.provisioning = Provisioning(self.path, 'test-operator')
+
+    def args(self, action, principal='admin', **overrides):
+        values = dict(action=action, principal=principal, role='VIEWER', project=[PROJECT],
+                      credential_file=self.root / f'{principal}-{action}.json',
+                      origin='https://glassmere.internal', development_http=False,
+                      demonstration_data=False)
+        values.update(overrides)
+        return type('Arguments', (), values)()
+
+    def bootstrap(self):
+        self.provisioning.change(self.args('bootstrap'))
+
+    def config(self):
+        return json.loads(self.path.read_bytes())
+
+    def audit(self):
+        return [json.loads(line) for line in self.provisioning.journal.read_text().splitlines()]
+
+    def test_bootstrap_has_no_default_credential_or_secret_audit(self):
+        self.bootstrap()
+        config = self.config()
+        delivery = self.root / 'admin-bootstrap.json'
+        credential = json.loads(delivery.read_bytes())['credential']
+
+        self.assertEqual(config['principals'][0]['role'], 'ADMINISTRATOR')
+        self.assertEqual(len(credential), 64)
+        self.assertNotIn(credential, self.path.read_text())
+        self.assertNotIn(credential, self.provisioning.journal.read_text())
+        self.assertEqual(delivery.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual([r['event'] for r in self.audit()], ['INTENT', 'COMMITTED'])
+
+    def test_grants_rotation_and_revocation_have_explicit_audit(self):
+        self.bootstrap()
+        self.provisioning.change(self.args('add', 'reader'))
+        original = self.config()['principals'][1]['token_sha256']
+        self.provisioning.change(self.args('set-grant', 'reader', role='REVIEWER', project=[]))
+        self.provisioning.change(self.args('rotate', 'reader'))
+        rotated = self.config()['principals'][1]['token_sha256']
+        self.provisioning.change(self.args('revoke', 'reader'))
+
+        self.assertNotEqual(original, rotated)
+        self.assertEqual([p['id'] for p in self.config()['principals']], ['admin'])
+        changes = [r['operation'] for r in self.audit() if r['event'] == 'COMMITTED']
+        self.assertEqual([r['action'] for r in changes],
+                         ['bootstrap', 'add', 'set-grant', 'rotate', 'revoke'])
+        self.assertEqual(changes[2]['before_grant'], dict(role='VIEWER', projects=[PROJECT]))
+        self.assertEqual(changes[2]['after_grant'], dict(role='REVIEWER', projects=[]))
+        self.assertIsNone(changes[4]['after_grant'])
+
+    def test_existing_bootstrap_secret_or_last_principal_cannot_be_overwritten(self):
+        self.bootstrap()
+        original = self.path.read_bytes()
+
+        with self.assertRaises(ProvisionError):
+            self.provisioning.change(self.args('bootstrap'))
+        with self.assertRaises(ProvisionError):
+            self.provisioning.change(self.args('revoke'))
+        with self.assertRaises(FileExistsError):
+            self.provisioning.change(self.args('rotate', credential_file=self.root / 'admin-bootstrap.json'))
+
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertEqual(len(self.audit()), 2)
+
+    def test_production_http_and_public_preview_configuration_fail_closed(self):
+        with self.assertRaises(ProvisionError):
+            self.provisioning.change(self.args('bootstrap', origin='http://127.0.0.1:8090'))
+        with self.assertRaises(ProvisionError):
+            self.provisioning.change(self.args('bootstrap', origin='http://0.0.0.0:8090',
+                                              development_http=True))
+
+        self.assertFalse(self.path.exists())
+        self.provisioning.change(self.args('bootstrap', origin='http://127.0.0.1:8090',
+                                          development_http=True, demonstration_data=True))
+        self.assertTrue(self.config()['development_http'])
+        self.assertTrue(self.config()['demonstration_data'])
+
+    def test_insecure_files_symlinks_and_audit_secret_collision_are_rejected(self):
+        with self.assertRaises(ProvisionError):
+            self.provisioning.change(self.args('bootstrap', credential_file=self.root / 'panel-audit.jsonl'))
+        self.bootstrap()
+        self.path.chmod(0o644)
+        with self.assertRaises(ProvisionError):
+            self.provisioning.change(self.args('rotate'))
+        self.path.chmod(0o600)
+        original = self.path.read_bytes()
+        self.path.rename(self.root / 'retained.json')
+        self.path.symlink_to(self.root / 'retained.json')
+
+        with self.assertRaises(OSError):
+            self.provisioning.change(self.args('rotate'))
+        self.assertEqual((self.root / 'retained.json').read_bytes(), original)
+
+    def test_public_configuration_directory_is_rejected(self):
+        self.root.chmod(0o755)
+        try:
+            with self.assertRaises(ProvisionError):
+                Provisioning(self.path, 'test-operator')
+        finally:
+            self.root.chmod(0o700)
+
+        self.assertFalse(self.path.exists())
+
+    def test_interruption_before_replace_is_audited_as_recovered_abort(self):
+        self.bootstrap()
+        original = self.path.read_bytes()
+
+        with mock.patch('os.replace', side_effect=OSError('injected publication failure')):
+            with self.assertRaises(OSError):
+                self.provisioning.change(self.args('set-grant', role='OPERATOR'))
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertEqual(self.audit()[-1]['event'], 'INTENT')
+
+        self.provisioning.change(self.args('set-grant', role='REVIEWER'))
+
+        self.assertEqual(self.audit()[-3]['event'], 'RECOVERED_ABORT')
+        self.assertEqual(self.config()['principals'][0]['role'], 'REVIEWER')
+
+    def test_interruption_after_replace_is_audited_as_recovered_commit(self):
+        self.bootstrap()
+        append = self.provisioning.append
+
+        def interrupted(event, operation):
+            if event == 'COMMITTED':
+                raise OSError('injected audit completion failure')
+            append(event, operation)
+
+        with mock.patch.object(self.provisioning, 'append', side_effect=interrupted):
+            with self.assertRaises(OSError):
+                self.provisioning.change(self.args('set-grant', role='OPERATOR'))
+        self.assertEqual(self.config()['principals'][0]['role'], 'OPERATOR')
+        self.assertEqual(self.audit()[-1]['event'], 'INTENT')
+
+        self.provisioning.change(self.args('set-grant', role='REVIEWER'))
+
+        self.assertEqual(self.audit()[-3]['event'], 'RECOVERED_COMMIT')
+
+    def test_out_of_band_or_partial_audit_changes_block_continuation(self):
+        self.bootstrap()
+        original = self.path.read_bytes()
+        changed = self.config()
+        changed['principals'][0]['projects'] = []
+        self.path.write_bytes(API['encode'](changed))
+
+        with self.assertRaises(ProvisionError):
+            self.provisioning.change(self.args('rotate'))
+        self.path.write_bytes(original)
+        with self.provisioning.journal.open('ab') as stream:
+            stream.write(b'{"interrupted":')
+        with self.assertRaises(ValueError):
+            self.provisioning.change(self.args('rotate'))
+
+    def test_legacy_duplicate_json_is_rejected_without_rewriting(self):
+        self.bootstrap()
+        legacy = self.root / 'legacy.json'
+        original = self.path.read_bytes().rstrip()
+        duplicate = original[:-1] + b',"schema":1}\n'
+        API['create_private'](legacy, duplicate)
+
+        with self.assertRaises(ProvisionError):
+            Provisioning(legacy, 'test-operator').change(self.args('set-grant', role='OPERATOR'))
+
+        self.assertEqual(legacy.read_bytes(), duplicate)
+        self.assertFalse(legacy.with_name(legacy.name + '.provisioning.jsonl').exists())
+
+    def test_concurrent_processes_allocate_one_ordered_audit_stream(self):
+        self.bootstrap()
+        processes = []
+        for principal in ('first', 'second'):
+            processes.append(subprocess.Popen([
+                '/usr/bin/python3', str(SCRIPT), '--config', str(self.path),
+                '--operator', 'test-operator', 'add', '--principal', principal,
+                '--role', 'VIEWER', '--project', PROJECT,
+                '--credential-file', str(self.root / f'{principal}.json'),
+            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env=dict(PATH='/usr/bin:/bin')))
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=20)
+            self.assertEqual(process.returncode, 0, stderr)
+            for secret_path in self.root.glob('*-bootstrap.json'):
+                self.assertNotIn(json.loads(secret_path.read_bytes())['credential'].encode(), stdout)
+
+        self.assertEqual({p['id'] for p in self.config()['principals']}, {'admin', 'first', 'second'})
+        self.assertEqual([r['sequence'] for r in self.audit()], list(range(1, 7)))
+        self.assertEqual([r['event'] for r in self.audit()], ['INTENT', 'COMMITTED'] * 3)
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

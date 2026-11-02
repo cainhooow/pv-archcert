@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+"""Audited, private operator provisioning for Glassmere schema-1 grants.
+
+This tool is outside the browser and authority workflow. It grants only panel
+roles/projects, never execution, signing, policy or governance authority. Secrets
+are delivered through a new private file, never stdout or an audit record.
+"""
+import argparse
+import contextlib
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import stat
+import tempfile
+import time
+import uuid
+
+MAX_CONFIG_BYTES = 128 * 1024
+MAX_AUDIT_BYTES = 16 * 1024 * 1024
+ROLES = ('VIEWER', 'OPERATOR', 'REVIEWER', 'ADMINISTRATOR')
+IDENTIFIER = re.compile(r'[A-Za-z0-9_-]{1,64}\Z')
+
+
+class ProvisionError(Exception):
+    """Fixed diagnostics exclude secrets and untrusted configuration content."""
+
+
+def encode(value):
+    return (json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n').encode()
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest() if data is not None else None
+
+
+def unique_object(pairs):
+    value = {}
+    for key, entry in pairs:
+        if key in value:
+            raise ProvisionError('Duplicate private JSON field')
+        value[key] = entry
+    return value
+
+
+def check_metadata(info):
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+            or info.st_mode & 0o077 or info.st_nlink != 1):
+        raise ProvisionError('Private owned regular files are required')
+
+
+def read_private(path, maximum, *, missing=False):
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        if missing:
+            return None
+        raise ProvisionError('Required private file is missing') from None
+
+    with os.fdopen(fd, 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        check_metadata(info)
+        if info.st_size > maximum:
+            raise ProvisionError('Private file exceeds its byte bound')
+        data = stream.read(maximum + 1)
+    if len(data) > maximum:
+        raise ProvisionError('Private file exceeds its byte bound')
+    return data
+
+
+def create_private(path, data):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'wb') as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def sync_directory(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def canonical_project(value):
+    if not isinstance(value, str):
+        raise ProvisionError('Project UUID must use canonical text')
+    parsed = uuid.UUID(value)
+    if str(parsed) != value:
+        raise ProvisionError('Project UUID must use canonical text')
+    return value
+
+
+def validate_configuration(value):
+    if (set(value) != {'schema', 'origin', 'development_http', 'demonstration_data',
+                       'principals', 'audit_path'} or value['schema'] != 1
+            or type(value['development_http']) is not bool
+            or type(value['demonstration_data']) is not bool
+            or not isinstance(value['origin'], str)):
+        raise ProvisionError('Unsupported panel configuration')
+
+    origin = value['origin']
+    if value['development_http']:
+        match = re.fullmatch(r'http://127\.0\.0\.1:([0-9]{1,5})', origin)
+        valid = match is not None and 1 <= int(match[1]) <= 65535
+    else:
+        valid = re.fullmatch(r'https://[A-Za-z0-9][A-Za-z0-9.:-]*', origin) is not None
+    if not valid:
+        raise ProvisionError('Explicit HTTPS or loopback development origin required')
+
+    principals = value['principals']
+    if not isinstance(principals, list) or not 1 <= len(principals) <= 256:
+        raise ProvisionError('Panel requires one to 256 explicit principals')
+
+    ids, hashes = set(), set()
+    for principal in principals:
+        if (set(principal) != {'id', 'token_sha256', 'role', 'projects'}
+                or not IDENTIFIER.fullmatch(principal['id'])
+                or principal['role'] not in ROLES
+                or re.fullmatch(r'[0-9a-f]{64}', principal['token_sha256']) is None
+                or principal['id'] in ids or principal['token_sha256'] in hashes
+                or not isinstance(principal['projects'], list)
+                or len(principal['projects']) > 256):
+            raise ProvisionError('Invalid or duplicate principal grant')
+        for project in principal['projects']:
+            canonical_project(project)
+        ids.add(principal['id'])
+        hashes.add(principal['token_sha256'])
+
+    if not isinstance(value['audit_path'], str) or not Path(value['audit_path']).is_absolute():
+        raise ProvisionError('Explicit panel audit path required')
+    if len(encode(value)) > MAX_CONFIG_BYTES:
+        raise ProvisionError('Panel configuration exceeds its byte bound')
+
+
+class Provisioning:
+    """One private configuration and its separate durable provisioning journal."""
+
+    def __init__(self, path, operator):
+        self.path = Path(path)
+        self.root = self.path.parent
+        if (not self.path.is_absolute() or self.root.resolve(strict=True) != self.root
+                or not IDENTIFIER.fullmatch(operator)
+                or re.fullmatch(r'[A-Za-z0-9_.-]{1,128}', self.path.name) is None):
+            raise ProvisionError('Canonical private path and operator identity required')
+        info = self.root.stat()
+        if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise ProvisionError('Configuration directory must be private and owned')
+        self.operator = operator
+        self.journal = self.path.with_name(self.path.name + '.provisioning.jsonl')
+        self.lock = self.path.with_name(self.path.name + '.provisioning.lock')
+        self.records = []
+
+    @contextlib.contextmanager
+    def locked(self):
+        fd = os.open(self.lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        with os.fdopen(fd, 'r+b') as lock:
+            check_metadata(os.fstat(lock.fileno()))
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            raw = read_private(self.journal, MAX_AUDIT_BYTES, missing=True)
+            self.records = [] if raw is None else [
+                json.loads(line, object_pairs_hook=unique_object) for line in raw.splitlines()
+            ]
+            for sequence, record in enumerate(self.records, 1):
+                if (record['sequence'] != sequence or record['schema'] != 1
+                        or record['event'] not in ('INTENT', 'COMMITTED', 'RECOVERED_ABORT',
+                                                   'RECOVERED_COMMIT')):
+                    raise ProvisionError('Provisioning audit sequence is invalid')
+            self.recover()
+            if self.records:
+                record = self.records[-1]
+                expected = record['operation']['before_sha256' if record['event'] == 'RECOVERED_ABORT'
+                                               else 'after_sha256']
+                current = digest(read_private(self.path, MAX_CONFIG_BYTES, missing=True))
+                if current != expected:
+                    raise ProvisionError('Configuration changed outside its provisioning audit')
+            yield
+
+    def append(self, event, operation):
+        record = dict(
+            schema=1,
+            sequence=len(self.records) + 1,
+            timestamp_utc_unix=int(time.time()),
+            operator=self.operator,
+            event=event,
+            operation=operation,
+        )
+        data = encode(record)
+        fd = os.open(self.journal, os.O_WRONLY | os.O_APPEND | os.O_CREAT
+                     | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        with os.fdopen(fd, 'ab') as stream:
+            info = os.fstat(stream.fileno())
+            check_metadata(info)
+            if info.st_size + len(data) > MAX_AUDIT_BYTES:
+                raise ProvisionError('Provisioning audit capacity exhausted')
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        sync_directory(self.root)
+        self.records.append(record)
+
+    def recover(self):
+        if not self.records or self.records[-1]['event'] != 'INTENT':
+            return
+        operation = self.records[-1]['operation']
+        current = digest(read_private(self.path, MAX_CONFIG_BYTES, missing=True))
+        if current == operation['after_sha256']:
+            self.append('RECOVERED_COMMIT', operation)
+        elif current == operation['before_sha256']:
+            self.append('RECOVERED_ABORT', operation)
+        else:
+            raise ProvisionError('Unresolved provisioning state requires operator investigation')
+
+    def change(self, args):
+        with self.locked():
+            original = read_private(self.path, MAX_CONFIG_BYTES, missing=True)
+            if args.action == 'bootstrap':
+                if original is not None:
+                    raise ProvisionError('Bootstrap refuses an existing configuration')
+                value = dict(
+                    schema=1,
+                    origin=args.origin,
+                    development_http=args.development_http,
+                    demonstration_data=args.demonstration_data,
+                    principals=[dict(
+                        id=args.principal,
+                        role='ADMINISTRATOR',
+                        projects=sorted(set(args.project)),
+                        token_sha256='',
+                    )],
+                    audit_path=str(self.root / 'panel-audit.jsonl'),
+                )
+            else:
+                if original is None:
+                    raise ProvisionError('Bootstrap must precede grant changes')
+                value = json.loads(original, object_pairs_hook=unique_object)
+                validate_configuration(value)
+
+            selected = next((p for p in value['principals'] if p['id'] == args.principal), None)
+            before_grant = None
+            if selected is not None and args.action != 'bootstrap':
+                before_grant = dict(role=selected['role'], projects=selected['projects'][:])
+
+            if args.action == 'add':
+                if selected is not None:
+                    raise ProvisionError('Principal already exists')
+                selected = dict(
+                    id=args.principal,
+                    role=args.role,
+                    projects=sorted(set(args.project)),
+                    token_sha256='',
+                )
+                value['principals'].append(selected)
+            elif selected is None:
+                raise ProvisionError('Principal does not exist')
+
+            if args.action == 'revoke':
+                value['principals'].remove(selected)
+            elif args.action == 'set-grant':
+                selected.update(role=args.role, projects=sorted(set(args.project)))
+
+            credential = None
+            if args.action in ('bootstrap', 'add', 'rotate'):
+                credential = secrets.token_hex(32)
+                selected['token_sha256'] = digest(credential.encode())
+            validate_configuration(value)
+            updated = encode(value)
+
+            if credential is not None:
+                delivery = Path(args.credential_file)
+                if delivery.parent != self.root or delivery in (
+                        self.path, self.journal, self.lock, Path(value['audit_path'])):
+                    raise ProvisionError('Use a new credential file in the private configuration directory')
+                create_private(delivery, encode(dict(principal=args.principal, credential=credential)))
+                sync_directory(self.root)
+
+            after_grant = None
+            if args.action != 'revoke':
+                after_grant = dict(role=selected['role'], projects=selected['projects'])
+
+            operation = dict(
+                id=str(uuid.uuid4()),
+                action=args.action,
+                principal=args.principal,
+                before_sha256=digest(original),
+                after_sha256=digest(updated),
+                before_grant=before_grant,
+                after_grant=after_grant,
+                credential_rotated=credential is not None,
+            )
+            self.append('INTENT', operation)
+
+            descriptor, temporary = tempfile.mkstemp(prefix='.glassmere-grant-', dir=self.root)
+            try:
+                with os.fdopen(descriptor, 'wb') as stream:
+                    stream.write(updated)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, self.path)
+                sync_directory(self.root)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+
+            self.append('COMMITTED', operation)
+
+
+def parse_arguments(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--config', type=Path, required=True)
+    parser.add_argument('--operator', required=True, help='Non-secret external provisioning identity')
+    commands = parser.add_subparsers(dest='action', required=True)
+    for action in ('bootstrap', 'add', 'set-grant', 'revoke', 'rotate'):
+        command = commands.add_parser(action)
+        command.add_argument('--principal', required=True)
+        if action in ('add', 'set-grant'):
+            command.add_argument('--role', choices=ROLES, required=True)
+        if action in ('bootstrap', 'add', 'set-grant'):
+            command.add_argument('--project', action='append', default=[], type=canonical_project)
+        if action in ('bootstrap', 'add', 'rotate'):
+            command.add_argument('--credential-file', type=Path, required=True)
+        if action == 'bootstrap':
+            command.add_argument('--origin', required=True)
+            command.add_argument('--development-http', action='store_true')
+            command.add_argument('--demonstration-data', action='store_true')
+    return parser.parse_args(argv)
+
+
+def main():
+    try:
+        args = parse_arguments()
+        if not IDENTIFIER.fullmatch(args.principal):
+            raise ProvisionError('Invalid principal identity')
+        Provisioning(args.config, args.operator).change(args)
+    except (ProvisionError, OSError, ValueError, TypeError, KeyError, RecursionError):
+        raise SystemExit('Provisioning failed; inspect private state and audit before retrying') from None
+    print('Panel provisioning committed; credentials remain in the selected private file, if requested.')
+
+
+if __name__ == '__main__':
+    main()

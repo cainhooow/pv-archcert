@@ -38,7 +38,10 @@ with the operating system CSPRNG, store only its SHA-256 in provisioning, and de
 the credential privately. This is a high-entropy bearer credential, not a password.
 No default account, password reset or browser credential storage is provided.
 Grant changes are external provisioning operations; deployments must retain their
-own provisioning audit. Browser-based user/role management is unsupported.
+own provisioning audit. The [provisioning tool and procedure](PROVISIONING.md)
+provide private bootstrap, grant changes, credential rotation and revocation with
+an explicit interrupted-publication audit. Browser-based user/role management is
+unsupported.
 
 The separate private query configuration contains schema 1, `artifact_root`,
 `source_public_keys`, `release_public_keys` (lowercase raw Ed25519 public-key hex)
