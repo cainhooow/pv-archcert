@@ -1253,12 +1253,12 @@ mod tests {
 
     fn mock(mode: &str) -> Result<(tempfile::TempDir, DockerRuntime), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
-        let executable = temp.path().canonicalize()?.join("runtime-mock");
-        fs::write(
-            &executable,
-            include_bytes!("../tests/fixtures/runtime_mock.py"),
-        )?;
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
+        // Fresh executable copies can incur concurrent host first-launch overhead
+        // beyond the five-second I/O budget. Reuse the immutable fixture; each
+        // runtime still owns its configuration, socket path and call log.
+        let executable = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/runtime_mock.py")
+            .canonicalize()?;
         let socket = temp.path().join("runtime.sock");
         let _listener = std::os::unix::net::UnixListener::bind(&socket)?;
         let runtime = DockerRuntime::new(executable, format!("unix://{}", socket.display()))?;
@@ -1271,6 +1271,27 @@ mod tests {
         )?;
 
         Ok((temp, runtime))
+    }
+
+    #[test]
+    fn shared_runtime_fixture_keeps_configuration_and_call_logs_isolated() -> TestResult {
+        let (_first_root, first) = mock("removed")?;
+        let (_second_root, second) = mock("disconnected")?;
+
+        assert_eq!(first.executable, second.executable);
+        assert_ne!(first.configuration.path(), second.configuration.path());
+
+        assert!(first.preflight().is_ok());
+        assert!(second.preflight().is_err());
+
+        let first_calls = fs::read_to_string(first.configuration.path().join("calls.jsonl"))?;
+        let second_calls = fs::read_to_string(second.configuration.path().join("calls.jsonl"))?;
+
+        assert!(first_calls.contains("version"));
+        assert!(second_calls.contains("info"));
+        assert!(!second_calls.contains("version"));
+
+        Ok(())
     }
 
     fn request() -> Result<
@@ -1438,7 +1459,7 @@ mod tests {
             identity.runtime_information["component/runc"],
             "test-runtime"
         );
-        assert!(identity.client_path.ends_with("runtime-mock"));
+        assert!(identity.client_path.ends_with("runtime_mock.py"));
         assert_eq!(identity.runtime_information["ID"], "test-daemon");
         assert!(identity.runtime_information["authority/endpoint"].starts_with("unix:///"));
         assert!(identity.runtime_information["authority/endpoint"].ends_with("/runtime.sock"));
