@@ -170,3 +170,10 @@ Browser qualification uses the separately locked tools in `tools/glassmere-brows
 Run `npm ci --ignore-scripts --prefix tools/glassmere-browser` and then
 `node scripts/test-glassmere-browser` against the retained preview. This tooling is
 never bundled or downloaded by the running panel.
+
+The browser journey normally uses the installed Chrome channel. A separately
+provisioned portable Chrome can be selected with `GLASSMERE_CHROME_EXECUTABLE`,
+which must be an absolute regular-file path. Select and verify that browser
+outside project inputs and retain its distribution/version identity with the
+test output. The journey records the actual browser version and keeps the same
+assertions. It never downloads or chooses a browser on behalf of the panel.

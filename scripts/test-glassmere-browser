@@ -20,7 +20,17 @@ async function main() {
   const dataset = JSON.parse(fs.readFileSync(path.join(directory, "dataset.json")));
   const eligible = dataset.find(item => item.scenario === "eligible-historical-exact-source");
   const project = eligible.project;
-  const browser = await chromium.launch({ headless: true, channel: "chrome" });
+  const launchOptions = { headless: true };
+  if (process.env.GLASSMERE_CHROME_EXECUTABLE) {
+    const executable = process.env.GLASSMERE_CHROME_EXECUTABLE;
+    assert(path.isAbsolute(executable), "Use an absolute trusted browser executable");
+    assert(fs.statSync(executable).isFile(), "Browser executable must be a regular file");
+    launchOptions.executablePath = fs.realpathSync(executable);
+  } else {
+    launchOptions.channel = "chrome";
+  }
+
+  const browser = await chromium.launch(launchOptions);
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
   const dialogs = [];
