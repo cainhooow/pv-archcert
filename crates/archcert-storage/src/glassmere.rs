@@ -141,6 +141,34 @@ impl ObservationRepository {
     /// Coherent independently paged collections. Multiple repositories in one
     /// project remain visible on each source/job; no branch is selected as current.
     pub async fn snapshot(&self, project: ProjectId, offset: u32) -> Result<ProjectSnapshot> {
+        self.snapshot_selected(project, offset, None).await
+    }
+
+    /// Exact object selection retains the parent on every child page. Foreign and
+    /// absent objects reject identically; no unrelated project rows are returned.
+    pub async fn entity(
+        &self,
+        project: ProjectId,
+        entity: &str,
+        offset: u32,
+    ) -> Result<ProjectSnapshot> {
+        JobId::parse(entity).map_err(|_| JobStoreError::Invalid)?;
+        let snapshot = self
+            .snapshot_selected(project, offset, Some(entity))
+            .await?;
+        if snapshot.jobs.is_empty() && snapshot.sessions.is_empty() {
+            return Err(JobStoreError::Precondition);
+        }
+
+        Ok(snapshot)
+    }
+
+    async fn snapshot_selected(
+        &self,
+        project: ProjectId,
+        offset: u32,
+        selected: Option<&str>,
+    ) -> Result<ProjectSnapshot> {
         if offset > 100_000 {
             return Err(JobStoreError::Invalid);
         }
@@ -160,8 +188,8 @@ impl ObservationRepository {
         let evaluated_at = now(&mut tx).await?;
         let mut has_more = false;
 
-        let rows = sqlx::query("SELECT submission,repository,source FROM accepted_sources WHERE project=$1 ORDER BY submission LIMIT 51 OFFSET $2")
-            .bind(project.to_string()).bind(i64::from(offset)).fetch_all(&mut *tx).await.map_err(db)?;
+        let rows = sqlx::query("SELECT submission,repository,source FROM accepted_sources WHERE project=$1 AND ($3::text IS NULL OR submission=$3) ORDER BY submission LIMIT 51 OFFSET $2")
+            .bind(project.to_string()).bind(i64::from(offset)).bind(selected).fetch_all(&mut *tx).await.map_err(db)?;
         has_more |= rows.len() > MAX_PAGE_SIZE;
         let mut sources = Vec::new();
 
@@ -181,8 +209,8 @@ impl ObservationRepository {
             });
         }
 
-        let rows = sqlx::query("SELECT id,state,inputs->>'repository' AS repository,inputs->'source' AS source,inputs->'policy' AS policy,inputs->>'profile' AS profile,inputs->>'maximum_attempts' AS maximum_attempts,created_at,evaluation_at,failure,evaluation,certificate FROM certification_jobs WHERE project=$1 ORDER BY id LIMIT 51 OFFSET $2")
-            .bind(project.to_string()).bind(i64::from(offset)).fetch_all(&mut *tx).await.map_err(db)?;
+        let rows = sqlx::query("SELECT id,state,inputs->>'repository' AS repository,inputs->'source' AS source,inputs->'policy' AS policy,inputs->>'profile' AS profile,inputs->>'maximum_attempts' AS maximum_attempts,created_at,evaluation_at,failure,evaluation,certificate FROM certification_jobs WHERE project=$1 AND ($3::text IS NULL OR id=$3) ORDER BY id LIMIT 51 OFFSET CASE WHEN $3::text IS NULL THEN $2::bigint ELSE 0 END")
+            .bind(project.to_string()).bind(i64::from(offset)).bind(selected).fetch_all(&mut *tx).await.map_err(db)?;
         has_more |= rows.len() > MAX_PAGE_SIZE;
         let mut jobs = Vec::new();
         let job_ids = rows
@@ -347,8 +375,8 @@ impl ObservationRepository {
             });
         }
 
-        let rows = sqlx::query("SELECT id,pin->>'repository' AS repository,pin->'source' AS source,pin->>'knowledge_mode' AS knowledge_mode,created_at,review_timestamp,invocation IS NOT NULL AS invoked FROM ironcrest_sessions WHERE project=$1 ORDER BY id LIMIT 51 OFFSET $2")
-            .bind(project.to_string()).bind(i64::from(offset)).fetch_all(&mut *tx).await.map_err(db)?;
+        let rows = sqlx::query("SELECT id,pin->>'repository' AS repository,pin->'source' AS source,pin->>'knowledge_mode' AS knowledge_mode,created_at,review_timestamp,invocation IS NOT NULL AS invoked FROM ironcrest_sessions WHERE project=$1 AND ($3::text IS NULL OR id=$3) ORDER BY id LIMIT 51 OFFSET CASE WHEN $3::text IS NULL THEN $2::bigint ELSE 0 END")
+            .bind(project.to_string()).bind(i64::from(offset)).bind(selected).fetch_all(&mut *tx).await.map_err(db)?;
         has_more |= rows.len() > MAX_PAGE_SIZE;
         let mut sessions = Vec::new();
         for row in rows.into_iter().take(MAX_PAGE_SIZE) {
@@ -381,8 +409,8 @@ impl ObservationRepository {
             });
         }
 
-        let rows = sqlx::query("SELECT invocation,admission->'input'->'certified_source'->>'repository' AS repository,admission->'input'->'certified_source'->'source' AS source,admission->'input'->'recipe_identity' AS recipe,admission->'input'->'environment_identity' AS environment,claim_a IS NOT NULL AS a,claim_b IS NOT NULL AS b FROM release_invocations WHERE project=$1 ORDER BY invocation LIMIT 51 OFFSET $2")
-            .bind(project.to_string()).bind(i64::from(offset)).fetch_all(&mut *tx).await.map_err(db)?;
+        let rows = sqlx::query("SELECT invocation,admission->'input'->'certified_source'->>'repository' AS repository,admission->'input'->'certified_source'->'source' AS source,admission->'input'->'recipe_identity' AS recipe,admission->'input'->'environment_identity' AS environment,claim_a IS NOT NULL AS a,claim_b IS NOT NULL AS b FROM release_invocations WHERE project=$1 AND ($3::text IS NULL OR invocation=$3) ORDER BY invocation LIMIT 51 OFFSET $2")
+            .bind(project.to_string()).bind(i64::from(offset)).bind(selected).fetch_all(&mut *tx).await.map_err(db)?;
         has_more |= rows.len() > MAX_PAGE_SIZE;
         let mut releases = Vec::new();
         for row in rows.into_iter().take(MAX_PAGE_SIZE) {
@@ -419,8 +447,8 @@ impl ObservationRepository {
         }
 
         let rows = sqlx::query(
-            "SELECT entity,role,reference,state FROM (SELECT a.job AS entity,a.kind AS role,a.reference,a.state FROM artifacts a JOIN certification_jobs j ON j.id=a.job WHERE j.project=$1 UNION ALL SELECT e.session,e.role,e.reference,e.state FROM ironcrest_evidence e JOIN ironcrest_sessions s ON s.id=e.session WHERE s.project=$1 UNION ALL SELECT invocation,role,reference,CASE WHEN available THEN 'AVAILABLE' ELSE 'STAGING' END FROM release_evidence WHERE project=$1) e ORDER BY entity,role LIMIT 51 OFFSET $2",
-        ).bind(project.to_string()).bind(i64::from(offset)).fetch_all(&mut *tx).await.map_err(db)?;
+            "SELECT entity,role,reference,state FROM (SELECT a.job AS entity,a.kind AS role,a.reference,a.state FROM artifacts a JOIN certification_jobs j ON j.id=a.job WHERE j.project=$1 UNION ALL SELECT e.session,e.role,e.reference,e.state FROM ironcrest_evidence e JOIN ironcrest_sessions s ON s.id=e.session WHERE s.project=$1 UNION ALL SELECT invocation,role,reference,CASE WHEN available THEN 'AVAILABLE' ELSE 'STAGING' END FROM release_evidence WHERE project=$1) e WHERE ($3::text IS NULL OR entity=$3) ORDER BY entity,role LIMIT 51 OFFSET $2",
+        ).bind(project.to_string()).bind(i64::from(offset)).bind(selected).fetch_all(&mut *tx).await.map_err(db)?;
         has_more |= rows.len() > MAX_PAGE_SIZE;
         let evidence = rows
             .into_iter()
@@ -431,13 +459,14 @@ impl ObservationRepository {
         let mut timeline = Vec::new();
         for stream in ["CERTIFICATION", "RELEASE"] {
             let query = if stream == "CERTIFICATION" {
-                "SELECT a.sequence,a.job AS entity,a.event,a.created_at AS timestamp FROM audit_events a JOIN certification_jobs j ON j.id=a.job WHERE j.project=$1 ORDER BY a.sequence LIMIT 51 OFFSET $2"
+                "SELECT a.sequence,a.job AS entity,a.event,a.created_at AS timestamp FROM audit_events a JOIN certification_jobs j ON j.id=a.job WHERE j.project=$1 AND ($3::text IS NULL OR a.job=$3) ORDER BY a.sequence LIMIT 51 OFFSET $2"
             } else {
-                "SELECT sequence,invocation AS entity,event,floor(extract(epoch FROM created_at))::bigint AS timestamp FROM release_audit WHERE project=$1 ORDER BY sequence LIMIT 51 OFFSET $2"
+                "SELECT sequence,invocation AS entity,event,floor(extract(epoch FROM created_at))::bigint AS timestamp FROM release_audit WHERE project=$1 AND ($3::text IS NULL OR invocation=$3) ORDER BY sequence LIMIT 51 OFFSET $2"
             };
             let rows = sqlx::query(query)
                 .bind(project.to_string())
                 .bind(i64::from(offset))
+                .bind(selected)
                 .fetch_all(&mut *tx)
                 .await
                 .map_err(db)?;

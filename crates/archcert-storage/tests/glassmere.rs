@@ -186,6 +186,28 @@ async fn readonly_queries_scope_objects_bound_pages_and_reconstruct_after_restar
     assert_eq!(projects.len(), 1);
     assert_eq!(first.jobs.len(), MAX_PAGE_SIZE);
     assert_eq!(second.jobs.len(), 6);
+
+    let selected = &second.jobs[0].id;
+    assert!(first.jobs.iter().all(|job| &job.id != selected));
+    let exact = reader.entity(project, selected, 0).await?;
+    let later = reader.entity(project, selected, 50).await?;
+    assert_eq!(exact.jobs.len(), 1);
+    assert_eq!(&exact.jobs[0].id, selected);
+    assert_eq!(later.jobs.len(), 1);
+    assert_eq!(&later.jobs[0].id, selected);
+    assert!(exact.evidence.iter().all(|item| &item.entity == selected));
+    assert!(exact.timeline.iter().all(|event| &event.entity == selected));
+    assert_eq!(exact.timeline.len(), 2);
+    assert!(later.timeline.is_empty());
+    assert!(matches!(
+        reader.entity(project, &foreign.id.to_string(), 0).await,
+        Err(JobStoreError::Precondition)
+    ));
+    assert!(matches!(
+        reader.entity(project, &JobId::new().to_string(), 0).await,
+        Err(JobStoreError::Precondition)
+    ));
+    assert!(reader.entity(project, selected, 100_001).await.is_err());
     assert_eq!(
         projects[0].repository,
         "MULTIPLE_REPOSITORIES / SELECT EXACT ENTITY"

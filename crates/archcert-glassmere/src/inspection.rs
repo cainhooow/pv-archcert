@@ -389,12 +389,14 @@ pub(crate) fn render(
                     view.url(path, page.item_offset.saturating_sub(MAX_PAGE_SIZE as u32))
                 );
             }
-            if end < items.len() {
+            if end < items.len() && page.item_offset < 100_000 {
                 let _ = write!(
                     result,
                     "<a href=\"{}\">Next items</a>",
                     view.url(path, page.item_offset + MAX_PAGE_SIZE as u32)
                 );
+            } else if end < items.len() {
+                result.push_str("<span>Collection offset limit reached; inspect original registered bytes for the remaining items.</span>");
             }
             result.push_str("</nav>");
         } else if let Some(object) = select(&value, path).filter(|value| value.is_object()) {
@@ -461,6 +463,31 @@ mod tests {
             assert_eq!(html.contains("Previous items"), offset > 0);
             assert_eq!(html.contains("Next items"), offset < 100);
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn collection_ceiling_never_links_to_an_invalid_page() -> R {
+        let bytes = serde_json::to_vec(&json!({
+            "schema": 2,
+            "normalized": {"claims": vec!["retained"; 100_051]},
+        }))?;
+        let item = observe("REVIEW", 2, &bytes);
+        let html = render(
+            &item,
+            &bytes,
+            ProjectId::new(),
+            &Page {
+                item_offset: 100_000,
+                collection: Some("normalized.claims".into()),
+            },
+        );
+
+        assert_eq!(html.matches("<article>").count(), 50);
+        assert!(html.contains("Collection offset limit reached"));
+        assert!(!html.contains("Next items"));
+        assert!(html.contains("Previous items"));
 
         Ok(())
     }

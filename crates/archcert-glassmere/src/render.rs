@@ -140,11 +140,10 @@ fn entities(snapshot: &ProjectSnapshot, entities: &[EntityObservation], path: &s
     for entity in entities {
         let _ = write!(
             result,
-            "<tr><td><a class=mono href=/projects/{}/{}/{}?offset={}>{}</a></td><td>{}</td><td><span class=tag>{}</span></td></tr>",
+            "<tr><td><a class=mono href=/projects/{}/{}/{}>{}</a></td><td>{}</td><td><span class=tag>{}</span></td></tr>",
             snapshot.project.project,
             path,
             escape(&entity.id),
-            snapshot.offset,
             escape(&entity.id),
             escape(&entity.kind),
             escape(&entity.state)
@@ -212,6 +211,8 @@ pub fn project(
             fields(&entity.fields),
             evidence_table(snapshot, |e| e.entity == id)
         );
+        result.push_str(&timeline(snapshot));
+        result.push_str(&page_footer(snapshot, section, Some(id)));
         return Some(result);
     }
 
@@ -281,34 +282,51 @@ pub fn project(
             result.push_str("</section>");
         }
         "timeline" => {
-            result.push_str("<section class=panel><h2>Forensic timeline</h2><p>Ordered by durable sequence within each original stream. Independent certification and release sequences do not establish a shared total order.</p><div class=table-scroll><table><thead><tr><th scope=col>Stream / sequence</th><th scope=col>Recorded event</th><th scope=col>Entity</th><th scope=col>UTC Unix seconds</th></tr></thead><tbody>");
-            for item in &snapshot.timeline {
-                let _ = write!(
-                    result,
-                    "<tr><td>{} / {}</td><td>{}</td><td class=mono><a href=/projects/{}/{}/{}?offset={}>{}</a></td><td>{}</td></tr>",
-                    escape(&item.stream),
-                    item.sequence,
-                    escape(&item.event),
-                    snapshot.project.project,
-                    if item.stream == "RELEASE" {
-                        "readiness"
-                    } else {
-                        "certifications"
-                    },
-                    escape(&item.entity),
-                    snapshot.offset,
-                    escape(&item.entity),
-                    item.timestamp
-                );
-            }
-            if snapshot.timeline.is_empty() {
-                result.push_str("<tr><td colspan=4>NONE EXIST on this timeline page.</td></tr>");
-            }
-            result.push_str("</tbody></table></div></section>");
+            result.push_str(&timeline(snapshot));
         }
         _ => return None,
     }
 
+    result.push_str(&page_footer(snapshot, section, None));
+
+    Some(result)
+}
+
+fn timeline(snapshot: &ProjectSnapshot) -> String {
+    let mut result = String::new();
+    result.push_str("<section class=panel><h2>Forensic timeline</h2><p>Ordered by durable sequence within each original stream. Independent certification and release sequences do not establish a shared total order.</p><div class=table-scroll><table><thead><tr><th scope=col>Stream / sequence</th><th scope=col>Recorded event</th><th scope=col>Entity</th><th scope=col>UTC Unix seconds</th></tr></thead><tbody>");
+    for item in &snapshot.timeline {
+        let _ = write!(
+            result,
+            "<tr><td>{} / {}</td><td>{}</td><td class=mono><a href=/projects/{}/{}/{}>{}</a></td><td>{}</td></tr>",
+            escape(&item.stream),
+            item.sequence,
+            escape(&item.event),
+            snapshot.project.project,
+            if item.stream == "RELEASE" {
+                "readiness"
+            } else {
+                "certifications"
+            },
+            escape(&item.entity),
+            escape(&item.entity),
+            item.timestamp
+        );
+    }
+    if snapshot.timeline.is_empty() {
+        result.push_str("<tr><td colspan=4>NONE EXIST on this timeline page.</td></tr>");
+    }
+    result.push_str("</tbody></table></div></section>");
+
+    result
+}
+
+fn page_footer(snapshot: &ProjectSnapshot, section: &str, selected: Option<&str>) -> String {
+    let mut path = format!("/projects/{}/{}", snapshot.project.project, escape(section));
+    if let Some(id) = selected {
+        let _ = write!(path, "/{}", escape(id));
+    }
+    let mut result = String::new();
     let _ = write!(
         result,
         "<div class=pagination><span>Independent collection offset {} · up to {} items per collection</span>",
@@ -317,20 +335,18 @@ pub fn project(
     if snapshot.offset > 0 {
         let _ = write!(
             result,
-            "<a href=/projects/{}/{}?offset={}>← Previous page</a>",
-            snapshot.project.project,
-            section,
+            "<a href=\"{path}?offset={}\">← Previous page</a>",
             snapshot.offset.saturating_sub(MAX_PAGE_SIZE as u32)
         );
     }
-    if snapshot.has_more {
+    if snapshot.has_more && snapshot.offset < 100_000 {
         let _ = write!(
             result,
-            "<a href=/projects/{}/{}?offset={}>Next page →</a>",
-            snapshot.project.project,
-            section,
+            "<a href=\"{path}?offset={}\">Next page →</a>",
             snapshot.offset + MAX_PAGE_SIZE as u32
         );
+    } else if snapshot.has_more {
+        result.push_str("<span>Collection offset limit reached. Select an exact object to inspect its bound history.</span>");
     }
     let _ = write!(
         result,
@@ -341,7 +357,7 @@ pub fn project(
         snapshot.evaluated_at
     );
 
-    Some(result)
+    result
 }
 
 pub fn readiness(value: &ReleaseReadiness) -> String {

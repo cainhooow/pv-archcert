@@ -15,6 +15,7 @@ use tower::ServiceExt;
 type R<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const ORIGIN: &str = "http://127.0.0.1:8090";
 const HOSTILE: &str = "<script>alert(1)</script><img src=x onerror=alert(1)>";
+const DEEP_JOB: &str = "10000000-0000-4000-8000-000000000099";
 
 struct QueryFixture {
     project: ProjectId,
@@ -72,6 +73,27 @@ impl GlassmereQuery for QueryFixture {
 
     async fn readiness(&self, _: ProjectId, _: &str) -> Result<ReleaseReadiness, JobStoreError> {
         Err(JobStoreError::Precondition)
+    }
+
+    async fn entity(
+        &self,
+        project: ProjectId,
+        entity: &str,
+        offset: u32,
+    ) -> Result<ProjectSnapshot, JobStoreError> {
+        if entity != DEEP_JOB {
+            return Err(JobStoreError::Precondition);
+        }
+        let mut snapshot = self.snapshot(project, offset).await?;
+        snapshot.jobs.push(EntityObservation {
+            id: DEEP_JOB.into(),
+            kind: "CERTIFICATION".into(),
+            state: "QUEUED".into(),
+            fields: Vec::new(),
+        });
+        snapshot.has_more = offset == 0;
+
+        Ok(snapshot)
     }
 
     async fn evidence(
@@ -505,6 +527,62 @@ async fn server_bounds_configuration_and_browser_body_inputs() -> R {
             .await?
             .status(),
         StatusCode::SERVICE_UNAVAILABLE
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn exact_job_links_retain_the_parent_across_child_pages_and_authorize_before_lookup() -> R {
+    let f = Fixture::new(Role::Viewer)?;
+    let cookie = f.login().await?;
+    let path = format!("/projects/{}/jobs/{DEEP_JOB}", f.project);
+
+    for offset in [0, 50, 100_000] {
+        let response = f
+            .request(
+                "GET",
+                &format!("{path}?offset={offset}"),
+                Some(&cookie),
+                None,
+                String::new(),
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        let html = body(response).await?;
+        assert!(html.contains(DEEP_JOB));
+        assert!(html.contains("Bound immutable evidence"));
+        assert!(html.contains("Forensic timeline"));
+        if offset == 0 {
+            assert!(html.contains(&format!("href=\"{path}?offset=50\"")));
+        } else {
+            assert!(html.contains(&format!("href=\"{path}?offset={}\"", offset - 50)));
+        }
+    }
+    assert_eq!(
+        f.request(
+            "GET",
+            &format!("{path}?offset=100001"),
+            Some(&cookie),
+            None,
+            String::new()
+        )
+        .await?
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        f.request("GET", &path, None, None, String::new())
+            .await?
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let foreign = format!("/projects/{}/jobs/{DEEP_JOB}", ProjectId::new());
+    assert_eq!(
+        f.request("GET", &foreign, Some(&cookie), None, String::new())
+            .await?
+            .status(),
+        StatusCode::NOT_FOUND
     );
 
     Ok(())

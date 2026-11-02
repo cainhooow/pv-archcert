@@ -127,6 +127,15 @@ impl GlassmereQuery for QueryService {
         self.repository.snapshot(project, offset).await
     }
 
+    async fn entity(
+        &self,
+        project: ProjectId,
+        entity: &str,
+        offset: u32,
+    ) -> Result<ProjectSnapshot> {
+        self.repository.entity(project, entity, offset).await
+    }
+
     async fn readiness(&self, project: ProjectId, invocation: &str) -> Result<ReleaseReadiness> {
         let _permit = self
             .verification_budget

@@ -415,7 +415,13 @@ async fn show_project(
             Err(e) => query_error(e),
         };
     }
-    match panel.query.snapshot(project, offset).await {
+    let snapshot = if let Some(entity) = entity {
+        panel.query.entity(project, entity, offset).await
+    } else {
+        panel.query.snapshot(project, offset).await
+    };
+
+    match snapshot {
         Ok(snapshot) => match render::project(&snapshot, section, entity) {
             Some(body) => html(panel, "Project observation", &body, Some(&id)),
             None => error(StatusCode::NOT_FOUND, "NOT_FOUND"),

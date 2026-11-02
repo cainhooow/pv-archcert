@@ -134,8 +134,11 @@ repository binding. No lexicographically first repository is presented as primar
 The current registry has no authoritative current/latest source pointer. Source
 history is exact and prominently labeled; no branch or lexicographic UUID is called
 current or certified. Collection offsets are independent: a later timeline page
-can exist after the last job page. Detail links retain their collection offset;
-arbitrary deep linking outside that bounded page is a known limitation.
+can exist after the last job page. Job and semantic-session detail links resolve
+the exact object within its project, independently of its history-page position.
+The parent remains visible while its bound evidence and audit events paginate.
+Missing and foreign objects both return `NOT_FOUND`; no history scan is used to
+locate an exact object.
 
 There are no materialized Glassmere projection tables. Restart/refetch reconstructs
 query results from retained authoritative records and rehashed original bytes.
