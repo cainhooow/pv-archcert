@@ -17,4 +17,7 @@ rustix.workspace = true
 workspace = true
 
 [dev-dependencies]
+archcert-source = { path = "../archcert-source", version = "=0.1.0" }
 tempfile.workspace = true
+tokio.workspace = true
+sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "json", "migrate"] }

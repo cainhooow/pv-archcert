@@ -394,6 +394,18 @@ impl PostgresJobRepository {
         context: &Sha256Digest,
         action: &ResolvedControlAction,
     ) -> Result<()> {
+        self.grant_control_operation(scope, context, action.operation())
+            .await
+    }
+
+    /// Explicit trusted provisioning without constructing an executable request.
+    /// This does not create the separately required repository grant.
+    pub async fn grant_control_operation(
+        &self,
+        scope: &CommandScope,
+        context: &Sha256Digest,
+        operation: ControlOperation,
+    ) -> Result<()> {
         sqlx::query(
             "INSERT INTO control_command_grants(project,repository,actor,authority_context,operation)
              VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
@@ -402,7 +414,7 @@ impl PostgresJobRepository {
         .bind(scope.repository.as_str())
         .bind(scope.actor.as_str())
         .bind(context.as_str())
-        .bind(action.name())
+        .bind(operation.name())
         .execute(&self.pool)
         .await
         .map_err(db)?;

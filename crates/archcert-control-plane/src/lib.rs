@@ -1,5 +1,6 @@
 //! Trusted admission/read composition. No execution or signing capability.
 
+pub mod commands;
 mod ironcrest;
 
 use archcert_application::{jobs::*, worker::resolve_authority_plan};
@@ -285,6 +286,27 @@ impl ControlPlane {
         submission: SourceSubmissionId,
         key: IdempotencyKey,
     ) -> Result<CertificationJob, JobStoreError> {
+        let inputs = self
+            .resolve_certification_inputs(actor, project, repository, submission)
+            .await?;
+
+        self.repository
+            .create(CreateJob {
+                inputs,
+                idempotency: key,
+            })
+            .await
+    }
+
+    /// Resolve and register exact accepted inputs without creating a job.
+    /// Shared with journal admission so browser keys never bypass intent coalescing.
+    async fn resolve_certification_inputs(
+        &self,
+        actor: GitActorId,
+        project: ProjectId,
+        repository: RepositoryId,
+        submission: SourceSubmissionId,
+    ) -> Result<JobInputs, JobStoreError> {
         let grant = self.configuration.grant_for(&actor, project, &repository)?;
 
         if grant.ironcrest {
@@ -340,12 +362,7 @@ impl ControlPlane {
         self.repository
             .register_source(&inputs.submission, &accepted.snapshot)
             .await?;
-        self.repository
-            .create(CreateJob {
-                inputs,
-                idempotency: key,
-            })
-            .await
+        Ok(inputs)
     }
 
     /// Reads durable state only after actor scope authorization. Existence alone grants nothing.

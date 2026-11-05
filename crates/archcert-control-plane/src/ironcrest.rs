@@ -45,7 +45,7 @@ impl PreparedIroncrestReview {
     }
 }
 
-fn authority(
+pub(super) fn authority(
     project: ProjectId,
     policy: &PolicyPin,
     rust: bool,
@@ -123,7 +123,7 @@ fn authority(
     Ok((engine, bundles, registry, profile))
 }
 
-fn policy_pin(rust: bool) -> Result<PolicyPin, JobStoreError> {
+pub(super) fn policy_pin(rust: bool) -> Result<PolicyPin, JobStoreError> {
     let bundle = (if rust {
         archcert_policy::rust_controlled_bundle
     } else {

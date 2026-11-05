@@ -74,18 +74,53 @@ pub enum ResolvedControlAction {
     },
 }
 
+/// Closed operation vocabulary for independently provisioned command permissions.
+/// These values cannot carry executable strings or authority configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ControlOperation {
+    /// Request the existing exact-source certification workflow.
+    RequestCertification,
+    /// Request the existing artifact-bound build workflow.
+    RequestReleaseBuild,
+    /// Record a fresh bounded readiness observation.
+    RequestReleaseReadinessEvaluation,
+    /// Cancel eligible owned work before execution ownership.
+    CancelEligibleJob,
+    /// Recover one eligible expired attempt within its original budget.
+    RetryEligibleJob,
+}
+
+impl ControlOperation {
+    /// Stable grant/audit spelling, preserving schema-1 command bytes.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::RequestCertification => "REQUEST_CERTIFICATION",
+            Self::RequestReleaseBuild => "REQUEST_RELEASE_BUILD",
+            Self::RequestReleaseReadinessEvaluation => "REQUEST_RELEASE_READINESS_EVALUATION",
+            Self::CancelEligibleJob => "CANCEL_ELIGIBLE_JOB",
+            Self::RetryEligibleJob => "RETRY_ELIGIBLE_JOB",
+        }
+    }
+}
+
 impl ResolvedControlAction {
+    /// Permission class of this internally resolved action.
+    pub fn operation(&self) -> ControlOperation {
+        match self {
+            Self::RequestCertification { .. } => ControlOperation::RequestCertification,
+            Self::RequestReleaseBuild { .. } => ControlOperation::RequestReleaseBuild,
+            Self::RequestReleaseReadinessEvaluation { .. } => {
+                ControlOperation::RequestReleaseReadinessEvaluation
+            }
+            Self::CancelEligibleJob { .. } => ControlOperation::CancelEligibleJob,
+            Self::RetryEligibleJob { .. } => ControlOperation::RetryEligibleJob,
+        }
+    }
+
     /// Fixed audit and permission name; not an executable command name.
     pub fn name(&self) -> &'static str {
-        match self {
-            Self::RequestCertification { .. } => "REQUEST_CERTIFICATION",
-            Self::RequestReleaseBuild { .. } => "REQUEST_RELEASE_BUILD",
-            Self::RequestReleaseReadinessEvaluation { .. } => {
-                "REQUEST_RELEASE_READINESS_EVALUATION"
-            }
-            Self::CancelEligibleJob { .. } => "CANCEL_ELIGIBLE_JOB",
-            Self::RetryEligibleJob { .. } => "RETRY_ELIGIBLE_JOB",
-        }
+        self.operation().name()
     }
 }
 

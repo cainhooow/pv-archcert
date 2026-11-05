@@ -549,3 +549,12 @@ reviews can be restored without any provider invocation capability. Release and
 readiness commands still require separate mediation; no HTTP command is enabled by
 these private ports. Browser RBAC/idempotency and actual process-kill command
 recovery remain unqualified.
+
+[ADR 0057](../adr/0057-glassmere-command-credential-boundary.md) separates private
+command credentials from legacy submission tokens. Existing authority configuration
+selects policy/profile/plan/image/budget; credentials select only an existing actor,
+exact scope and fixed operation. Context identity excludes credentials, and current
+repository and command grants remain separate. Passive certification resolution
+creates no job before journal acceptance. Reviewed requests require their owned
+existing session before private preparation. No HTTP command route or browser
+mutation is enabled by this composition alone.
