@@ -39,6 +39,7 @@ struct Configuration {
     recipes: Vec<RecipeProvision>,
 }
 
+/// Bounded SELECT-only observations and existing selected-public-key verification.
 pub struct QueryService {
     repository: ObservationRepository,
     artifacts: ReadOnlyFilesystemArtifactStore,
@@ -49,6 +50,7 @@ pub struct QueryService {
 }
 
 impl QueryService {
+    /// Load explicit private trust selection and reject writable observation storage.
     pub async fn connect(url: &str, path: &Path) -> Result<Self> {
         let file = OpenOptions::new()
             .read(true)

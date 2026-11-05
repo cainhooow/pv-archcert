@@ -1,7 +1,6 @@
 //! Glassmere composition: read-only observation and optional bounded command mediation.
 
 mod broker;
-mod query;
 
 use archcert_glassmere::auth::PanelConfiguration;
 use clap::Parser;
@@ -37,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
 
     let database_url = std::env::var("ARCHCERT_OBSERVATION_DATABASE_URL")
         .map_err(|_| anyhow::anyhow!("observation database configuration unavailable"))?;
-    let query = query::QueryService::connect(&database_url, &args.query_config)
+    let query = archcert_observation::QueryService::connect(&database_url, &args.query_config)
         .await
         .map_err(|_| anyhow::anyhow!("read-only observation initialization failed"))?;
     let query = Arc::new(query);

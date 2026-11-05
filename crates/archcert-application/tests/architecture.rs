@@ -60,6 +60,19 @@ fn allowed_inward_dependency(package: &str, dependency: &str) -> bool {
         "archcert-application" => {
             !dependency.starts_with("archcert-") || dependency == "archcert-domain"
         }
+        "archcert-observation" => [
+            "archcert-domain",
+            "archcert-application",
+            "archcert-storage",
+            "archcert-certificate",
+            "archcert-crypto",
+            "async-trait",
+            "rustix",
+            "serde",
+            "serde_json",
+            "tokio",
+        ]
+        .contains(&dependency),
         "archcert-knowledge" => {
             (!dependency.starts_with("archcert-")
                 || ["archcert-domain", "archcert-application"].contains(&dependency))
@@ -360,7 +373,11 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
         }
     }
 
-    for root in ["archcert-glassmere", "archcert-panel"] {
+    for root in [
+        "archcert-glassmere",
+        "archcert-panel",
+        "archcert-observation",
+    ] {
         for name in dependency_closure(&graph, root) {
             assert!(
                 !is_runtime_dependency(&name)
@@ -413,6 +430,15 @@ fn guard_rejects_forbidden_dependencies_including_renamed_package_names() {
         ("archcert-glassmere", "archcert-runner"),
         ("archcert-glassmere", "archcert-source"),
         ("archcert-glassmere", "archcert-semantic"),
+        ("archcert-glassmere", "archcert-observation"),
+        ("archcert-application", "archcert-observation"),
+        ("archcert-observation", "archcert-control-plane"),
+        ("archcert-observation", "archcert-runner"),
+        ("archcert-observation", "archcert-gateway"),
+        ("archcert-observation", "archcert-semantic"),
+        ("archcert-observation", "ed25519-dalek"),
+        ("archcert-observation", "axum"),
+        ("archcert-observation", "hyper"),
         ("archcert-domain", "archcert-application"),
         ("archcert-domain", "archcert-source"),
         ("archcert-domain", "axum"),

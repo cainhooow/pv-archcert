@@ -5,6 +5,11 @@ ADRs 0053–0059 additionally bound the authenticated job command backend and br
 Authority records and verifier semantics remain those of M0–M8. The panel observes
 authority; it does not become authority. This document declares no qualification.
 
+ADR 0060 places the existing SELECT-only/public-verifier composition in the shared
+`archcert-observation` adapter. It adds no HTTP, mutation, runtime, acquisition,
+provider or private-key port. Its direct allowlist and transitive capability guard
+preserve that boundary for every executable that composes it.
+
 | Threat / asset | Attacker capability | Control | Remaining limitation |
 | --- | --- | --- | --- |
 | Stolen session / private state | Replay a cookie | HttpOnly, SameSite Strict, Secure in TLS mode; expiry, server-side logout; grant revision recheck | Compromised browser/host or stolen active cookie can act within its remaining scope |

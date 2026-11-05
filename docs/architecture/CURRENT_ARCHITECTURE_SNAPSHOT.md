@@ -517,7 +517,9 @@ Browser sessions are separate from project/role authorization. See the
 remain in progress; M10, M11 and Genesis are NOT STARTED.
 
 Glassmere now composes `archcert-glassmere` presentation and sessions with a narrow
-application query port in `archcert-panel`. The outer query adapter uses SELECT-only
+application query port in `archcert-panel`. Under
+[ADR 0060](../adr/0060-shared-read-only-observation-adapter.md), the shared
+`archcert-observation` outer query adapter uses SELECT-only
 `ObservationRepository`, the observation-only filesystem reader and existing
 public-key certificate/M6 verification. It never configures a signer, runtime or
 acquisition/provider adapter. The browser receives explicit versioned fields,

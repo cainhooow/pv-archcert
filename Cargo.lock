@@ -286,17 +286,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "archcert-observation"
+version = "0.1.0"
+dependencies = [
+ "archcert-application",
+ "archcert-certificate",
+ "archcert-crypto",
+ "archcert-domain",
+ "archcert-storage",
+ "async-trait",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "archcert-panel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "archcert-application",
- "archcert-certificate",
- "archcert-crypto",
  "archcert-domain",
  "archcert-glassmere",
+ "archcert-observation",
  "archcert-protocol",
- "archcert-storage",
  "async-trait",
  "axum",
  "clap",

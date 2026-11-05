@@ -1,0 +1,20 @@
+[package]
+name = "archcert-observation"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+archcert-application = { path = "../archcert-application", version = "=0.1.0" }
+archcert-domain = { path = "../archcert-domain", version = "=0.1.0" }
+archcert-storage = { path = "../archcert-storage", version = "=0.1.0" }
+archcert-certificate = { path = "../archcert-certificate", version = "=0.1.0" }
+archcert-crypto = { path = "../archcert-crypto", version = "=0.1.0" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+rustix.workspace = true
+
+[lints]
+workspace = true

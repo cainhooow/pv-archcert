@@ -9,9 +9,7 @@ archcert-application = { path = "../../crates/archcert-application", version = "
 archcert-domain = { path = "../../crates/archcert-domain", version = "=0.1.0" }
 archcert-glassmere = { path = "../../crates/archcert-glassmere", version = "=0.1.0" }
 archcert-protocol = { path = "../../crates/archcert-protocol", version = "=0.1.0" }
-archcert-storage = { path = "../../crates/archcert-storage", version = "=0.1.0" }
-archcert-certificate = { path = "../../crates/archcert-certificate", version = "=0.1.0" }
-archcert-crypto = { path = "../../crates/archcert-crypto", version = "=0.1.0" }
+archcert-observation = { path = "../../crates/archcert-observation", version = "=0.1.0" }
 async-trait.workspace = true
 anyhow.workspace = true
 clap.workspace = true
