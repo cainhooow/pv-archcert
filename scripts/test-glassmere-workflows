@@ -1,0 +1,356 @@
+#!/usr/bin/env node
+/* Real browser → panel → daemon → PostgreSQL qualification. No execution or signer. */
+"use strict";
+
+const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const net = require("node:net");
+const path = require("node:path");
+const { execFileSync, execFile, spawn } = require("node:child_process");
+const { promisify } = require("node:util");
+const execute = promisify(execFile);
+const root = path.resolve(__dirname, "..");
+const secrets = [];
+const digest = value => crypto.createHash("sha256").update(value).digest("hex");
+const redact = value => secrets.reduce((text, secret) => text.split(secret).join("[REDACTED]"), String(value));
+const read = file => JSON.parse(fs.readFileSync(file, "utf8"));
+const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+function privateWrite(file, value) {
+  fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+}
+
+function environment(extra = {}) {
+  const result = {};
+  for (const key of ["PATH", "LANG", "TMPDIR"]) if (process.env[key]) result[key] = process.env[key];
+  return { ...result, ...extra };
+}
+
+async function availablePort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const port = server.address().port;
+  await new Promise(resolve => server.close(resolve));
+  return port;
+}
+
+async function main() {
+  assert(process.env.ARCHCERT_TEST_DATABASE_URL, "An explicit development PostgreSQL administrator URL is required");
+  secrets.push(process.env.ARCHCERT_TEST_DATABASE_URL);
+  const output = path.resolve(process.env.GLASSMERE_WORKFLOW_OUTPUT || path.join(root, "target/glassmere-workflows"));
+  assert(output.startsWith(path.join(root, "target") + path.sep));
+  fs.mkdirSync(output, { mode: 0o700 });
+  assert.equal(fs.realpathSync(output), output, "Use a canonical private output path");
+  const binary = (variable, fallback) => {
+    const selected = path.resolve(process.env[variable] || path.join(root, fallback));
+    assert(fs.statSync(selected).isFile(), variable);
+    fs.accessSync(selected, fs.constants.X_OK);
+    return fs.realpathSync(selected);
+  };
+  const panelBinary = binary("ARCHCERT_TEST_PANEL_BINARY", "target/release/archcert-panel");
+  const daemonBinary = binary("ARCHCERT_TEST_DAEMON_BINARY", "target/debug/archcertd");
+  const controllerBinary = binary("ARCHCERT_TEST_CONTROLLER_BINARY", "target/debug/archcert-controller");
+  const fixtureBinary = binary("ARCHCERT_TEST_COMMAND_FIXTURE_BINARY", "target/debug/examples/glassmere-command-fixture");
+  const random = () => {
+    const value = crypto.randomBytes(32).toString("hex");
+    secrets.push(value);
+    return value;
+  };
+  const readerPassword = random();
+  const tokens = {};
+  const hashes = {};
+  for (const principal of ["operator", "administrator"]) {
+    tokens[principal] = random();
+    hashes[principal] = { legacy: digest(random()), command: digest(tokens[principal]) };
+  }
+  privateWrite(path.join(output, "seed.json"), { reader_password: readerPassword, principals: hashes });
+  const setup = execFileSync(fixtureBinary, [output], {
+    env: environment({ ARCHCERT_TEST_DATABASE_URL: process.env.ARCHCERT_TEST_DATABASE_URL }),
+    encoding: "utf8", timeout: 60000,
+  });
+  fs.writeFileSync(path.join(output, "fixture-setup.log"), redact(setup), { mode: 0o600 });
+  const fixture = read(path.join(output, "fixture.json"));
+  const database = read(path.join(output, "database.json"));
+  secrets.push(database.authority_url, database.reader_url);
+  const project = fixture.project;
+  const daemonPort = await availablePort();
+  let panelPort = await availablePort();
+  while (panelPort === daemonPort) panelPort = await availablePort();
+  const base = `http://127.0.0.1:${panelPort}`;
+  const panelConfig = path.join(output, "panel.json");
+  const credentials = {};
+  function provision(args) {
+    execFileSync("/usr/bin/python3", [path.join(root, "scripts/glassmere-provision"),
+      "--config", panelConfig, "--operator", "workflow-browser-qualification", ...args],
+    { env: environment(), encoding: "utf8", timeout: 20000 });
+  }
+  for (const role of ["administrator", "operator", "viewer", "reviewer"]) {
+    const delivery = path.join(output, `${role}-access.json`);
+    const args = role === "administrator"
+      ? ["bootstrap", "--origin", base, "--development-http", "--demonstration-data"]
+      : ["add", "--role", role.toUpperCase()];
+    provision([...args, "--principal", role, "--project", project, "--credential-file", delivery]);
+    credentials[role] = read(delivery).credential;
+    secrets.push(credentials[role]);
+  }
+  privateWrite(path.join(output, "broker.json"), {
+    schema: 1,
+    endpoint: `127.0.0.1:${daemonPort}`,
+    mappings: Object.entries(tokens).map(([principal, token]) => ({
+      principal, token, project, repository: fixture.repository,
+      operations: ["REQUEST_CERTIFICATION", "CANCEL_ELIGIBLE_JOB", "RETRY_ELIGIBLE_JOB"],
+    })),
+  });
+
+  const children = new Set();
+  async function start(binaryPath, args, extra, logName, url) {
+    const log = fs.openSync(path.join(output, logName), "a", 0o600);
+    const child = spawn(binaryPath, args, { env: environment(extra), stdio: ["ignore", log, log] });
+    let startError;
+    child.once("error", error => { startError = error; });
+    fs.closeSync(log);
+    children.add(child);
+    child.once("exit", () => children.delete(child));
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      if (startError) throw startError;
+      assert(child.exitCode === null && child.signalCode === null, `${logName} exited during startup`);
+      try {
+        const response = await fetch(url + "/readyz", { signal: AbortSignal.timeout(1000) });
+        if (response.ok) return child;
+      } catch { /* The owned process may still be starting. */ }
+      await pause(100);
+    }
+    throw new Error(`${logName} did not become ready`);
+  }
+  async function stop(child) {
+    if (!children.has(child)) return;
+    const exited = new Promise(resolve => child.once("exit", resolve));
+    child.kill("SIGTERM");
+    let timer;
+    await Promise.race([exited, new Promise(resolve => { timer = setTimeout(resolve, 10000); })]);
+    clearTimeout(timer);
+    if (children.has(child)) {
+      child.kill("SIGKILL");
+      await exited;
+    }
+  }
+  const startDaemon = () => start(daemonBinary, ["--config", path.join(output, "authority.json"),
+    "--command-credentials", path.join(output, "backend-credentials.json"), "--listen", `127.0.0.1:${daemonPort}`],
+  { ARCHCERT_DATABASE_URL: database.authority_url }, "daemon.log", `http://127.0.0.1:${daemonPort}`);
+  const startPanel = () => start(panelBinary, ["--config", panelConfig, "--query-config", path.join(output, "query.json"),
+    "--command-config", path.join(output, "broker.json"), "--listen", `127.0.0.1:${panelPort}`],
+  { ARCHCERT_OBSERVATION_DATABASE_URL: database.reader_url }, "panel.log", base);
+  const inspect = () => JSON.parse(execFileSync(fixtureBinary, ["--inspect", output],
+    { env: environment(), encoding: "utf8", timeout: 20000 }));
+  async function dispatch() {
+    const { stdout } = await execute(controllerBinary, ["--config", path.join(output, "authority.json"), "dispatch-command"],
+      { env: environment({ ARCHCERT_DATABASE_URL: database.authority_url }), encoding: "utf8", timeout: 60000 });
+    return JSON.parse(stdout);
+  }
+  const results = [];
+  async function check(name, action) {
+    const started = performance.now();
+    try {
+      await action();
+      results.push({ name, status: "PASS", milliseconds: performance.now() - started });
+      console.log("PASS", name);
+    } catch (error) {
+      results.push({ name, status: "FAILED", error: redact(error.message) });
+      throw error;
+    }
+  }
+  let browser;
+  let daemon;
+  let panel;
+  let browserVersion;
+  const dialogs = [];
+  try {
+    daemon = await startDaemon();
+    panel = await startPanel();
+    const moduleRoot = path.join(root, "tools/glassmere-browser/node_modules/playwright");
+    assert.equal(require(path.join(moduleRoot, "package.json")).version, "1.56.1");
+    const options = { headless: true };
+    if (process.env.GLASSMERE_CHROME_EXECUTABLE) {
+      assert(path.isAbsolute(process.env.GLASSMERE_CHROME_EXECUTABLE));
+      options.executablePath = fs.realpathSync(process.env.GLASSMERE_CHROME_EXECUTABLE);
+    } else options.channel = "chrome";
+    browser = await require(moduleRoot).chromium.launch(options);
+    browserVersion = browser.version();
+    async function login(context, role) {
+      const page = await context.newPage();
+      page.on("dialog", async dialog => { dialogs.push(dialog.message()); await dialog.dismiss(); });
+      await page.goto(base + "/login");
+      await page.getByLabel("Access credential").fill(credentials[role]);
+      await page.getByRole("button", { name: "Sign in to Glassmere" }).click();
+      await page.waitForURL(base + "/projects");
+      return page;
+    }
+    const formUrl = (operation, target, entity) => `${base}/projects/${project}/commands/new?operation=${operation}&target=${target}&entity=${entity}`;
+    const submit = (context, payload) => context.request.post(`${base}/projects/${project}/commands`, {
+      form: payload, headers: { Origin: base }, maxRedirects: 0,
+    });
+    async function fields(page) {
+      return page.locator("[data-command-form]").evaluate(form => Object.fromEntries(new FormData(form)));
+    }
+    async function nativeDoubleClick(page) {
+      await Promise.all([
+        page.waitForURL(url => url.pathname.startsWith(`/projects/${project}/commands/`) && !url.pathname.endsWith("/new")),
+        page.locator("[data-command-form] button").evaluate(button => { button.click(); button.click(); }),
+      ]);
+      return page.url();
+    }
+    const initial = inspect();
+    assert.equal(initial.jobs, 4);
+    assert.equal(initial.attempts, 2);
+    assert.equal(initial.commands_count, 0);
+    assert.equal(initial.certificates, 0);
+
+    await check("viewer-and-reviewer-deny-all-job-mutations", async () => {
+      const subject = fixture.subjects.operator;
+      for (const role of ["viewer", "reviewer"]) {
+        const context = await browser.newContext();
+        const page = await login(context, role);
+        await page.goto(`${base}/projects/${project}`);
+        assert.equal(await page.locator("[data-command-form]").count(), 0);
+        const csrf = await page.locator('form[action="/logout"] input[name="csrf"]').inputValue();
+        for (const [operation, target, entity] of [
+          ["REQUEST_CERTIFICATION", "SOURCE", subject.submission],
+          ["CANCEL_ELIGIBLE_JOB", "JOB", subject.queued_job],
+          ["RETRY_ELIGIBLE_JOB", "JOB", subject.recovery_job],
+        ]) {
+          assert.equal((await context.request.get(formUrl(operation, target, entity))).status(), 403);
+          assert.equal((await submit(context, { csrf, operation, target, entity,
+            idempotency: "forged-reader-action", repository: fixture.repository,
+            authority_context: "a".repeat(64), ...(operation === "RETRY_ELIGIBLE_JOB" ? { attempt: subject.attempt } : {}),
+          })).status(), 403);
+        }
+        await context.close();
+      }
+      assert.equal(inspect().commands_count, 0);
+    });
+
+    let expectedCommands = 0;
+    for (const role of ["operator", "administrator"]) {
+      const context = await browser.newContext();
+      let page = await login(context, role);
+      const subject = fixture.subjects[role];
+      const operations = [
+        ["REQUEST_CERTIFICATION", "SOURCE", subject.submission],
+        ["CANCEL_ELIGIBLE_JOB", "JOB", subject.queued_job],
+        ["RETRY_ELIGIBLE_JOB", "JOB", subject.recovery_job],
+      ];
+      for (const [operation, target, entity] of operations) {
+        await check(`${role}-${operation}-double-click-http-retry-multi-tab-refresh`, async () => {
+          if (operation === "RETRY_ELIGIBLE_JOB") {
+            const deadline = Date.now() + 15000;
+            while (inspect().expired_attempts !== 2 && Date.now() < deadline) await pause(100);
+            assert.equal(inspect().expired_attempts, 2, "Ordinary database-time leases must expire before recovery");
+          }
+          await page.goto(formUrl(operation, target, entity));
+          const first = await fields(page);
+          const tab = await context.newPage();
+          await tab.goto(formUrl(operation, target, entity));
+          const second = await fields(tab);
+          assert.notEqual(first.idempotency, second.idempotency);
+          assert.equal(first.csrf, second.csrf);
+          const receiptUrl = await nativeDoubleClick(page);
+          const responses = await Promise.all([submit(context, first), submit(context, first), submit(context, second)]);
+          for (const response of responses) {
+            assert.equal(response.status(), 303);
+            assert.equal(new URL(response.headers().location, base).href, receiptUrl);
+          }
+          assert.equal(await nativeDoubleClick(tab), receiptUrl);
+          await page.reload();
+          assert((await page.locator("main").innerText()).includes("not a certificate"));
+          expectedCommands += 1;
+          assert.equal(inspect().commands_count, expectedCommands);
+          if (operation === "REQUEST_CERTIFICATION") assert.equal(inspect().jobs, role === "operator" ? 4 : 5);
+
+          if (role === "operator" && operation === "REQUEST_CERTIFICATION") {
+            const credentialPath = path.join(output, "backend-credentials.json");
+            fs.renameSync(credentialPath, credentialPath + ".unavailable");
+            try {
+              assert.equal((await submit(context, first)).status(), 503);
+              assert.equal(inspect().commands_count, expectedCommands);
+            } finally { fs.renameSync(credentialPath + ".unavailable", credentialPath); }
+            await stop(panel);
+            await stop(daemon);
+            const receipt = await dispatch();
+            assert.equal(receipt.state, "APPLIED");
+            daemon = await startDaemon();
+            panel = await startPanel();
+            assert.equal((await context.request.get(`${base}/projects/${project}`)).status(), 401);
+            await page.close();
+            page = await login(context, role);
+          } else {
+            const receipts = await Promise.all([dispatch(), dispatch()]);
+            const applied = receipts.filter(receipt => receipt.state === "APPLIED");
+            assert.equal(applied.length, 1);
+            assert.equal(receipts.filter(receipt => receipt.status === "IDLE").length, 1);
+          }
+          await page.goto(receiptUrl);
+          const content = await page.locator("main").innerText();
+          assert(content.includes("APPLIED"));
+          assert(content.includes("not a certificate"));
+          assert.equal(await page.getByRole("heading", { name: "RELEASE_ALLOWED", exact: true }).count(), 0);
+          assert.equal(inspect().commands_count, expectedCommands);
+          assert.equal(inspect().certificates, 0);
+          await tab.close();
+        });
+      }
+      if (role === "operator") {
+        await check("restored-operator-grant-does-not-revive-old-browser-session", async () => {
+          for (const changedRole of ["VIEWER", "OPERATOR"]) {
+            provision(["set-grant", "--principal", role, "--role", changedRole, "--project", project]);
+          }
+          assert.equal((await context.request.get(`${base}/projects/${project}`)).status(), 401);
+          await page.close();
+          page = await login(context, role);
+          assert.equal((await context.request.get(`${base}/projects/${project}`)).status(), 200);
+        });
+      }
+      await context.close();
+    }
+    await check("durable-domain-and-command-audit-counts-have-no-duplicates", async () => {
+      const final = inspect();
+      assert.equal(final.jobs, 6);
+      assert.equal(final.attempts, 2);
+      assert.equal(final.certificates, 0);
+      assert.equal(final.commands_count, 6);
+      assert.equal(final.keys, 12);
+      assert(final.commands.every(command => command.state === "APPLIED"));
+      assert.equal(final.audit.JobCreated, 6);
+      assert.equal(final.audit.JobCanceled, 2);
+      assert.equal(final.audit.AttemptRecovered, 2);
+      assert.equal(final.command_audit.CommandRequested, 6);
+      assert.equal(final.command_audit.CommandApplied, 6);
+      assert.deepEqual(dialogs, []);
+      privateWrite(path.join(output, "durable-final.json"), final);
+    });
+  } finally {
+    if (browser) await browser.close();
+    await Promise.all([...children].map(stop));
+    const binaries = {};
+    for (const file of [panelBinary, daemonBinary, controllerBinary, fixtureBinary]) binaries[file] = digest(fs.readFileSync(file));
+    privateWrite(path.join(output, "results.json"), {
+      source_head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
+      tracked_diff_sha256: digest(execFileSync("git", ["diff", "HEAD"], { cwd: root })),
+      script_sha256: digest(fs.readFileSync(__filename)),
+      fixture_source_sha256: digest(fs.readFileSync(path.join(root, "crates/archcert-control-plane/examples/glassmere-command-fixture.rs"))),
+      binaries, results, dialogs, browser_version: browserVersion || null,
+      node: process.version, required_playwright: "1.56.1",
+      scope: "Metadata-only job requests, recovery, durable deduplication and browser boundary; no target execution, signatures or native qualification",
+      retained_resources: path.join(output, "resources.json"),
+    });
+  }
+}
+
+main().catch(error => {
+  console.error(redact(error.message));
+  process.exitCode = 1;
+});

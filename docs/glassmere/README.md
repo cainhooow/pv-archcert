@@ -232,6 +232,11 @@ refreshing it never repeats submission. Different tabs and HTTP retries depend o
 the backend's durable intent coalescing. Browser process loss owns no execution,
 signing or coordination lease.
 
+The [workflow qualification guide](WORKFLOW_QUALIFICATION.md) describes the
+separate real-browser/daemon/PostgreSQL harness, its metadata-only fixtures,
+durable count assertions and retained evidence. It does not qualify target
+execution, signing or the remaining M9 scope.
+
 ## Development authority time
 
 Lease qualification requires a stable authority database clock. Use one coherent
