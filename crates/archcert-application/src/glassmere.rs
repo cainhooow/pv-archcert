@@ -1,5 +1,7 @@
 //! Authority-owned observation models. Presentation cannot submit readiness facts.
 
+pub mod search;
+
 use crate::jobs::JobStoreError;
 use archcert_domain::{ProjectId, SourceIdentity};
 use async_trait::async_trait;
@@ -335,6 +337,13 @@ pub struct ProjectSnapshot {
 /// Query-only port: no arbitrary SQL, write, runtime, signing or object publication.
 #[async_trait]
 pub trait GlassmereQuery: Send + Sync {
+    /// Bounded exact operational search within a separately authorized project.
+    async fn search(
+        &self,
+        project: ProjectId,
+        query: &search::SearchQuery,
+    ) -> Result<search::SearchPage, JobStoreError>;
+
     /// List only explicitly authorized project scopes; bounded keyset cursor.
     async fn projects(
         &self,

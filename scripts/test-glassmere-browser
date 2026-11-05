@@ -135,6 +135,51 @@ async function main() {
       assert(await page.getByRole("heading", { name: "Forensic timeline", exact: true }).isVisible());
       assert((await page.locator("tbody tr").count()) > 0);
     });
+    await check("exact-operational-search-and-object-links", async () => {
+      const response = await context.request.get(`${base}/api/v1/projects/${project}/readiness/${eligible.invocation}`);
+      assert.equal(response.status(), 200);
+      const readiness = await response.json();
+      const snapshotResponse = await context.request.get(`${base}/api/v1/projects/${project}`);
+      assert.equal(snapshotResponse.status(), 200);
+      const snapshot = await snapshotResponse.json();
+      const job = snapshot.jobs[0];
+      assert(job, "An exact retained job is required for this browser fixture");
+
+      for (const [kind, value] of [
+        ["PROJECT", project],
+        ["COMMIT", readiness.subject.source.commit],
+        ["CERTIFICATE", readiness.subject.certificate],
+        ["ARTIFACT", readiness.subject.artifact],
+        ["PERMIT", readiness.subject.permit],
+        ["JOB", job.id],
+        ["STATUS", job.state],
+        ["VERDICT", "ELIGIBLE"],
+      ]) {
+        assert(value, `Missing ${kind} fixture identity`);
+        await page.goto(`${base}/projects/${project}/search`);
+        await page.getByLabel("Search dimension").selectOption(kind);
+        await page.getByLabel("Exact value").fill(value);
+        await page.getByRole("button", { name: "Search", exact: true }).click();
+        assert(await page.getByRole("heading", { name: "Matching records", exact: true }).isVisible());
+        assert(!((await page.locator("tbody").innerText()).includes("No matching records")), kind);
+        assert.equal(await page.locator("[data-readiness]").count(), 0);
+      }
+
+      await page.goto(`${base}/projects/${project}/search?kind=JOB&value=${job.id}`);
+      await page.locator("table tbody a").first().click();
+      assert(await page.getByRole("heading", { name: "Bound immutable evidence", exact: true }).isVisible());
+      await page.goto(`${base}/projects/${project}/jobs/${job.id}?offset=50`);
+      assert((await page.locator("main").innerText()).includes(job.id));
+      assert(await page.getByRole("heading", { name: "Forensic timeline", exact: true }).isVisible());
+
+      const session = snapshot.sessions[0];
+      assert(session, "An exact retained semantic session is required for this browser fixture");
+      await page.goto(`${base}/projects/${project}/semantic/${session.id}?offset=50`);
+      assert(await page.getByRole("heading", { name: "SEMANTIC_SESSION", exact: true }).isVisible());
+      assert((await page.locator("main").innerText()).includes("SUPPLEMENTAL / NON-AUTHORITATIVE"));
+      assert.equal((await context.request.get(`${base}/api/v1/projects/${project}/search?kind=JOB&value=${job.id}&after=forged`)).status(), 400);
+      assert.equal((await context.request.get(`${base}/api/v1/projects/20000000-0000-4000-8000-000000000002/search?kind=JOB&value=${job.id}`)).status(), 404);
+    });
     await check("cross-project-role-and-csrf-denial", async () => {
       for (const suffix of ["", "/evidence/forged/forged", "/download/forged/forged", "/readiness/forged", "/semantic/forged"]) {
         assert.equal((await context.request.get(`${base}/projects/20000000-0000-4000-8000-000000000002${suffix}`)).status(), 404);

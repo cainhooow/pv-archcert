@@ -66,6 +66,15 @@ partial-update recovery are not applicable to this architecture. A content revis
 identifies the semantic aggregate and a PostgreSQL snapshot token identifies its
 read boundary. Neither max(sequence) nor wall time is treated as commit order.
 
+Operational search uses fixed exact dimensions, canonical bounded values, bound SQL
+parameters and 50-result keyset pages. Migration 0007 adds indexes without changing
+authority records or transitions. The cursor is bound to project/dimension/value
+but is not an authorization capability. Each page is a fresh read: new earlier
+keys require restarting search and mutable-state filters can lose matches. Exact
+job/session detail selection is independent of history-page position, retaining
+the parent while scoped child collections paginate. Search metadata, including
+STAGING references and recorded evaluation dispositions, creates no proof.
+
 Responses are private/no-store. A readiness view is exact-source historical data
 until a same-origin revision check succeeds. Losing that check, changing revision,
 leaving the tab, restoring a page from history or exhausting the short freshness

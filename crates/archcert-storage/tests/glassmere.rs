@@ -398,7 +398,7 @@ async fn job_inspection_preserves_attempt_phases_and_nested_certificate_identity
             id,
             &PersistedCertificate {
                 issuance: issuance.clone(),
-                artifact: reference,
+                artifact: reference.clone(),
                 signature: "a".repeat(128),
                 verified: true,
             },
@@ -439,6 +439,27 @@ async fn job_inspection_preserves_attempt_phases_and_nested_certificate_identity
         assert!(field.value.parse::<i64>()? > 0);
     }
     let json = serde_json::to_string(&complete)?;
+    for (kind, value) in [
+        (
+            search::SearchKind::Certificate,
+            issuance.certificate_sha256.as_str(),
+        ),
+        (search::SearchKind::Certificate, reference.sha256.as_str()),
+        (search::SearchKind::Verdict, "ELIGIBLE"),
+    ] {
+        let page = reader
+            .search(
+                project,
+                &search::SearchQuery {
+                    kind,
+                    value: value.into(),
+                    after: None,
+                },
+            )
+            .await?;
+        assert_eq!(page.hits.len(), 1);
+        assert_eq!(page.hits[0].entity, id.to_string());
+    }
     for excluded in [
         "ENDPOINT_MUST_NOT_LEAK",
         "DAEMON_MUST_NOT_LEAK",
@@ -455,6 +476,273 @@ async fn job_inspection_preserves_attempt_phases_and_nested_certificate_identity
             .any(|field| field.label == "Recovery eligibility"
                 && field.value.starts_with("NOT EVALUATED BY PANEL"))
     );
+
+    drop(reader);
+    db.close().await
+}
+
+async fn search_pages(
+    reader: &ObservationRepository,
+    project: ProjectId,
+    mut query: search::SearchQuery,
+) -> R<Vec<search::SearchPage>> {
+    let mut pages = Vec::new();
+    for _ in 0..8 {
+        let page = reader.search(project, &query).await?;
+        assert!(page.hits.len() <= MAX_PAGE_SIZE);
+        let next = page.next.clone();
+        pages.push(page);
+        let Some(next) = next else {
+            return Ok(pages);
+        };
+        query.after = Some(next);
+    }
+
+    Err("Search pagination did not terminate within this fixture's expected bound".into())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL and role provisioning"]
+async fn exact_search_scopes_metadata_and_paginates_without_duplicate_keys_during_inserts() -> R {
+    use search::{SearchKind, SearchQuery};
+
+    let db = Database::open().await?;
+    let request = db.request().await?;
+    let project = request.inputs.project;
+    let reference = ArtifactReference {
+        sha256: digest_bytes(b"search fixture"),
+        size: b"search fixture".len() as u64,
+        schema: 1,
+        producer: "search-fixture".into(),
+    };
+
+    // Repository metadata transitions exercise recorded dispositions only. They
+    // establish no cryptographic certificate or live runtime qualification.
+    for (ordinal, decision) in [
+        EvaluationDecision::NotEligible,
+        EvaluationDecision::Inconclusive,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut failed = request.clone();
+        failed.idempotency = IdempotencyKey::parse(format!("evaluation-{ordinal}"))?;
+        let id = db.repository.create(failed).await?.id;
+        let assignment = db
+            .repository
+            .claim("search-fixture-worker", 30)
+            .await?
+            .ok_or("claim")?;
+        assert_eq!(assignment.job.id, id);
+        db.repository.start(&assignment.lease).await?;
+        db.repository
+            .stage_artifact(id, Some(assignment.lease.attempt), "EXECUTION", &reference)
+            .await?;
+        db.repository
+            .artifact_available(id, Some(assignment.lease.attempt), "EXECUTION", &reference)
+            .await?;
+        db.repository
+            .accept_evidence(&assignment.lease, &reference)
+            .await?;
+        db.repository
+            .stage_artifact(id, None, "EVALUATION", &reference)
+            .await?;
+        db.repository
+            .artifact_available(id, None, "EVALUATION", &reference)
+            .await?;
+        db.repository
+            .record_evaluation(id, &reference, decision)
+            .await?;
+    }
+
+    let mut expected = std::collections::BTreeSet::new();
+    for ordinal in 0..105 {
+        let mut queued = request.clone();
+        queued.idempotency = IdempotencyKey::parse(format!("search-{ordinal}"))?;
+        let job = db.repository.create(queued).await?;
+        db.repository
+            .stage_artifact(job.id, None, "BUNDLE", &reference)
+            .await?;
+        expected.insert(job.id.to_string());
+    }
+    let foreign_request = db.request().await?;
+    let foreign_project = foreign_request.inputs.project;
+    let foreign = db.repository.create(foreign_request).await?;
+    db.repository
+        .stage_artifact(foreign.id, None, "BUNDLE", &reference)
+        .await?;
+    let reader = ObservationRepository::connect(&db.reader_url).await?;
+    let query = SearchQuery {
+        kind: SearchKind::Status,
+        value: "QUEUED".into(),
+        after: None,
+    };
+
+    let pages = search_pages(&reader, project, query.clone()).await?;
+    assert_eq!(
+        pages.iter().map(|page| page.hits.len()).collect::<Vec<_>>(),
+        [50, 50, 5]
+    );
+    let found: std::collections::BTreeSet<_> = pages
+        .iter()
+        .flat_map(|page| &page.hits)
+        .map(|hit| hit.entity.clone())
+        .collect();
+    assert_eq!(found, expected);
+    assert!(
+        pages
+            .iter()
+            .flat_map(|page| &page.hits)
+            .all(|hit| hit.entity != foreign.id.to_string())
+    );
+
+    let first = reader.search(project, &query).await?;
+    let mut inserted = request.clone();
+    inserted.idempotency = IdempotencyKey::parse("concurrent-search-insert".into())?;
+    let inserted = db.repository.create(inserted).await?;
+    let mut continuation = query.clone();
+    continuation.after = first.next.clone();
+    let mut keys: Vec<_> = first.hits.iter().map(|hit| hit.key.clone()).collect();
+    let mut entities: std::collections::BTreeSet<_> =
+        first.hits.iter().map(|hit| hit.entity.clone()).collect();
+    for page in search_pages(&reader, project, continuation).await? {
+        for hit in page.hits {
+            keys.push(hit.key);
+            assert!(entities.insert(hit.entity));
+        }
+    }
+    assert!(keys.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(expected.is_subset(&entities));
+    assert!(
+        entities.len() == 105
+            || (entities.len() == 106 && entities.contains(&inserted.id.to_string()))
+    );
+
+    for (kind, value, count) in [
+        (SearchKind::Project, project.to_string(), 1),
+        (SearchKind::Project, foreign_project.to_string(), 0),
+        (SearchKind::Job, foreign.id.to_string(), 0),
+        (
+            SearchKind::Job,
+            expected.first().ok_or("fixture job")?.clone(),
+            1,
+        ),
+        (
+            SearchKind::Commit,
+            request.inputs.source.commit.as_str().into(),
+            109,
+        ),
+        (SearchKind::Verdict, "NOT_ELIGIBLE".into(), 1),
+        (SearchKind::Verdict, "INCONCLUSIVE".into(), 1),
+        (SearchKind::Verdict, "ELIGIBLE".into(), 0),
+        (SearchKind::Artifact, reference.sha256.as_str().into(), 109),
+    ] {
+        let pages = search_pages(
+            &reader,
+            project,
+            SearchQuery {
+                kind,
+                value,
+                after: None,
+            },
+        )
+        .await?;
+        assert_eq!(
+            pages.iter().map(|page| page.hits.len()).sum::<usize>(),
+            count,
+            "{kind:?}"
+        );
+        assert!(
+            pages
+                .iter()
+                .flat_map(|page| &page.hits)
+                .all(|hit| hit.entity != foreign.id.to_string())
+        );
+    }
+
+    // Deliberately unsupported STAGING release metadata proves that lookup does
+    // not claim a valid certificate/permit. No bytes, signature or eligibility
+    // are manufactured, and the fixture cannot authorize a release.
+    let envelope = digest_bytes(b"unverifiable metadata fixture");
+    let certificate = digest_bytes(b"canonical certificate lookup fixture");
+    let mut owned_invocation = String::new();
+    for scope in [project, foreign_project] {
+        let invocation = digest_bytes(scope.to_string().as_bytes());
+        if scope == project {
+            owned_invocation = invocation.as_str().into();
+        }
+        let admission = serde_json::json!({
+            "input": {
+                "schema": 999,
+                "certified_source": {
+                    "certificate_sha256": certificate,
+                },
+            },
+        });
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO {}.release_invocations(project,invocation,admission) VALUES($1,$2,$3)",
+            db.schema
+        )))
+        .bind(scope.to_string())
+        .bind(invocation.as_str())
+        .bind(admission)
+        .execute(&db.admin)
+        .await?;
+        for role in [
+            "SOURCE_CERTIFICATE",
+            "PERMIT_PAYLOAD",
+            "PERMIT_ENVELOPE",
+            "ARTIFACT_A",
+        ] {
+            let reference = serde_json::json!({
+                "sha256": envelope,
+                "size": 1,
+                "schema": 999,
+                "producer": "unsupported-search-fixture",
+            });
+            let statement = sqlx::AssertSqlSafe(format!(
+                "INSERT INTO {}.release_evidence(project,invocation,role,reference) VALUES($1,$2,$3,$4)",
+                db.schema
+            ));
+            sqlx::query(statement)
+                .bind(scope.to_string())
+                .bind(invocation.as_str())
+                .bind(role)
+                .bind(reference)
+                .execute(&db.admin)
+                .await?;
+        }
+    }
+    for (kind, value, count) in [
+        (SearchKind::Certificate, certificate.as_str(), 1),
+        (SearchKind::Certificate, envelope.as_str(), 1),
+        (SearchKind::Permit, envelope.as_str(), 2),
+        (SearchKind::Artifact, envelope.as_str(), 4),
+    ] {
+        let page = reader
+            .search(
+                project,
+                &SearchQuery {
+                    kind,
+                    value: value.into(),
+                    after: None,
+                },
+            )
+            .await?;
+        assert_eq!(page.hits.len(), count, "{kind:?}");
+        assert!(
+            page.hits
+                .iter()
+                .all(|hit| hit.entity == owned_invocation && hit.state == "STAGING")
+        );
+    }
+    let mut wrong_cursor = query;
+    wrong_cursor.after = first.next;
+    wrong_cursor.value = "RUNNING".into();
+    assert!(matches!(
+        reader.search(project, &wrong_cursor).await,
+        Err(JobStoreError::Invalid)
+    ));
 
     drop(reader);
     db.close().await

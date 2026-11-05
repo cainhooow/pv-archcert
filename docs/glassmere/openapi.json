@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Glassmere private observation API",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Presentation DTOs only. No HTTP input accepts readiness facts. Additive fields preserve schema-1 meaning; unknown versions/enums must render UNSUPPORTED and never green. No workflow mutation API is implemented."
   },
   "paths": {
@@ -227,6 +227,91 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/search": {
+      "get": {
+        "operationId": "searchExactOperationalRecords",
+        "description": "Exact project-scoped metadata lookup. Matches do not establish cryptographic validity or release authorization. Cursors bind project/dimension/value; each page is a fresh read.",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PROJECT",
+                "COMMIT",
+                "CERTIFICATE",
+                "ARTIFACT",
+                "PERMIT",
+                "JOB",
+                "STATUS",
+                "VERDICT"
+              ],
+              "default": "JOB"
+            }
+          },
+          {
+            "name": "value",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "At most 50 exact metadata hits; private/no-store.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid exact value, dimension, cursor or extra parameter."
+          },
+          "401": {
+            "description": "Authentication required."
+          },
+          "404": {
+            "description": "Project outside the authenticated scope."
+          },
+          "429": {
+            "description": "Operational budget exhausted."
+          },
+          "503": {
+            "description": "Dependency unavailable; no cached positive result."
           }
         }
       }
@@ -696,6 +781,110 @@
                 }
               }
             }
+          }
+        }
+      },
+      "SearchQuery": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "value",
+          "after"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "PROJECT",
+              "COMMIT",
+              "CERTIFICATE",
+              "ARTIFACT",
+              "PERMIT",
+              "JOB",
+              "STATUS",
+              "VERDICT"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "after": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 256
+          }
+        }
+      },
+      "SearchHit": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "entity",
+          "kind",
+          "state",
+          "digest"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "entity": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SearchPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema",
+          "project",
+          "query",
+          "hits",
+          "next"
+        ],
+        "properties": {
+          "schema": {
+            "const": 1
+          },
+          "project": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "query": {
+            "$ref": "#/components/schemas/SearchQuery"
+          },
+          "hits": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 256
           }
         }
       }

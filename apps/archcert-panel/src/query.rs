@@ -115,6 +115,14 @@ impl QueryService {
 
 #[async_trait]
 impl GlassmereQuery for QueryService {
+    async fn search(
+        &self,
+        project: ProjectId,
+        query: &search::SearchQuery,
+    ) -> Result<search::SearchPage> {
+        self.repository.search(project, query).await
+    }
+
     async fn projects(
         &self,
         allowed: &[ProjectId],

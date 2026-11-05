@@ -100,17 +100,26 @@ pub fn project_nav(project: &ProjectSnapshot, section: &str) -> String {
         ("semantic", "Greywatch"),
         ("jobs", "Jobs"),
         ("timeline", "Timeline"),
+        ("search", "Search"),
     ] {
         let active = if section == path {
             " aria-current=page"
         } else {
             ""
         };
-        let _ = write!(
-            result,
-            "<a href=/projects/{}/{}?offset={}{}>{label}</a>",
-            project.project.project, path, project.offset, active
-        );
+        if path == "search" {
+            let _ = write!(
+                result,
+                "<a href=/projects/{}/search{active}>{label}</a>",
+                project.project.project
+            );
+        } else {
+            let _ = write!(
+                result,
+                "<a href=/projects/{}/{}?offset={}{}>{label}</a>",
+                project.project.project, path, project.offset, active
+            );
+        }
     }
     result.push_str("</nav>");
 

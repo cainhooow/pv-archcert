@@ -3,6 +3,7 @@
 pub mod auth;
 mod inspection;
 mod render;
+mod search_view;
 
 use archcert_application::{glassmere::*, jobs::JobStoreError};
 use archcert_domain::ProjectId;
@@ -40,6 +41,7 @@ pub fn router(query: Arc<dyn GlassmereQuery>, configuration: PathBuf) -> Result<
         .route("/logout", post(logout))
         .route("/projects", get(projects))
         .route("/projects/{project}", get(overview))
+        .route("/projects/{project}/search", get(search_view::page))
         .route("/projects/{project}/{section}", get(project_view))
         .route("/projects/{project}/{section}/{entity}", get(entity_view))
         .route(
@@ -51,6 +53,7 @@ pub fn router(query: Arc<dyn GlassmereQuery>, configuration: PathBuf) -> Result<
             get(download),
         )
         .route("/api/v1/projects/{project}", get(snapshot_api))
+        .route("/api/v1/projects/{project}/search", get(search_view::api))
         .route(
             "/api/v1/projects/{project}/readiness/{invocation}",
             get(readiness_api),

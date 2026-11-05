@@ -140,6 +140,26 @@ The parent remains visible while its bound evidence and audit events paginate.
 Missing and foreign objects both return `NOT_FOUND`; no history scan is used to
 locate an exact object.
 
+The Search tab and `/api/v1/projects/{project}/search` accept fixed `kind` and
+`value` dimensions: PROJECT UUID, COMMIT SHA, CERTIFICATE payload/envelope digest,
+ARTIFACT digest, PERMIT payload/envelope digest, JOB UUID, STATUS and VERDICT.
+Values must be canonical exact identities or the documented uppercase job states
+and evaluation dispositions. Values are limited to 64 bytes, cursors to 256 bytes
+and results to 50 per page. There are no wildcard or substring queries. Commit
+lookup includes registered sources and their jobs, semantic sessions and releases.
+Artifact lookup covers registered certification, semantic and release evidence;
+STAGING matches remain STAGING and establish no byte availability or validity.
+
+Search uses bound SQL values and the existing read-only transaction/statement
+deadline. Migration 0007 adds lookup indexes and must be applied explicitly by
+migration authority; the panel never applies it. A cursor binds the project,
+dimension and value to a stable record key, without granting authorization.
+Each page observes current records: concurrent inserts do not duplicate earlier
+keys, new earlier keys require restarting the search, and changed states may
+remove a record from a filter. Cursor order is not authority chronology. Source
+matches expose their exact submission identity; no current-source pointer is
+invented. Matching COMPLETED or ELIGIBLE metadata is not signature verification.
+
 There are no materialized Glassmere projection tables. Restart/refetch reconstructs
 query results from retained authoritative records and rehashed original bytes.
 Deleting browser memory or panel session state cannot delete certification truth.

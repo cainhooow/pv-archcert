@@ -1,5 +1,7 @@
 //! Bounded read-only observation adapter. No workflow loaders or row locks.
 
+mod search;
+
 use super::*;
 use archcert_application::{glassmere::*, release::*};
 use sqlx::{Postgres, Transaction, postgres::PgPoolOptions};

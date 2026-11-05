@@ -23,6 +23,30 @@ struct QueryFixture {
 
 #[async_trait]
 impl GlassmereQuery for QueryFixture {
+    async fn search(
+        &self,
+        project: ProjectId,
+        query: &search::SearchQuery,
+    ) -> Result<search::SearchPage, JobStoreError> {
+        query.after_key(project)?;
+        if project != self.project {
+            return Err(JobStoreError::Precondition);
+        }
+        Ok(search::SearchPage {
+            schema: 1,
+            project,
+            query: query.clone(),
+            hits: vec![search::SearchHit {
+                key: format!("JOB/{DEEP_JOB}"),
+                entity: DEEP_JOB.into(),
+                kind: "JOB".into(),
+                state: HOSTILE.into(),
+                digest: None,
+            }],
+            next: None,
+        })
+    }
+
     async fn projects(
         &self,
         allowed: &[ProjectId],
@@ -584,6 +608,83 @@ async fn exact_job_links_retain_the_parent_across_child_pages_and_authorize_befo
             .status(),
         StatusCode::NOT_FOUND
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn search_is_private_project_scoped_bounded_and_inert_for_every_role() -> R {
+    for role in [
+        Role::Viewer,
+        Role::Operator,
+        Role::Reviewer,
+        Role::Administrator,
+    ] {
+        let f = Fixture::new(role)?;
+        let cookie = f.login().await?;
+        let path = format!("/projects/{}/search", f.project);
+        let exact = format!("{path}?kind=JOB&value={DEEP_JOB}");
+        let response = f
+            .request("GET", &exact, Some(&cookie), None, String::new())
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        let html = body(response).await?;
+        assert!(html.contains(&format!("/projects/{}/jobs/{DEEP_JOB}", f.project)));
+        assert!(!html.contains(HOSTILE));
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+        assert!(!html.contains("data-readiness"));
+
+        let api = format!(
+            "/api/v1/projects/{}/search?kind=JOB&value={DEEP_JOB}",
+            f.project
+        );
+        let response = f
+            .request("GET", &api, Some(&cookie), None, String::new())
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        let page: search::SearchPage = serde_json::from_str(&body(response).await?)?;
+        assert_eq!(page.project, f.project);
+        assert_eq!(page.hits.len(), 1);
+        assert_eq!(page.hits[0].entity, DEEP_JOB);
+
+        for query in [
+            "kind=JOB&value=*".into(),
+            "kind=JOB&value=x&value=y".into(),
+            format!("kind=COMMIT&value={}", "a".repeat(65)),
+            "kind=STATUS&value=RUNNING%25".into(),
+            "kind=VERDICT&value=PROVEN".into(),
+            "kind=SQL&value=SELECT".into(),
+            format!("kind=JOB&value={DEEP_JOB}&after=forged"),
+            format!("kind=JOB&value={DEEP_JOB}&limit=10000"),
+        ] {
+            let response = f
+                .request(
+                    "GET",
+                    &format!("{path}?{query}"),
+                    Some(&cookie),
+                    None,
+                    String::new(),
+                )
+                .await?;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
+        }
+        assert_eq!(
+            f.request("GET", &exact, None, None, String::new())
+                .await?
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let foreign = format!(
+            "/api/v1/projects/{}/search?kind=JOB&value={DEEP_JOB}",
+            ProjectId::new()
+        );
+        assert_eq!(
+            f.request("GET", &foreign, Some(&cookie), None, String::new())
+                .await?
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+    }
 
     Ok(())
 }
