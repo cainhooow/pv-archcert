@@ -82,6 +82,11 @@ identity!(
     "Unpredictable fencing capability, never passed into target execution."
 );
 
+identity!(
+    ControlCommandId,
+    "Immutable control-plane request identity, distinct from its resulting workflow."
+);
+
 /// Client key, scoped by authenticated actor, project and repository.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]

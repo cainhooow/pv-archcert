@@ -2,6 +2,8 @@
 
 pub mod search;
 
+pub mod commands;
+
 use crate::jobs::JobStoreError;
 use archcert_domain::{ProjectId, SourceIdentity};
 use async_trait::async_trait;

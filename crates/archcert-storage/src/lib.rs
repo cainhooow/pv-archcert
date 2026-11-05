@@ -8,6 +8,8 @@ mod runtime;
 
 mod release;
 
+mod commands;
+
 use archcert_application::jobs::*;
 use archcert_domain::{
     ProjectId,
