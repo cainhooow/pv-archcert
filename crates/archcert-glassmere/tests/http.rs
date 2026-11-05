@@ -1,5 +1,8 @@
 //! Direct forged HTTP requests exercise server-side authorization independently of UI.
 
+#[path = "http/readiness.rs"]
+mod readiness;
+
 use archcert_application::glassmere::commands::*;
 use archcert_application::{glassmere::*, jobs::JobStoreError};
 use archcert_domain::{ProjectId, source::digest_bytes};
@@ -33,11 +36,88 @@ const WORKFLOW_SESSION: &str = "10000000-0000-4000-8000-000000000002";
 const WORKFLOW_RUNNING: &str = "10000000-0000-4000-8000-000000000003";
 const WORKFLOW_ATTEMPT: &str = "10000000-0000-4000-8000-000000000004";
 const WORKFLOW_RECEIPT: &str = "10000000-0000-4000-8000-000000000005";
+const WORKFLOW_INVOCATION: &str =
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+// Renderer/authorization metadata only. The actual M6 verifier is qualified separately.
+fn workflow_readiness(
+    project: ProjectId,
+    allowed: bool,
+) -> Result<ReleaseReadiness, JobStoreError> {
+    use archcert_domain::{
+        GitObjectId,
+        source::{RepositoryId, SourceSnapshot},
+    };
+
+    let source = SourceSnapshot::seal(
+        project,
+        RepositoryId::parse("workflow/fixture").map_err(|_| JobStoreError::Invalid)?,
+        GitObjectId::parse("a".repeat(40)).map_err(|_| JobStoreError::Invalid)?,
+        GitObjectId::parse("b".repeat(40)).map_err(|_| JobStoreError::Invalid)?,
+        vec![],
+        1,
+        1_700_000_000,
+    )
+    .map_err(|_| JobStoreError::Invalid)?;
+    let checks = ReadinessChecks {
+        subject: ReleaseSubject {
+            project,
+            repository: "workflow/fixture".into(),
+            source: source.identity().clone(),
+            certificate: Some(digest_bytes(b"metadata certificate").as_str().into()),
+            invocation: WORKFLOW_INVOCATION.into(),
+            artifact: Some(digest_bytes(b"metadata artifact").as_str().into()),
+            permit: Some(digest_bytes(b"metadata permit").as_str().into()),
+        },
+        certificate: if allowed {
+            Ok(())
+        } else {
+            Err(BlockerCode::NoSourceCertificate)
+        },
+        reproducibility: Ok(()),
+        artifact: Ok(()),
+        permit: Ok(()),
+        policy: Ok(()),
+        review: Ok(()),
+        environment: Ok(()),
+        freshness: Ok(()),
+    };
+    let mut result = checks.evaluate(
+        digest_bytes(b"metadata revision").as_str().into(),
+        1_700_000_000,
+    );
+    result.provenance = "METADATA RENDER FIXTURE / NO EXECUTION OR SIGNATURE QUALIFICATION".into();
+
+    Ok(result)
+}
 
 struct QueryFixture {
     project: ProjectId,
     workflow: bool,
     revoke_on_entity: Option<PathBuf>,
+}
+
+impl QueryFixture {
+    fn revoke_during_lookup(&self) -> Result<(), JobStoreError> {
+        if let Some(path) = &self.revoke_on_entity {
+            let mut configuration: PanelConfiguration = serde_json::from_slice(
+                &std::fs::read(path).map_err(|_| JobStoreError::Unavailable)?,
+            )
+            .map_err(|_| JobStoreError::Unavailable)?;
+            configuration.principals[0].grant_generation = Some(
+                digest_bytes(b"new grant during passive lookup")
+                    .as_str()
+                    .into(),
+            );
+            std::fs::write(
+                path,
+                serde_json::to_vec(&configuration).map_err(|_| JobStoreError::Unavailable)?,
+            )
+            .map_err(|_| JobStoreError::Unavailable)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -161,8 +241,17 @@ impl GlassmereQuery for QueryFixture {
         Ok(snapshot)
     }
 
-    async fn readiness(&self, _: ProjectId, _: &str) -> Result<ReleaseReadiness, JobStoreError> {
-        Err(JobStoreError::Precondition)
+    async fn readiness(
+        &self,
+        project: ProjectId,
+        invocation: &str,
+    ) -> Result<ReleaseReadiness, JobStoreError> {
+        if !self.workflow || project != self.project || invocation != WORKFLOW_INVOCATION {
+            return Err(JobStoreError::Precondition);
+        }
+        self.revoke_during_lookup()?;
+
+        workflow_readiness(project, false)
     }
 
     async fn entity(
@@ -182,22 +271,7 @@ impl GlassmereQuery for QueryFixture {
             {
                 return Err(JobStoreError::Precondition);
             }
-            if let Some(path) = &self.revoke_on_entity {
-                let mut configuration: PanelConfiguration = serde_json::from_slice(
-                    &std::fs::read(path).map_err(|_| JobStoreError::Unavailable)?,
-                )
-                .map_err(|_| JobStoreError::Unavailable)?;
-                configuration.principals[0].grant_generation = Some(
-                    digest_bytes(b"new grant during passive lookup")
-                        .as_str()
-                        .into(),
-                );
-                std::fs::write(
-                    path,
-                    serde_json::to_vec(&configuration).map_err(|_| JobStoreError::Unavailable)?,
-                )
-                .map_err(|_| JobStoreError::Unavailable)?;
-            }
+            self.revoke_during_lookup()?;
 
             return Ok(snapshot);
         }
@@ -433,6 +507,7 @@ impl GlassmereCommandBroker for RecordingBroker {
         selection: &CommandReceiptSelection,
     ) -> Result<CommandReceiptObservation, JobStoreError> {
         self.receipt_reads.fetch_add(1, Ordering::Relaxed);
+        let readiness = selection.operation == ControlOperation::RequestReleaseReadinessEvaluation;
         Ok(CommandReceiptObservation {
             id: selection.id,
             project: selection.project,
@@ -440,9 +515,21 @@ impl GlassmereCommandBroker for RecordingBroker {
             operation: selection.operation,
             authority_context: selection.authority_context.clone(),
             request_sha256: digest_bytes(b"recorded fixture request"),
-            state: ControlCommandState::Requested,
+            state: if readiness {
+                ControlCommandState::Applied
+            } else {
+                ControlCommandState::Requested
+            },
             created_at: 1_700_000_000,
-            outcome: None,
+            outcome: if readiness {
+                Some(ControlCommandOutcome::Applied {
+                    effect: Box::new(CommandEffect::ReadinessEvaluated {
+                        observation: Box::new(workflow_readiness(selection.project, true)?),
+                    }),
+                })
+            } else {
+                None
+            },
         })
     }
 }
@@ -473,6 +560,9 @@ async fn csrf(fixture: &Fixture, cookie: &str) -> R<String> {
 fn command_form(operation: ControlOperation, csrf: &str) -> String {
     let (kind, entity, attempt) = match operation {
         ControlOperation::RequestCertification => ("SOURCE", WORKFLOW_SOURCE, String::new()),
+        ControlOperation::RequestReleaseReadinessEvaluation => {
+            ("RELEASE", WORKFLOW_INVOCATION, String::new())
+        }
         ControlOperation::CancelEligibleJob => ("JOB", DEEP_JOB, String::new()),
         ControlOperation::RetryEligibleJob => (
             "JOB",
@@ -491,7 +581,7 @@ fn command_form(operation: ControlOperation, csrf: &str) -> String {
 }
 
 #[tokio::test]
-async fn command_permission_matrix_is_enforced_for_every_role_and_job_operation() -> R {
+async fn command_permission_matrix_is_enforced_for_every_role_and_supported_operation() -> R {
     for role in [
         Role::Viewer,
         Role::Operator,
@@ -506,6 +596,7 @@ async fn command_permission_matrix_is_enforced_for_every_role_and_job_operation(
 
         for operation in [
             ControlOperation::RequestCertification,
+            ControlOperation::RequestReleaseReadinessEvaluation,
             ControlOperation::CancelEligibleJob,
             ControlOperation::RetryEligibleJob,
         ] {
@@ -530,7 +621,7 @@ async fn command_permission_matrix_is_enforced_for_every_role_and_job_operation(
             assert_eq!(
                 submissions.len(),
                 if matches!(role, Role::Operator | Role::Administrator) {
-                    3
+                    4
                 } else {
                     0
                 }
@@ -543,10 +634,8 @@ async fn command_permission_matrix_is_enforced_for_every_role_and_job_operation(
             }
         }
 
-        for operation in [
-            ControlOperation::RequestReleaseBuild,
-            ControlOperation::RequestReleaseReadinessEvaluation,
-        ] {
+        {
+            let operation = ControlOperation::RequestReleaseBuild;
             assert_eq!(
                 fixture
                     .request(

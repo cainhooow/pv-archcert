@@ -609,3 +609,12 @@ the HTTP handler performs no verification or execution. Same-key receipts remain
 historical, and a new explicit key asks a fresh question. Job schemas and all
 resource/authority limits remain unchanged. The browser still exposes only the
 three previously qualified job operations; readiness browser integration is open.
+
+[ADR 0064](../adr/0064-glassmere-readiness-browser-request.md) adds the fourth
+opt-in browser operation: an exact historical readiness question. Operator and
+Administrator still require separate backend grants, current project/object scope,
+Origin/CSRF and reauthorization after passive lookup. The broker requires schema 2
+and the explicit historical marker. Retained observations have structured identity
+and blocker summaries without live-confirmation attributes; their exact live query
+is a separate link. No new build, review waiver, signature or release authority is
+introduced. Full browser integration qualification and M9 closure remain separate.

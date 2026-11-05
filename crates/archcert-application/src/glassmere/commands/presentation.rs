@@ -7,6 +7,11 @@ use archcert_domain::ingress::SourceSubmissionId;
 /// User-selected identifiers only; authority inputs are resolved by the control plane.
 #[derive(Clone)]
 pub enum RequestedJobAction {
+    /// Fresh historical observation of an existing owned invocation, with no build side effect.
+    RequestReleaseReadinessEvaluation {
+        /// Exact immutable invocation, never posted readiness facts.
+        invocation: BuildInvocationIdentity,
+    },
     /// Existing accepted source and its mandatory reviewed session, if applicable.
     RequestCertification {
         /// Exact accepted source ID.
@@ -32,6 +37,9 @@ impl RequestedJobAction {
     /// Closed operation selected by this request.
     pub fn operation(&self) -> ControlOperation {
         match self {
+            Self::RequestReleaseReadinessEvaluation { .. } => {
+                ControlOperation::RequestReleaseReadinessEvaluation
+            }
             Self::RequestCertification { .. } => ControlOperation::RequestCertification,
             Self::CancelEligibleJob { .. } => ControlOperation::CancelEligibleJob,
             Self::RetryEligibleJob { .. } => ControlOperation::RetryEligibleJob,

@@ -9,7 +9,7 @@ use archcert_domain::{
 use archcert_glassmere::auth::PanelConfiguration;
 use archcert_protocol::commands::{
     ControlActionRequest, ControlCommandContextResponse, ControlCommandResponse,
-    CreateControlCommandRequest,
+    CreateControlCommandRequest, ReadinessReceiptFreshness,
 };
 use async_trait::async_trait;
 use http_body_util::{BodyExt, Full, Limited};
@@ -51,6 +51,7 @@ fn supported(operation: ControlOperation) -> bool {
     matches!(
         operation,
         ControlOperation::RequestCertification
+            | ControlOperation::RequestReleaseReadinessEvaluation
             | ControlOperation::CancelEligibleJob
             | ControlOperation::RetryEligibleJob
     )
@@ -122,7 +123,7 @@ impl Configuration {
                 || !(32..=256).contains(&mapping.token.len())
                 || !mapping.token.bytes().all(|byte| byte.is_ascii_graphic())
                 || mapping.operations.is_empty()
-                || mapping.operations.len() > 3
+                || mapping.operations.len() > 4
                 || mapping
                     .operations
                     .iter()
@@ -282,6 +283,48 @@ impl CommandBroker {
     }
 }
 
+fn valid_readiness(
+    observation: &archcert_application::glassmere::ReleaseReadiness,
+    project: ProjectId,
+    repository: &RepositoryId,
+) -> bool {
+    use archcert_application::glassmere::{PROJECTION_SCHEMA, ReleaseState};
+
+    let subject = &observation.subject;
+    if observation.schema != PROJECTION_SCHEMA
+        || subject.project != project
+        || subject.repository != repository.as_str()
+        || observation.evaluated_at <= 0
+    {
+        return false;
+    }
+
+    let identities = [
+        Some(subject.invocation.as_str()),
+        Some(observation.revision.as_str()),
+        subject.certificate.as_deref(),
+        subject.artifact.as_deref(),
+        subject.permit.as_deref(),
+    ];
+    if identities
+        .into_iter()
+        .flatten()
+        .any(|value| archcert_domain::Sha256Digest::parse(value).is_err())
+    {
+        return false;
+    }
+
+    match observation.state {
+        ReleaseState::ReleaseAllowed => {
+            observation.blockers.is_empty()
+                && subject.certificate.is_some()
+                && subject.artifact.is_some()
+                && subject.permit.is_some()
+        }
+        ReleaseState::ReleaseDenied => !observation.blockers.is_empty(),
+    }
+}
+
 fn receipt(
     value: ControlCommandResponse,
     project: ProjectId,
@@ -296,7 +339,12 @@ fn receipt(
             | ControlCommandState::Rejected
             | ControlCommandState::Inconclusive
     );
-    if value.schema != 1
+    let readiness = operation == ControlOperation::RequestReleaseReadinessEvaluation;
+    let expected_schema = if readiness { 2 } else { 1 };
+
+    if value.schema != expected_schema
+        || value.observation_freshness
+            != readiness.then_some(ReadinessReceiptFreshness::HistoricalObservation)
         || value.project != project
         || value.repository != *repository
         || value.operation != operation
@@ -313,6 +361,10 @@ fn receipt(
 
     if let Some(ControlCommandOutcome::Applied { effect }) = &value.outcome {
         let valid = match (operation, effect.as_ref()) {
+            (
+                ControlOperation::RequestReleaseReadinessEvaluation,
+                CommandEffect::ReadinessEvaluated { observation },
+            ) => valid_readiness(observation, project, repository),
             (
                 ControlOperation::RequestCertification,
                 CommandEffect::CertificationRequested { job, session },
@@ -398,6 +450,11 @@ impl GlassmereCommandBroker for CommandBroker {
         let mapping =
             configuration.mapping(principal, request.project, &request.repository, operation)?;
         let action = match &request.action {
+            RequestedJobAction::RequestReleaseReadinessEvaluation { invocation } => {
+                ControlActionRequest::RequestReleaseReadinessEvaluation {
+                    invocation: invocation.clone(),
+                }
+            }
             RequestedJobAction::RequestCertification {
                 submission,
                 reviewed_session,
@@ -416,7 +473,7 @@ impl GlassmereCommandBroker for CommandBroker {
             }
         };
         let body = serde_json::to_vec(&CreateControlCommandRequest {
-            schema: 1,
+            schema: action.schema(),
             project: request.project,
             repository: request.repository.clone(),
             authority_context: request.authority_context.clone(),
@@ -444,6 +501,10 @@ impl GlassmereCommandBroker for CommandBroker {
         )?;
         if let Some(ControlCommandOutcome::Applied { effect }) = &receipt.outcome {
             let matches = match (&request.action, effect.as_ref()) {
+                (
+                    RequestedJobAction::RequestReleaseReadinessEvaluation { invocation },
+                    CommandEffect::ReadinessEvaluated { observation },
+                ) => observation.subject.invocation == invocation.0.as_str(),
                 (
                     RequestedJobAction::RequestCertification {
                         reviewed_session, ..
@@ -534,7 +595,7 @@ mod tests {
         pin::Pin,
         sync::{
             Arc, Mutex,
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         task::{Context, Poll},
     };
@@ -547,11 +608,101 @@ mod tests {
 
     struct Backend {
         project: ProjectId,
+        readiness: AtomicBool,
         mode: AtomicUsize,
         calls: AtomicUsize,
         authorization: Mutex<Vec<String>>,
         bodies: Mutex<Vec<serde_json::Value>>,
         redirect: Mutex<String>,
+    }
+
+    // Explicit metadata responses qualify wire/schema/binding checks only.
+    // Actual cryptographic readiness uses the retained M6 integration corpus.
+    fn readiness_wire(project: ProjectId, mode: usize) -> TestResult<serde_json::Value> {
+        use archcert_application::glassmere::{
+            BlockerCode, ReadinessChecks, ReleaseState, ReleaseSubject,
+        };
+        use archcert_domain::{GitObjectId, source::SourceSnapshot};
+
+        let repository = RepositoryId::parse("broker/fixture")?;
+        let source = SourceSnapshot::seal(
+            project,
+            repository,
+            GitObjectId::parse("a".repeat(40))?,
+            GitObjectId::parse("b".repeat(40))?,
+            vec![],
+            1,
+            1_700_000_000,
+        )?;
+        let checks = ReadinessChecks {
+            subject: ReleaseSubject {
+                project,
+                repository: "broker/fixture".into(),
+                source: source.identity().clone(),
+                certificate: Some(digest_bytes(b"metadata certificate").as_str().into()),
+                invocation: digest_bytes(b"broker exact invocation").as_str().into(),
+                artifact: Some(digest_bytes(b"metadata artifact").as_str().into()),
+                permit: Some(digest_bytes(b"metadata permit").as_str().into()),
+            },
+            certificate: Ok(()),
+            reproducibility: Ok(()),
+            artifact: Ok(()),
+            permit: Ok(()),
+            policy: if [12, 18].contains(&mode) {
+                Err(BlockerCode::PolicyFailed)
+            } else {
+                Ok(())
+            },
+            review: Ok(()),
+            environment: Ok(()),
+            freshness: Ok(()),
+        };
+        let mut observation = checks.evaluate(
+            digest_bytes(b"metadata revision").as_str().into(),
+            1_700_000_000,
+        );
+        observation.provenance =
+            "METADATA WIRE FIXTURE / NO CRYPTOGRAPHIC OR RUNTIME QUALIFICATION".into();
+        match mode {
+            6 => observation.subject.invocation = digest_bytes(b"wrong invocation").as_str().into(),
+            11 => observation.subject.artifact = None,
+            12 => observation.state = ReleaseState::ReleaseAllowed,
+            13 => observation.subject.repository = "other/repository".into(),
+            14 => observation.schema = 99,
+            15 => observation.revision = "not-a-digest".into(),
+            16 => observation.evaluated_at = 0,
+            17 => observation.state = ReleaseState::ReleaseDenied,
+            _ => {}
+        }
+        let mut value = serde_json::json!({
+            "schema": if mode == 2 { 99 } else if mode == 8 { 1 } else { 2 },
+            "command_id": RECEIPT,
+            "project": project,
+            "repository": "broker/fixture",
+            "operation": "REQUEST_RELEASE_READINESS_EVALUATION",
+            "authority_context": digest_bytes(b"broker fixture authority"),
+            "request_sha256": digest_bytes(b"broker fixture request"),
+            "state": "APPLIED",
+            "created_at": 1_700_000_000,
+            "outcome": {
+                "state": "APPLIED",
+                "effect": {
+                    "kind": "READINESS_EVALUATED",
+                    "observation": observation,
+                },
+            },
+            "observation_freshness": "HISTORICAL_OBSERVATION",
+        });
+        if mode == 9 {
+            value
+                .as_object_mut()
+                .ok_or("receipt object")?
+                .remove("observation_freshness");
+        } else if mode == 10 {
+            value["observation_freshness"] = serde_json::json!("CURRENT_RELEASE_AUTHORIZATION");
+        }
+
+        Ok(value)
     }
 
     struct UnknownSizeBody(Option<Bytes>);
@@ -589,6 +740,11 @@ mod tests {
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .push(authorization);
         let method = request.method().clone();
+        let status = if method == Method::POST {
+            StatusCode::ACCEPTED
+        } else {
+            StatusCode::OK
+        };
         let context_request = request.uri().path() == "/api/v2/command-context";
         let bytes = axum::body::to_bytes(request.into_body(), 4096)
             .await
@@ -614,12 +770,7 @@ mod tests {
                 .into_response());
         }
         if mode == 7 {
-            return Ok((
-                StatusCode::OK,
-                [(header::CONTENT_TYPE, "application/json")],
-                "{",
-            )
-                .into_response());
+            return Ok((status, [(header::CONTENT_TYPE, "application/json")], "{").into_response());
         }
 
         let project = if mode == 1 {
@@ -628,15 +779,18 @@ mod tests {
             state.project
         };
         let context = digest_bytes(b"broker fixture authority");
+        let readiness = state.readiness.load(Ordering::Relaxed);
         let value = if context_request {
             serde_json::json!({
                 "schema": if mode == 2 { 99 } else { 1 },
                 "project": project,
                 "repository": "broker/fixture",
-                "operation": "CANCEL_ELIGIBLE_JOB",
+                "operation": if readiness { "REQUEST_RELEASE_READINESS_EVALUATION" } else { "CANCEL_ELIGIBLE_JOB" },
                 "authority_context": context,
                 "requires_reviewed_session": false,
             })
+        } else if readiness {
+            readiness_wire(project, mode).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         } else {
             serde_json::json!({
                 "schema": 1,
@@ -661,17 +815,13 @@ mod tests {
             // typed response would be accepted. Unknown size forces streamed limiting.
             bytes.extend(vec![b' '; MAX_CONTROL_COMMAND_BYTES + 1]);
             return Ok((
+                status,
                 [(header::CONTENT_TYPE, "application/json")],
                 axum::body::Body::new(UnknownSizeBody(Some(Bytes::from(bytes)))),
             )
                 .into_response());
         }
 
-        let status = if method == Method::POST {
-            StatusCode::ACCEPTED
-        } else {
-            StatusCode::OK
-        };
         Ok((status, Json(value)).into_response())
     }
 
@@ -687,6 +837,7 @@ mod tests {
             let address = listener.local_addr()?;
             let state = Arc::new(Backend {
                 project: ProjectId::new(),
+                readiness: AtomicBool::new(false),
                 mode: AtomicUsize::new(0),
                 calls: AtomicUsize::new(0),
                 authorization: Mutex::new(Vec::new()),
@@ -768,6 +919,79 @@ mod tests {
             std::fs::write(&self.configuration, serde_json::to_vec(&value)?)?;
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn broker_requires_explicit_historical_readiness_schema_and_exact_observation_binding()
+    -> TestResult {
+        let server = Server::start().await?;
+        server.state.readiness.store(true, Ordering::Relaxed);
+        let files = Files::new(&server)?;
+        files.change(|value| {
+            value["mappings"][0]["operations"] =
+                serde_json::json!(["REQUEST_RELEASE_READINESS_EVALUATION"])
+        })?;
+        let broker = CommandBroker::open(files.configuration.clone(), files.panel.clone())?;
+        let repository = RepositoryId::parse("broker/fixture")?;
+        let context = broker
+            .context(
+                "operator",
+                server.state.project,
+                &repository,
+                ControlOperation::RequestReleaseReadinessEvaluation,
+            )
+            .await?;
+        let request = RequestedJobCommand {
+            project: server.state.project,
+            repository,
+            authority_context: context.authority_context,
+            action: RequestedJobAction::RequestReleaseReadinessEvaluation {
+                invocation: archcert_domain::release::BuildInvocationIdentity(digest_bytes(
+                    b"broker exact invocation",
+                )),
+            },
+        };
+        let key = IdempotencyKey::parse("explicit-readiness-question".into())?;
+
+        let accepted = broker.submit("operator", &request, &key).await?;
+        assert_eq!(accepted.state, ControlCommandState::Applied);
+        {
+            let bodies = server.state.bodies.lock().map_err(|_| "test mutex")?;
+            let body = bodies.last().ok_or("request body")?;
+            assert_eq!(body["schema"], 2);
+            assert_eq!(
+                body["action"],
+                serde_json::json!({
+                    "kind": "REQUEST_RELEASE_READINESS_EVALUATION",
+                    "invocation": digest_bytes(b"broker exact invocation"),
+                })
+            );
+        }
+
+        for mode in [1, 2, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] {
+            server.state.mode.store(mode, Ordering::Relaxed);
+            assert!(
+                matches!(
+                    broker.submit("operator", &request, &key).await,
+                    Err(JobStoreError::Unavailable)
+                ),
+                "mode {mode}"
+            );
+        }
+        server.state.mode.store(18, Ordering::Relaxed);
+        let denied = broker.submit("operator", &request, &key).await?;
+        let Some(ControlCommandOutcome::Applied { effect }) = denied.outcome else {
+            return Err("evaluated denial receipt".into());
+        };
+        let CommandEffect::ReadinessEvaluated { observation } = *effect else {
+            return Err("readiness observation effect".into());
+        };
+        assert_eq!(
+            observation.state,
+            archcert_application::glassmere::ReleaseState::ReleaseDenied
+        );
+
+        Ok(())
     }
 
     #[tokio::test]

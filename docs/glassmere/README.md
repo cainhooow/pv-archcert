@@ -1,6 +1,6 @@
 # Glassmere private observation surface
 
-M9 is INCOMPLETE. This implementation provides private visibility and opt-in job requests;
+M9 is INCOMPLETE. This implementation provides private visibility and opt-in bounded requests;
 it does not close the complete Glassmere operational and qualification scope.
 [ADR 0051](../adr/0051-glassmere-observation-boundary.md) and the
 [threat model](../threat-model/GLASSMERE.md) define the trust boundary.
@@ -75,17 +75,17 @@ Revoking or changing a role/project grant invalidates the previous session.
 | Role | Current permission |
 | --- | --- |
 | Viewer | Read explicitly assigned projects and original registered evidence |
-| Operator | Same read scope; opt-in certification, queued cancellation and infrastructure recovery requests require separate backend grants |
+| Operator | Same read scope; opt-in certification, queued cancellation, infrastructure recovery and historical readiness requests require separate backend grants |
 | Reviewer | Same read scope; no new human disposition or waiver authority |
-| Administrator | Same project scope plus bounded panel audit inspection; same separately granted job requests as Operator |
+| Administrator | Same project scope plus bounded panel audit inspection; same separately granted requests as Operator |
 
 Authenticated never means administrator. Administrator never means cross-project,
 signing, runtime, policy or release authority. All unsupported mutation requests
 are denied. Login/logout use exact Origin validation; logout additionally checks
-a session-bound CSRF value. Job commands additionally check that CSRF value,
+a session-bound CSRF value. Commands additionally check that CSRF value,
 current role and project/object scope. No GET mutates authority state. Disposition,
-user/configuration edits and release/readiness commands remain unsupported. See
-the complete [permission matrix and broker decision](../adr/0059-glassmere-browser-command-broker.md).
+user/configuration edits and release-build commands remain unsupported. See
+the complete [permission matrix and readiness decision](../adr/0064-glassmere-readiness-browser-request.md).
 
 Panel audit is a private append-only JSONL sink, bounded to 16 MiB. An operator must
 archive/rotate it during a controlled service restart before that ceiling. Ordinary
@@ -208,6 +208,14 @@ The daemon records a question; the separately provisioned dispatcher evaluates i
 This enables no browser readiness form. Job request/receipt schema 1 remains
 unchanged, and no caller can post readiness facts or a release recipe.
 
+[ADR 0064](../adr/0064-glassmere-readiness-browser-request.md) adds the optional
+browser form for that exact invocation. Current role/project/object/Origin/CSRF
+checks and separate private backend grants remain mandatory. The receipt explicitly
+labels its structured observation HISTORICAL_OBSERVATION, including a past ALLOWED.
+It has no live-confirmation behavior. Refresh retains the original result; another
+explicit question gets a new key. Use its separate exact live-query link to inspect
+current readiness. No new build or signing capability is granted.
+
 Evidence inspection rehashes registered project/entity/digest-bound original bytes.
 Certificate and permit signatures are checked under selected public keys. Signature
 validity is distinct from actual artifact authorization, which requires readiness or
@@ -225,8 +233,8 @@ eligible queued cancellation and exact-attempt infrastructure recovery. The daem
 requires private command-only credentials; those tokens cannot authenticate legacy
 submission. The panel can opt into the separate identifier-only broker described
 below. Complete browser and durable workflow qualification remains open.
-Release/readiness commands and
-ReviewDisposition are absent from this initial transport grammar. A request receipt
+ADR 0063 extends the initial job grammar with schema-2 readiness questions.
+Release-build commands and ReviewDisposition remain absent. A request receipt
 is not a certificate, permit or positive target verdict.
 
 Pass `--command-config /private/authority/glassmere/commands.json` to enable the
@@ -235,8 +243,9 @@ regular file mode 0600, without symlinks or hardlinks. Its strict schema-1 field
 are `schema`, a literal loopback socket `endpoint`, and `mappings`. Each mapping
 contains the exact panel `principal`, project UUID, `repository`, a nonempty
 `operations` array and independently provisioned backend `token`. Supported
-operations are `REQUEST_CERTIFICATION`, `CANCEL_ELIGIBLE_JOB` and
-`RETRY_ELIGIBLE_JOB`. No token example or default credential is provided. Never
+operations are `REQUEST_CERTIFICATION`, `CANCEL_ELIGIBLE_JOB`,
+`RETRY_ELIGIBLE_JOB` and `REQUEST_RELEASE_READINESS_EVALUATION`.
+No token example or default credential is provided. Never
 reuse login or historical submission credentials, or share tokens across panel
 principals. Backend credential and repository/operation grants must already exist;
 the panel does not provision them or migrate its authority database.
@@ -248,14 +257,16 @@ selection are unsupported. Operator and Administrator principals must have audit
 `grant_generation` assignments before startup with commands enabled. Use the
 provisioning procedure to upgrade legacy grants while preserving explicit scope.
 
-Forms select existing scoped source/review/job/attempt IDs only. Reviewed profiles
+Forms select existing scoped source/review/job/attempt/invocation IDs only. Reviewed profiles
 require an existing owned reviewed session; the browser cannot provide its result.
 Cancellation covers eligible queued work. Recovery cannot retry target/policy
 failure, raise an attempt budget or assert runtime cleanup. Authority eligibility
 is checked at durable mediation, regardless of a button or observed state.
 Submissions carry a retained action key and redirect to a read-only receipt;
 refreshing it never repeats submission. Different tabs and HTTP retries depend on
-the backend's durable intent coalescing. Browser process loss owns no execution,
+the backend's durable workflow intent coalescing. Readiness instead retains one
+historical question per explicit key; another key asks a fresh question without
+creating a certification/build workflow. Browser process loss owns no execution,
 signing or coordination lease.
 
 The [workflow qualification guide](WORKFLOW_QUALIFICATION.md) describes the

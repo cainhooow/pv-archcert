@@ -25,6 +25,7 @@ enum TargetKind {
     Source,
     Session,
     Job,
+    Release,
 }
 
 impl TargetKind {
@@ -33,6 +34,7 @@ impl TargetKind {
             Self::Source => "SOURCE",
             Self::Session => "SESSION",
             Self::Job => "JOB",
+            Self::Release => "RELEASE",
         }
     }
 }
@@ -71,6 +73,7 @@ struct Target {
     submission: Option<SourceSubmissionId>,
     session: Option<JobId>,
     job: Option<JobId>,
+    invocation: Option<archcert_domain::release::BuildInvocationIdentity>,
     attempts: Vec<AttemptId>,
     state: String,
 }
@@ -78,6 +81,7 @@ struct Target {
 fn label(operation: ControlOperation) -> &'static str {
     match operation {
         ControlOperation::RequestCertification => "Request certification",
+        ControlOperation::RequestReleaseReadinessEvaluation => "Request readiness observation",
         ControlOperation::CancelEligibleJob => "Request eligible cancellation",
         ControlOperation::RetryEligibleJob => "Request infrastructure recovery",
         _ => "Unsupported operation",
@@ -107,6 +111,37 @@ async fn target(
     entity: &str,
     operation: ControlOperation,
 ) -> Result<Target, JobStoreError> {
+    if matches!(kind, TargetKind::Release) {
+        if operation != ControlOperation::RequestReleaseReadinessEvaluation {
+            return Err(JobStoreError::Invalid);
+        }
+
+        let digest = Sha256Digest::parse(entity).map_err(|_| JobStoreError::Invalid)?;
+        let invocation = archcert_domain::release::BuildInvocationIdentity(digest);
+
+        let observation = panel.query.readiness(project, entity).await?;
+
+        if observation.schema != PROJECTION_SCHEMA
+            || observation.subject.project != project
+            || observation.subject.invocation != entity
+        {
+            return Err(JobStoreError::Unavailable);
+        }
+
+        let repository = RepositoryId::parse(observation.subject.repository)
+            .map_err(|_| JobStoreError::Unavailable)?;
+
+        return Ok(Target {
+            repository,
+            submission: None,
+            session: None,
+            job: None,
+            invocation: Some(invocation),
+            attempts: Vec::new(),
+            state: render::enum_text(&observation.state),
+        });
+    }
+
     JobId::parse(entity)?;
     if !matches!(
         (operation, kind),
@@ -129,6 +164,7 @@ async fn target(
         TargetKind::Source => &snapshot.sources,
         TargetKind::Session => &snapshot.sessions,
         TargetKind::Job => &snapshot.jobs,
+        TargetKind::Release => return Err(JobStoreError::Invalid),
     };
     let selected = collection
         .iter()
@@ -154,6 +190,7 @@ async fn target(
             Some(SourceSubmissionId::parse(&value.value).map_err(|_| JobStoreError::Unavailable)?)
         }
         TargetKind::Job => None,
+        TargetKind::Release => return Err(JobStoreError::Invalid),
     };
     let attempts = selected
         .fields
@@ -174,6 +211,7 @@ async fn target(
         job: matches!(kind, TargetKind::Job)
             .then(|| JobId::parse(entity))
             .transpose()?,
+        invocation: None,
         attempts,
         state: selected.state.clone(),
     })
@@ -243,6 +281,8 @@ fn form_body(
         body.push_str("</select></label>");
     } else if request.operation == ControlOperation::CancelEligibleJob {
         body.push_str("<p>The authority may cancel eligible queued work only. This request cannot stop a running target or discard evidence.</p>");
+    } else if request.operation == ControlOperation::RequestReleaseReadinessEvaluation {
+        body.push_str("<p>This records a fresh question about the exact release. Its receipt is a historical observation, including when it records RELEASE_ALLOWED. Current use still requires the live readiness query. This form requests no build, signing or deployment.</p>");
     } else {
         body.push_str("<p>This requests the existing exact-source workflow. Mandatory validation and review remain required. No certificate is issued by this form.</p>");
     }
@@ -332,6 +372,11 @@ async fn submit(
             return Err(JobStoreError::Precondition);
         }
         let action = match request.operation {
+            ControlOperation::RequestReleaseReadinessEvaluation if request.attempt.is_none() => {
+                RequestedJobAction::RequestReleaseReadinessEvaluation {
+                    invocation: target.invocation.ok_or(JobStoreError::Invalid)?,
+                }
+            }
             ControlOperation::RequestCertification if request.attempt.is_none() => {
                 RequestedJobAction::RequestCertification {
                     submission: target.submission.ok_or(JobStoreError::Invalid)?,
@@ -420,6 +465,74 @@ fn receipt_url(receipt: &CommandReceiptObservation) -> String {
     )
 }
 
+fn historical_readiness(observation: &ReleaseReadiness) -> String {
+    let subject = &observation.subject;
+    let mut body = format!(
+        "<section class=panel data-historical-readiness><h3>Historical readiness observation: {}</h3><p><strong>HISTORICAL_OBSERVATION</strong> — this recorded result does not establish current readiness. Check the live query before making a current decision.</p><dl class=facts>",
+        render::enum_text(&observation.state),
+    );
+    for (label, value) in [
+        ("Project", subject.project.to_string()),
+        ("Repository", subject.repository.clone()),
+        ("Invocation", subject.invocation.clone()),
+        ("Source commit", subject.source.commit.as_str().into()),
+        ("Source tree", subject.source.tree.as_str().into()),
+        (
+            "Source snapshot",
+            subject.source.snapshot_sha256.as_str().into(),
+        ),
+        (
+            "Certificate",
+            subject
+                .certificate
+                .clone()
+                .unwrap_or_else(|| "MISSING".into()),
+        ),
+        (
+            "Artifact",
+            subject.artifact.clone().unwrap_or_else(|| "MISSING".into()),
+        ),
+        (
+            "Release Permit",
+            subject.permit.clone().unwrap_or_else(|| "MISSING".into()),
+        ),
+        ("Recorded revision", observation.revision.clone()),
+        (
+            "Evaluated UTC Unix seconds",
+            observation.evaluated_at.to_string(),
+        ),
+        ("Observation scope", observation.provenance.clone()),
+    ] {
+        let _ = write!(
+            body,
+            "<div><dt>{label}</dt><dd class=mono>{}</dd></div>",
+            render::escape(&value),
+        );
+    }
+    body.push_str("</dl>");
+
+    for blocker in &observation.blockers {
+        let _ = write!(
+            body,
+            "<p><strong>{}</strong>: {}<small class=mono>{}</small></p>",
+            render::enum_text(&blocker.code),
+            render::escape(&blocker.summary),
+            render::escape(&blocker.affected_identity),
+        );
+    }
+
+    let _ = write!(
+        body,
+        "<p><a href=/projects/{}/readiness/{}>Check current readiness</a></p><p><a href=/projects/{}/commands/new?operation=REQUEST_RELEASE_READINESS_EVALUATION&amp;target=RELEASE&amp;entity={}>Request another explicit observation</a></p></section>",
+        subject.project,
+        render::escape(&subject.invocation),
+        subject.project,
+        render::escape(&subject.invocation),
+    );
+
+    body
+}
+
 fn receipt_body(receipt: &CommandReceiptObservation) -> String {
     let state = match receipt.state {
         ControlCommandState::Requested => "REQUESTED",
@@ -434,8 +547,17 @@ fn receipt_body(receipt: &CommandReceiptObservation) -> String {
         receipt.id,
         render::escape(receipt.repository.as_str())
     );
+    if receipt.operation == ControlOperation::RequestReleaseReadinessEvaluation {
+        body.push_str("<p><strong>HISTORICAL_OBSERVATION</strong>. Refreshing this receipt retains the same question and recorded result. A new explicit action key asks another question; it creates no certification or build workflow.</p>");
+    }
+
     match receipt.outcome.as_ref() {
         Some(ControlCommandOutcome::Applied { effect }) => match effect.as_ref() {
+            CommandEffect::ReadinessEvaluated { observation }
+                if receipt.operation == ControlOperation::RequestReleaseReadinessEvaluation =>
+            {
+                body.push_str(&historical_readiness(observation));
+            }
             CommandEffect::CertificationRequested { job, session } => {
                 body.push_str("<p>The certification workflow was requested. Mandatory checks and any subsequent signing remain separate.</p>");
                 if let Some(job) = job {
@@ -469,7 +591,23 @@ fn receipt_body(receipt: &CommandReceiptObservation) -> String {
             }
             _ => body.push_str("<p>Unsupported receipt effect; no positive authority claim is displayed.</p>"),
         },
+        Some(ControlCommandOutcome::Rejected { reason })
+            if receipt.operation == ControlOperation::RequestReleaseReadinessEvaluation =>
+        {
+            let _ = write!(body,
+                "<p>The authority rejected this question: <strong>{}</strong>. Inspect its original authority context and exact invocation before an explicit new request.</p>",
+                render::enum_text(reason),
+            );
+        }
         Some(ControlCommandOutcome::Rejected { .. }) => body.push_str("<p>The authority rejected this action. No requested job transition was accepted. Review the exact source, mandatory review and current job eligibility before an explicit new action.</p>"),
+        Some(ControlCommandOutcome::Inconclusive { reason })
+            if receipt.operation == ControlOperation::RequestReleaseReadinessEvaluation =>
+        {
+            let _ = write!(body,
+                "<p>This observation could not be completed: <strong>{}</strong>. The receipt remains historical. Inspect the live readiness query or explicitly request another observation.</p>",
+                render::enum_text(reason),
+            );
+        }
         Some(ControlCommandOutcome::Inconclusive { .. }) => body.push_str("<p>The outcome is uncertain. A different action key cannot authorize repetition. Inspect retained authority state.</p>"),
         None => body.push_str("<p>Waiting for authority mediation. This records no certification result.</p>"),
     }
@@ -528,6 +666,18 @@ async fn receipt_page(
         Ok(_) => query_error(JobStoreError::Unavailable),
         Err(error) => query_error(error),
     }
+}
+
+pub(super) fn readiness_link(value: &ReleaseReadiness, role: Role) -> String {
+    if !role.permits_command(ControlOperation::RequestReleaseReadinessEvaluation) {
+        return String::new();
+    }
+
+    format!(
+        "<section class=panel><h2>Readiness observation request</h2><p>Record a separately audited historical observation of this exact invocation.</p><p><a href=/projects/{}/commands/new?operation=REQUEST_RELEASE_READINESS_EVALUATION&amp;target=RELEASE&amp;entity={}>Request readiness observation</a></p></section>",
+        value.subject.project,
+        render::escape(&value.subject.invocation),
+    )
 }
 
 pub(super) fn links(

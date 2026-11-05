@@ -22,11 +22,11 @@ const SESSION_SECONDS: u64 = 1800;
 pub enum Role {
     /// Read explicitly assigned projects and immutable evidence.
     Viewer,
-    /// Read and request explicitly provisioned bounded job operations.
+    /// Read and request explicitly provisioned bounded workflows and observations.
     Operator,
     /// Read; no new human disposition authority is introduced.
     Reviewer,
-    /// Read, request bounded job operations and inspect panel operational audit.
+    /// Read, request bounded workflows/observations and inspect panel operational audit.
     Administrator,
 }
 
@@ -43,6 +43,7 @@ impl Role {
             && matches!(
                 operation,
                 ControlOperation::RequestCertification
+                    | ControlOperation::RequestReleaseReadinessEvaluation
                     | ControlOperation::CancelEligibleJob
                     | ControlOperation::RetryEligibleJob
             )

@@ -451,12 +451,14 @@ async fn show_project(
         && let Some(invocation) = entity
     {
         return match panel.query.readiness(project, invocation).await {
-            Ok(value) => html(
-                panel,
-                "Release readiness",
-                &render::readiness(&value),
-                Some(&id),
-            ),
+            Ok(value) => {
+                let mut body = render::readiness(&value);
+                if panel.commands.is_some() {
+                    body.push_str(&workflow::readiness_link(&value, id.role));
+                }
+
+                html(panel, "Release readiness", &body, Some(&id))
+            }
             Err(e) => query_error(e),
         };
     }

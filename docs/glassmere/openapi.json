@@ -3,7 +3,7 @@
   "info": {
     "title": "Glassmere private observation API",
     "version": "1.1.0",
-    "description": "Presentation DTOs only. No HTTP input accepts readiness facts. Additive fields preserve schema-1 meaning; unknown versions/enums must render UNSUPPORTED and never green. No workflow mutation API is implemented."
+    "description": "Read-only /api/v1 presentation DTOs. No HTTP input accepts readiness facts. Additive fields preserve schema-1 meaning; unknown versions/enums must render UNSUPPORTED and never green. Separately mediated server-rendered command forms are defined by ADRs 0059 and 0064."
   },
   "paths": {
     "/api/v1/projects/{project}": {
