@@ -8,6 +8,7 @@ publish.workspace = true
 archcert-application = { path = "../../crates/archcert-application", version = "=0.1.0" }
 archcert-domain = { path = "../../crates/archcert-domain", version = "=0.1.0" }
 archcert-glassmere = { path = "../../crates/archcert-glassmere", version = "=0.1.0" }
+archcert-protocol = { path = "../../crates/archcert-protocol", version = "=0.1.0" }
 archcert-storage = { path = "../../crates/archcert-storage", version = "=0.1.0" }
 archcert-certificate = { path = "../../crates/archcert-certificate", version = "=0.1.0" }
 archcert-crypto = { path = "../../crates/archcert-crypto", version = "=0.1.0" }
@@ -18,6 +19,13 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 rustix.workspace = true
+hyper = { version = "=1.12.0", features = ["client", "http1"] }
+hyper-util = { version = "=0.1.21", features = ["client-legacy", "http1", "tokio"] }
+http-body-util = "=0.1.5"
+
+[dev-dependencies]
+tempfile.workspace = true
+axum.workspace = true
 
 [lints]
 workspace = true

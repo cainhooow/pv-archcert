@@ -86,6 +86,25 @@ class ProvisioningTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), original)
         self.assertEqual(len(self.audit()), 2)
 
+    def test_each_assignment_has_a_fresh_generation_even_when_role_is_restored(self):
+        self.bootstrap()
+        initial = self.config()['principals'][0]
+        generations = [initial['grant_generation']]
+
+        for role in ('VIEWER', 'ADMINISTRATOR', 'ADMINISTRATOR'):
+            self.provisioning.change(self.args('set-grant', role=role))
+            principal = self.config()['principals'][0]
+            generations.append(principal['grant_generation'])
+            self.assertEqual(principal['token_sha256'], initial['token_sha256'])
+            self.assertEqual(principal['projects'], initial['projects'])
+
+        self.assertEqual(len(set(generations)), 4)
+        for generation in generations:
+            self.assertEqual(len(generation), 64)
+            self.assertTrue(all(char in '0123456789abcdef' for char in generation))
+        committed = [row for row in self.audit() if row['event'] == 'COMMITTED']
+        self.assertEqual(len(committed), 4)
+
     def test_production_http_and_public_preview_configuration_fail_closed(self):
         with self.assertRaises(ProvisionError):
             self.provisioning.change(self.args('bootstrap', origin='http://127.0.0.1:8090'))

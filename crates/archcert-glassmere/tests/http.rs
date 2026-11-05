@@ -1,24 +1,43 @@
 //! Direct forged HTTP requests exercise server-side authorization independently of UI.
 
+use archcert_application::glassmere::commands::*;
 use archcert_application::{glassmere::*, jobs::JobStoreError};
 use archcert_domain::{ProjectId, source::digest_bytes};
-use archcert_glassmere::{auth::*, router};
+use archcert_domain::{
+    ingress::SourceSubmissionId,
+    jobs::{ControlCommandId, IdempotencyKey},
+};
+use archcert_glassmere::{auth::*, router, router_with_commands};
 use async_trait::async_trait;
 use axum::{
     body::Body,
     http::{Request, Response, StatusCode, header},
 };
 use http_body_util::BodyExt;
-use std::{os::unix::fs::PermissionsExt, sync::Arc};
+use std::{
+    os::unix::fs::PermissionsExt,
+    path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+};
 use tower::ServiceExt;
 
 type R<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const ORIGIN: &str = "http://127.0.0.1:8090";
 const HOSTILE: &str = "<script>alert(1)</script><img src=x onerror=alert(1)>";
 const DEEP_JOB: &str = "10000000-0000-4000-8000-000000000099";
+const WORKFLOW_SOURCE: &str = "10000000-0000-4000-8000-000000000001";
+const WORKFLOW_SESSION: &str = "10000000-0000-4000-8000-000000000002";
+const WORKFLOW_RUNNING: &str = "10000000-0000-4000-8000-000000000003";
+const WORKFLOW_ATTEMPT: &str = "10000000-0000-4000-8000-000000000004";
+const WORKFLOW_RECEIPT: &str = "10000000-0000-4000-8000-000000000005";
 
 struct QueryFixture {
     project: ProjectId,
+    workflow: bool,
+    revoke_on_entity: Option<PathBuf>,
 }
 
 #[async_trait]
@@ -73,7 +92,7 @@ impl GlassmereQuery for QueryFixture {
         if offset > 100_000 {
             return Err(JobStoreError::Invalid);
         }
-        Ok(ProjectSnapshot {
+        let mut snapshot = ProjectSnapshot {
             schema: 1,
             project: ProjectObservation {
                 project,
@@ -92,7 +111,54 @@ impl GlassmereQuery for QueryFixture {
             evidence: vec![],
             timeline: vec![],
             limitations: vec![HOSTILE.into()],
-        })
+        };
+        if self.workflow {
+            let repository = ObservationField {
+                label: "Repository".into(),
+                value: "workflow/fixture".into(),
+                provenance: "Scoped fixture".into(),
+            };
+            snapshot.sources.push(EntityObservation {
+                id: WORKFLOW_SOURCE.into(),
+                kind: "SOURCE".into(),
+                state: "ACCEPTED IMMUTABLE SOURCE".into(),
+                fields: vec![repository.clone()],
+            });
+            snapshot.jobs.push(EntityObservation {
+                id: DEEP_JOB.into(),
+                kind: "CERTIFICATION".into(),
+                state: "QUEUED".into(),
+                fields: vec![repository.clone()],
+            });
+            snapshot.jobs.push(EntityObservation {
+                id: WORKFLOW_RUNNING.into(),
+                kind: "CERTIFICATION".into(),
+                state: "RUNNING".into(),
+                fields: vec![
+                    repository.clone(),
+                    ObservationField {
+                        label: "Attempt 1: identity".into(),
+                        value: WORKFLOW_ATTEMPT.into(),
+                        provenance: "Scoped fixture".into(),
+                    },
+                ],
+            });
+            snapshot.sessions.push(EntityObservation {
+                id: WORKFLOW_SESSION.into(),
+                kind: "SEMANTIC_SESSION".into(),
+                state: HOSTILE.into(),
+                fields: vec![
+                    repository,
+                    ObservationField {
+                        label: "Source submission".into(),
+                        value: WORKFLOW_SOURCE.into(),
+                        provenance: "Frozen source binding fixture".into(),
+                    },
+                ],
+            });
+        }
+
+        Ok(snapshot)
     }
 
     async fn readiness(&self, _: ProjectId, _: &str) -> Result<ReleaseReadiness, JobStoreError> {
@@ -105,6 +171,36 @@ impl GlassmereQuery for QueryFixture {
         entity: &str,
         offset: u32,
     ) -> Result<ProjectSnapshot, JobStoreError> {
+        if self.workflow {
+            let mut snapshot = self.snapshot(project, offset).await?;
+            snapshot.sources.retain(|item| item.id == entity);
+            snapshot.jobs.retain(|item| item.id == entity);
+            snapshot.sessions.retain(|item| item.id == entity);
+            if snapshot.sources.is_empty()
+                && snapshot.jobs.is_empty()
+                && snapshot.sessions.is_empty()
+            {
+                return Err(JobStoreError::Precondition);
+            }
+            if let Some(path) = &self.revoke_on_entity {
+                let mut configuration: PanelConfiguration = serde_json::from_slice(
+                    &std::fs::read(path).map_err(|_| JobStoreError::Unavailable)?,
+                )
+                .map_err(|_| JobStoreError::Unavailable)?;
+                configuration.principals[0].grant_generation = Some(
+                    digest_bytes(b"new grant during passive lookup")
+                        .as_str()
+                        .into(),
+                );
+                std::fs::write(
+                    path,
+                    serde_json::to_vec(&configuration).map_err(|_| JobStoreError::Unavailable)?,
+                )
+                .map_err(|_| JobStoreError::Unavailable)?;
+            }
+
+            return Ok(snapshot);
+        }
         if entity != DEEP_JOB {
             return Err(JobStoreError::Precondition);
         }
@@ -162,6 +258,14 @@ struct Fixture {
 
 impl Fixture {
     fn new(role: Role) -> R<Self> {
+        Self::configured(role, None, false)
+    }
+
+    fn configured(
+        role: Role,
+        commands: Option<Arc<dyn GlassmereCommandBroker>>,
+        revoke_on_entity: bool,
+    ) -> R<Self> {
         let root = tempfile::tempdir()?;
         let project = ProjectId::new();
         let credential = random_credential().map_err(|_| "entropy unavailable")?;
@@ -175,14 +279,28 @@ impl Fixture {
                 token_sha256: digest_bytes(credential.as_bytes()).as_str().into(),
                 role,
                 projects: vec![project],
+                grant_generation: commands.as_ref().map(|_| {
+                    digest_bytes(b"initial fixture grant generation")
+                        .as_str()
+                        .into()
+                }),
             }],
             audit_path: root.path().join("audit.jsonl"),
         };
         let path = root.path().join("panel.json");
         std::fs::write(&path, serde_json::to_vec(&configuration)?)?;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-        let app =
-            router(Arc::new(QueryFixture { project }), path).map_err(|_| "router configuration")?;
+        let query = Arc::new(QueryFixture {
+            project,
+            workflow: commands.is_some(),
+            revoke_on_entity: revoke_on_entity.then(|| path.clone()),
+        });
+        let app = if let Some(commands) = commands {
+            router_with_commands(query, path, commands)
+        } else {
+            router(query, path)
+        }
+        .map_err(|_| "router configuration")?;
 
         Ok(Self {
             root,
@@ -251,6 +369,416 @@ async fn body(response: Response<Body>) -> R<String> {
     Ok(String::from_utf8(
         response.into_body().collect().await?.to_bytes().to_vec(),
     )?)
+}
+
+// This broker records presentation calls only. PostgreSQL/daemon suites establish
+// durable deduplication and domain mediation independently of this HTTP fixture.
+#[derive(Default)]
+struct RecordingBroker {
+    submissions: Mutex<Vec<(String, RequestedJobCommand, String)>>,
+    context_reads: AtomicUsize,
+    receipt_reads: AtomicUsize,
+    requires_review: AtomicBool,
+}
+
+fn command_context_digest() -> archcert_domain::Sha256Digest {
+    digest_bytes(b"explicit workflow fixture authority")
+}
+
+#[async_trait]
+impl GlassmereCommandBroker for RecordingBroker {
+    async fn context(
+        &self,
+        _: &str,
+        project: ProjectId,
+        repository: &archcert_domain::source::RepositoryId,
+        operation: ControlOperation,
+    ) -> Result<CommandContextObservation, JobStoreError> {
+        self.context_reads.fetch_add(1, Ordering::Relaxed);
+        Ok(CommandContextObservation {
+            project,
+            repository: repository.clone(),
+            operation,
+            authority_context: command_context_digest(),
+            requires_reviewed_session: self.requires_review.load(Ordering::Relaxed),
+        })
+    }
+
+    async fn submit(
+        &self,
+        principal: &str,
+        request: &RequestedJobCommand,
+        key: &IdempotencyKey,
+    ) -> Result<CommandReceiptObservation, JobStoreError> {
+        self.submissions
+            .lock()
+            .map_err(|_| JobStoreError::Unavailable)?
+            .push((principal.into(), request.clone(), key.as_str().into()));
+        Ok(CommandReceiptObservation {
+            id: ControlCommandId::parse(WORKFLOW_RECEIPT)?,
+            project: request.project,
+            repository: request.repository.clone(),
+            operation: request.action.operation(),
+            authority_context: request.authority_context.clone(),
+            request_sha256: digest_bytes(b"recorded fixture request"),
+            state: ControlCommandState::Requested,
+            created_at: 1_700_000_000,
+            outcome: None,
+        })
+    }
+
+    async fn receipt(
+        &self,
+        _: &str,
+        selection: &CommandReceiptSelection,
+    ) -> Result<CommandReceiptObservation, JobStoreError> {
+        self.receipt_reads.fetch_add(1, Ordering::Relaxed);
+        Ok(CommandReceiptObservation {
+            id: selection.id,
+            project: selection.project,
+            repository: selection.repository.clone(),
+            operation: selection.operation,
+            authority_context: selection.authority_context.clone(),
+            request_sha256: digest_bytes(b"recorded fixture request"),
+            state: ControlCommandState::Requested,
+            created_at: 1_700_000_000,
+            outcome: None,
+        })
+    }
+}
+
+async fn csrf(fixture: &Fixture, cookie: &str) -> R<String> {
+    let response = fixture
+        .request(
+            "GET",
+            &format!("/projects/{}", fixture.project),
+            Some(cookie),
+            None,
+            String::new(),
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let html = body(response).await?;
+
+    Ok(html
+        .split("name=csrf value=\"")
+        .nth(1)
+        .ok_or("CSRF field")?
+        .split('"')
+        .next()
+        .ok_or("CSRF value")?
+        .into())
+}
+
+fn command_form(operation: ControlOperation, csrf: &str) -> String {
+    let (kind, entity, attempt) = match operation {
+        ControlOperation::RequestCertification => ("SOURCE", WORKFLOW_SOURCE, String::new()),
+        ControlOperation::CancelEligibleJob => ("JOB", DEEP_JOB, String::new()),
+        ControlOperation::RetryEligibleJob => (
+            "JOB",
+            WORKFLOW_RUNNING,
+            format!("&attempt={WORKFLOW_ATTEMPT}"),
+        ),
+        _ => ("JOB", DEEP_JOB, String::new()),
+    };
+
+    format!(
+        "csrf={csrf}&idempotency=retained-user-action&operation={}&target={kind}&entity={entity}&repository=workflow/fixture&authority_context={}{}",
+        operation.name(),
+        command_context_digest().as_str(),
+        attempt
+    )
+}
+
+#[tokio::test]
+async fn command_permission_matrix_is_enforced_for_every_role_and_job_operation() -> R {
+    for role in [
+        Role::Viewer,
+        Role::Operator,
+        Role::Reviewer,
+        Role::Administrator,
+    ] {
+        let broker = Arc::new(RecordingBroker::default());
+        let fixture = Fixture::configured(role, Some(broker.clone()), false)?;
+        let cookie = fixture.login().await?;
+        let csrf = csrf(&fixture, &cookie).await?;
+        let path = format!("/projects/{}/commands", fixture.project);
+
+        for operation in [
+            ControlOperation::RequestCertification,
+            ControlOperation::CancelEligibleJob,
+            ControlOperation::RetryEligibleJob,
+        ] {
+            let response = fixture
+                .request(
+                    "POST",
+                    &path,
+                    Some(&cookie),
+                    Some(ORIGIN),
+                    command_form(operation, &csrf),
+                )
+                .await?;
+            let expected = if matches!(role, Role::Operator | Role::Administrator) {
+                StatusCode::SEE_OTHER
+            } else {
+                StatusCode::FORBIDDEN
+            };
+            assert_eq!(response.status(), expected, "{role:?} {operation:?}");
+        }
+        {
+            let submissions = broker.submissions.lock().map_err(|_| "broker lock")?;
+            assert_eq!(
+                submissions.len(),
+                if matches!(role, Role::Operator | Role::Administrator) {
+                    3
+                } else {
+                    0
+                }
+            );
+            for (principal, command, key) in submissions.iter() {
+                assert_eq!(principal, "test-operator");
+                assert_eq!(command.project, fixture.project);
+                assert_eq!(command.repository.as_str(), "workflow/fixture");
+                assert_eq!(key, "retained-user-action");
+            }
+        }
+
+        for operation in [
+            ControlOperation::RequestReleaseBuild,
+            ControlOperation::RequestReleaseReadinessEvaluation,
+        ] {
+            assert_eq!(
+                fixture
+                    .request(
+                        "POST",
+                        &path,
+                        Some(&cookie),
+                        Some(ORIGIN),
+                        command_form(operation, &csrf),
+                    )
+                    .await?
+                    .status(),
+                StatusCode::FORBIDDEN,
+                "{role:?} {operation:?}"
+            );
+        }
+
+        for path in [
+            "/sign-certificate",
+            "/sign-release-permit",
+            "/admin/users",
+            "/review-disposition",
+        ] {
+            assert_eq!(
+                fixture
+                    .request("POST", path, Some(&cookie), Some(ORIGIN), String::new())
+                    .await?
+                    .status(),
+                StatusCode::FORBIDDEN
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn command_csrf_scope_object_and_role_escalation_fail_before_broker_submission() -> R {
+    let broker = Arc::new(RecordingBroker::default());
+    let fixture = Fixture::configured(Role::Operator, Some(broker.clone()), false)?;
+    let cookie = fixture.login().await?;
+    let csrf = csrf(&fixture, &cookie).await?;
+    let path = format!("/projects/{}/commands", fixture.project);
+    let valid = command_form(ControlOperation::CancelEligibleJob, &csrf);
+
+    for origin in [None, Some("https://attacker.invalid")] {
+        assert_eq!(
+            fixture
+                .request("POST", &path, Some(&cookie), origin, valid.clone())
+                .await?
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+    assert_eq!(
+        fixture
+            .request(
+                "POST",
+                &path,
+                Some(&cookie),
+                Some(ORIGIN),
+                command_form(ControlOperation::CancelEligibleJob, "wrong-csrf")
+            )
+            .await?
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        fixture
+            .request("POST", &path, None, Some(ORIGIN), valid.clone())
+            .await?
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        fixture
+            .request(
+                "POST",
+                &format!("/projects/{}/commands", ProjectId::new()),
+                Some(&cookie),
+                Some(ORIGIN),
+                valid.clone()
+            )
+            .await?
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let foreign_object = valid.replace(DEEP_JOB, "20000000-0000-4000-8000-000000000099");
+    assert_eq!(
+        fixture
+            .request("POST", &path, Some(&cookie), Some(ORIGIN), foreign_object)
+            .await?
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        fixture
+            .request(
+                "POST",
+                &path,
+                Some(&cookie),
+                Some(ORIGIN),
+                valid.replace("workflow/fixture", "other/repository")
+            )
+            .await?
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        fixture
+            .request(
+                "POST",
+                &path,
+                Some(&cookie),
+                Some(ORIGIN),
+                format!("{valid}&role=ADMINISTRATOR")
+            )
+            .await?
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert!(
+        broker
+            .submissions
+            .lock()
+            .map_err(|_| "broker lock")?
+            .is_empty()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn command_submission_rechecks_grant_after_passive_object_lookup() -> R {
+    let broker = Arc::new(RecordingBroker::default());
+    let fixture = Fixture::configured(Role::Operator, Some(broker.clone()), true)?;
+    let cookie = fixture.login().await?;
+    let csrf = csrf(&fixture, &cookie).await?;
+
+    let response = fixture
+        .request(
+            "POST",
+            &format!("/projects/{}/commands", fixture.project),
+            Some(&cookie),
+            Some(ORIGIN),
+            command_form(ControlOperation::CancelEligibleJob, &csrf),
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(
+        broker
+            .submissions
+            .lock()
+            .map_err(|_| "broker lock")?
+            .is_empty()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn command_forms_bind_reviewed_source_and_receipt_refresh_is_nonmutating() -> R {
+    let broker = Arc::new(RecordingBroker::default());
+    broker.requires_review.store(true, Ordering::Relaxed);
+    let fixture = Fixture::configured(Role::Operator, Some(broker.clone()), false)?;
+    let cookie = fixture.login().await?;
+    let base = format!(
+        "/projects/{}/commands/new?operation=REQUEST_CERTIFICATION",
+        fixture.project
+    );
+    let source = fixture
+        .request(
+            "GET",
+            &format!("{base}&target=SOURCE&entity={WORKFLOW_SOURCE}"),
+            Some(&cookie),
+            None,
+            String::new(),
+        )
+        .await?;
+    assert_eq!(source.status(), StatusCode::OK);
+    let source = body(source).await?;
+    assert!(source.contains("requires an existing reviewed session"));
+    assert!(!source.contains("data-command-form"));
+    let session = fixture
+        .request(
+            "GET",
+            &format!("{base}&target=SESSION&entity={WORKFLOW_SESSION}"),
+            Some(&cookie),
+            None,
+            String::new(),
+        )
+        .await?;
+    assert_eq!(session.status(), StatusCode::OK);
+    let session = body(session).await?;
+    assert!(session.contains("data-command-form"));
+    assert!(session.contains("name=\"idempotency\""));
+    assert!(!session.contains(HOSTILE));
+    let csrf = csrf(&fixture, &cookie).await?;
+    let payload = command_form(ControlOperation::RequestCertification, &csrf)
+        .replace("target=SOURCE", "target=SESSION")
+        .replace(WORKFLOW_SOURCE, WORKFLOW_SESSION);
+    let response = fixture
+        .request(
+            "POST",
+            &format!("/projects/{}/commands", fixture.project),
+            Some(&cookie),
+            Some(ORIGIN),
+            payload,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let location = response.headers()[header::LOCATION].to_str()?.to_owned();
+
+    for _ in 0..2 {
+        let response = fixture
+            .request("GET", &location, Some(&cookie), None, String::new())
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body(response).await?.contains("not a certificate"));
+    }
+    let submissions = broker.submissions.lock().map_err(|_| "broker lock")?;
+    assert_eq!(submissions.len(), 1);
+    assert!(matches!(
+        &submissions[0].1.action,
+        RequestedJobAction::RequestCertification {
+            submission,
+            reviewed_session: Some(session),
+        } if submission == &SourceSubmissionId::parse(WORKFLOW_SOURCE)?
+            && session.to_string() == WORKFLOW_SESSION
+    ));
+    assert_eq!(broker.receipt_reads.load(Ordering::Relaxed), 2);
+
+    Ok(())
 }
 
 #[tokio::test]

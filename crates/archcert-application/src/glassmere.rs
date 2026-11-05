@@ -360,7 +360,7 @@ pub trait GlassmereQuery: Send + Sync {
         offset: u32,
     ) -> Result<ProjectSnapshot, JobStoreError>;
 
-    /// Read an exact registered job/session without requiring its history-page offset.
+    /// Read an exact registered source/job/session without requiring its history-page offset.
     /// Child evidence and audit collections remain independently bounded.
     async fn entity(
         &self,

@@ -48,6 +48,14 @@ credential-file overwrite and revocation of the last principal. Provision a
 replacement before removing that principal. Grant changes take effect on the next
 request; the panel rechecks its session's exact principal revision.
 
+Every assignment also creates a fresh `grant_generation`, including assigning the
+same role/projects again. Restoring a former role never restores its old sessions.
+The optional field preserves legacy read-only configurations; command-enabled
+Operator and Administrator grants require it. Upgrade through `set-grant` with the
+complete intended project list, then log in again. Do not manually reuse an older
+generation or edit configuration behind the provisioning journal. See
+[ADR 0059](../adr/0059-glassmere-browser-command-broker.md).
+
 Retain `panel.json.provisioning.jsonl` and `panel.json.provisioning.lock` beside
 configuration. The panel's own operational audit uses the separate
 `panel-audit.jsonl`. Provisioning records contain the operator, action, principal,

@@ -158,7 +158,7 @@ impl ObservationRepository {
         let snapshot = self
             .snapshot_selected(project, offset, Some(entity))
             .await?;
-        if snapshot.jobs.is_empty() && snapshot.sessions.is_empty() {
+        if snapshot.sources.is_empty() && snapshot.jobs.is_empty() && snapshot.sessions.is_empty() {
             return Err(JobStoreError::Precondition);
         }
 
@@ -190,7 +190,7 @@ impl ObservationRepository {
         let evaluated_at = now(&mut tx).await?;
         let mut has_more = false;
 
-        let rows = sqlx::query("SELECT submission,repository,source FROM accepted_sources WHERE project=$1 AND ($3::text IS NULL OR submission=$3) ORDER BY submission LIMIT 51 OFFSET $2")
+        let rows = sqlx::query("SELECT submission,repository,source FROM accepted_sources WHERE project=$1 AND ($3::text IS NULL OR submission=$3) ORDER BY submission LIMIT 51 OFFSET CASE WHEN $3::text IS NULL THEN $2::bigint ELSE 0 END")
             .bind(project.to_string()).bind(i64::from(offset)).bind(selected).fetch_all(&mut *tx).await.map_err(db)?;
         has_more |= rows.len() > MAX_PAGE_SIZE;
         let mut sources = Vec::new();
@@ -377,13 +377,18 @@ impl ObservationRepository {
             });
         }
 
-        let rows = sqlx::query("SELECT id,pin->>'repository' AS repository,pin->'source' AS source,pin->>'knowledge_mode' AS knowledge_mode,created_at,review_timestamp,invocation IS NOT NULL AS invoked FROM ironcrest_sessions WHERE project=$1 AND ($3::text IS NULL OR id=$3) ORDER BY id LIMIT 51 OFFSET CASE WHEN $3::text IS NULL THEN $2::bigint ELSE 0 END")
+        let rows = sqlx::query("SELECT id,pin->>'repository' AS repository,pin->>'submission' AS submission,pin->'source' AS source,pin->>'knowledge_mode' AS knowledge_mode,created_at,review_timestamp,invocation IS NOT NULL AS invoked FROM ironcrest_sessions WHERE project=$1 AND ($3::text IS NULL OR id=$3) ORDER BY id LIMIT 51 OFFSET CASE WHEN $3::text IS NULL THEN $2::bigint ELSE 0 END")
             .bind(project.to_string()).bind(i64::from(offset)).bind(selected).fetch_all(&mut *tx).await.map_err(db)?;
         has_more |= rows.len() > MAX_PAGE_SIZE;
         let mut sessions = Vec::new();
         for row in rows.into_iter().take(MAX_PAGE_SIZE) {
             let source: Value = row.try_get("source").map_err(db)?;
             let mut fields = source_fields(&source, "Frozen review session");
+            fields.push(field(
+                "Source submission",
+                row.try_get::<String, _>("submission").map_err(db)?,
+                "Frozen review session source binding",
+            ));
             fields.push(field(
                 "Repository",
                 row.try_get::<String, _>("repository").map_err(db)?,

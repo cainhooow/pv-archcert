@@ -22,12 +22,31 @@ const SESSION_SECONDS: u64 = 1800;
 pub enum Role {
     /// Read explicitly assigned projects and immutable evidence.
     Viewer,
-    /// Read; workflow commands remain unsupported until separately qualified.
+    /// Read and request explicitly provisioned bounded job operations.
     Operator,
     /// Read; no new human disposition authority is introduced.
     Reviewer,
-    /// Read assigned projects and inspect panel operational audit.
+    /// Read, request bounded job operations and inspect panel operational audit.
     Administrator,
+}
+
+impl Role {
+    /// Fixed presentation permission matrix. This is not a backend grant and
+    /// never grants signing, runtime, user administration or review disposition.
+    pub fn permits_command(
+        self,
+        operation: archcert_application::glassmere::commands::ControlOperation,
+    ) -> bool {
+        use archcert_application::glassmere::commands::ControlOperation;
+
+        matches!(self, Self::Operator | Self::Administrator)
+            && matches!(
+                operation,
+                ControlOperation::RequestCertification
+                    | ControlOperation::CancelEligibleJob
+                    | ControlOperation::RetryEligibleJob
+            )
+    }
 }
 
 /// External operator grant. A 256-bit random token is not a human password.
@@ -42,6 +61,10 @@ pub struct Principal {
     pub role: Role,
     /// Explicit project scope; no wildcard administrator grant.
     pub projects: Vec<ProjectId>,
+    /// Fresh external provisioning generation. Legacy read-only configurations may
+    /// omit it; command-enabled principals require a distinct generation per grant change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_generation: Option<String>,
 }
 
 /// Operator-selected private session configuration; never target repository data.
@@ -145,6 +168,15 @@ impl PanelConfiguration {
                 || archcert_domain::Sha256Digest::parse(&principal.token_sha256).is_err()
                 || !ids.insert(principal.id.clone())
                 || !hashes.insert(principal.token_sha256.clone())
+                || principal
+                    .grant_generation
+                    .as_ref()
+                    .is_some_and(|generation| {
+                        generation.len() != 64
+                            || !generation
+                                .bytes()
+                                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    })
             {
                 return Err(AuthError::Unavailable);
             }
@@ -209,6 +241,44 @@ pub fn random_credential() -> Result<String, AuthError> {
 }
 
 impl Authentication {
+    /// Check a fixed operation against the authenticated current role.
+    pub fn check_operation(
+        &self,
+        identity: &Identity,
+        operation: archcert_application::glassmere::commands::ControlOperation,
+    ) -> Result<(), AuthError> {
+        if !identity.role.permits_command(operation) {
+            self.audit(&identity.id, "COMMAND_AUTHORIZATION_DENIED")?;
+            return Err(AuthError::Forbidden);
+        }
+        let configuration = self.configuration()?;
+        let principal = configuration
+            .principals
+            .iter()
+            .find(|principal| {
+                principal.id == identity.id
+                    && principal.role == identity.role
+                    && principal.projects == identity.projects
+            })
+            .ok_or(AuthError::Unauthenticated)?;
+        if principal.grant_generation.is_none() {
+            self.audit(&identity.id, "COMMAND_GRANT_VERSION_UNAVAILABLE")?;
+            return Err(AuthError::Unavailable);
+        }
+
+        Ok(())
+    }
+
+    /// Validate the session-bound form capability without changing the session.
+    pub fn check_csrf(&self, identity: &Identity, csrf: &str) -> Result<(), AuthError> {
+        if csrf != identity.csrf {
+            self.audit(&identity.id, "CSRF_DENIED")?;
+            return Err(AuthError::Forbidden);
+        }
+
+        Ok(())
+    }
+
     /// Open private configuration and audit before binding a network listener.
     pub fn open(path: PathBuf) -> Result<Self, AuthError> {
         let config = PanelConfiguration::load(&path)?;
@@ -585,6 +655,7 @@ mod tests {
                 token_sha256: digest_bytes(credential.as_bytes()).as_str().into(),
                 role: Role::Viewer,
                 projects: vec![],
+                grant_generation: None,
             }],
             audit_path: root.path().join("audit.jsonl"),
         };
@@ -612,6 +683,60 @@ mod tests {
             restarted.authenticate(&token),
             Err(AuthError::Unauthenticated)
         ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn restored_role_does_not_revive_a_session_that_missed_the_revocation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().canonicalize()?;
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
+        let configuration = root.join("panel.json");
+        let access = root.join("access.json");
+        provision(
+            &configuration,
+            &[
+                "bootstrap",
+                "--principal",
+                "admin",
+                "--origin",
+                "https://glassmere.internal",
+                "--credential-file",
+                access.to_str().ok_or("access path")?,
+            ],
+        )?;
+        let auth = Authentication::open(configuration.clone()).map_err(|_| "auth")?;
+        let credential = delivered(&access)?;
+        let (session, _) = auth.login(&credential).map_err(|_| "login")?;
+
+        provision(
+            &configuration,
+            &["set-grant", "--principal", "admin", "--role", "VIEWER"],
+        )?;
+        // No request observes the intermediate role. Restoring its visible fields
+        // still must not restore the older authenticated capability.
+        provision(
+            &configuration,
+            &[
+                "set-grant",
+                "--principal",
+                "admin",
+                "--role",
+                "ADMINISTRATOR",
+            ],
+        )?;
+
+        assert!(matches!(
+            auth.authenticate(&session),
+            Err(AuthError::Unauthenticated)
+        ));
+        let (fresh, _) = auth.login(&credential).map_err(|_| "fresh login")?;
+        assert_eq!(
+            auth.authenticate(&fresh).map_err(|_| "fresh session")?.role,
+            Role::Administrator
+        );
 
         Ok(())
     }

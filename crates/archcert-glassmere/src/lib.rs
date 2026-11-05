@@ -4,7 +4,9 @@ pub mod auth;
 mod inspection;
 mod render;
 mod search_view;
+mod workflow;
 
+use archcert_application::glassmere::commands::GlassmereCommandBroker;
 use archcert_application::{glassmere::*, jobs::JobStoreError};
 use archcert_domain::ProjectId;
 use auth::{AuthError, Authentication, Identity};
@@ -21,6 +23,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 struct Panel {
     query: Arc<dyn GlassmereQuery>,
+    commands: Option<Arc<dyn GlassmereCommandBroker>>,
     authentication: Authentication,
     concurrency: tokio::sync::Semaphore,
 }
@@ -28,11 +31,44 @@ struct Panel {
 /// Construct a versioned private surface from a query-only application port.
 /// Private provisioning and audit must be available before the listener starts.
 pub fn router(query: Arc<dyn GlassmereQuery>, configuration: PathBuf) -> Result<Router, AuthError> {
+    configured_router(query, configuration, None)
+}
+
+/// Add an independently provisioned command broker while query storage remains SELECT-only.
+pub fn router_with_commands(
+    query: Arc<dyn GlassmereQuery>,
+    configuration: PathBuf,
+    commands: Arc<dyn GlassmereCommandBroker>,
+) -> Result<Router, AuthError> {
+    configured_router(query, configuration, Some(commands))
+}
+
+fn configured_router(
+    query: Arc<dyn GlassmereQuery>,
+    configuration: PathBuf,
+    commands: Option<Arc<dyn GlassmereCommandBroker>>,
+) -> Result<Router, AuthError> {
     let panel = Arc::new(Panel {
         query,
+        commands,
         authentication: Authentication::open(configuration)?,
         concurrency: tokio::sync::Semaphore::new(8),
     });
+    if panel.commands.is_some()
+        && panel
+            .authentication
+            .configuration()?
+            .principals
+            .iter()
+            .any(|principal| {
+                matches!(
+                    principal.role,
+                    auth::Role::Operator | auth::Role::Administrator
+                ) && principal.grant_generation.is_none()
+            })
+    {
+        return Err(AuthError::Unavailable);
+    }
     let router = Router::new()
         .route("/", get(|| async { Redirect::to("/projects") }))
         .route("/healthz", get(|| async { "panel process healthy" }))
@@ -76,7 +112,13 @@ pub fn router(query: Arc<dyn GlassmereQuery>, configuration: PathBuf) -> Result<
                     include_str!("../static/panel.js"),
                 )
             }),
-        )
+        );
+    let router = if panel.commands.is_some() {
+        workflow::routes(router)
+    } else {
+        router
+    };
+    let router = router
         .fallback(unsupported)
         .layer(DefaultBodyLimit::max(4096))
         .layer(middleware::from_fn_with_state(panel.clone(), boundary))
@@ -426,7 +468,12 @@ async fn show_project(
 
     match snapshot {
         Ok(snapshot) => match render::project(&snapshot, section, entity) {
-            Some(body) => html(panel, "Project observation", &body, Some(&id)),
+            Some(mut body) => {
+                if panel.commands.is_some() {
+                    body.push_str(&workflow::links(&snapshot, section, entity, id.role));
+                }
+                html(panel, "Project observation", &body, Some(&id))
+            }
             None => error(StatusCode::NOT_FOUND, "NOT_FOUND"),
         },
         Err(e) => query_error(e),

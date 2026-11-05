@@ -526,9 +526,14 @@ sequences. Query collections are bounded and attempt metadata is batched.
 
 The server embeds buildless HTML/CSS/JavaScript. Private provisioned random bearer
 credentials exchange for expiring HttpOnly same-origin sessions; role/project
-revocation invalidates the session's grant revision. Viewer, Operator and Reviewer
-have read-only scope; Administrator additionally inspects panel audit. No authority
-command, user administration or policy administration is exposed through the browser. See
+revocation invalidates the session's grant revision. Viewer and Reviewer retain
+read-only scope; Administrator additionally inspects panel audit. Under
+[ADR 0059](../adr/0059-glassmere-browser-command-broker.md), Operator and
+Administrator can request three fixed job operations through an opt-in,
+separately authenticated loopback broker. Explicit backend grants, exact context,
+object scope, origin/CSRF and current versioned panel grants remain mandatory.
+The panel retains SELECT-only database access and receives no runtime or signer.
+No user or policy administration is exposed through the browser. See
 [operations and known limits](../glassmere/README.md). This is an INCOMPLETE M9
 visibility implementation, not milestone closure or independent certification.
 
@@ -567,4 +572,12 @@ The trusted controller can provision permissions and poll these requests through
 the existing atomic application executors, without target execution or key loading.
 Historical receipt inspection binds original context under current scope/operation
 authorization; mutations require current selection. Release/readiness transport,
-browser mediation and complete M9 qualification remain open.
+complete browser qualification and M9 closure remain open.
+
+ADR 0059 adds the optional browser broker for those three operations. Forms carry
+identifier-only intent and a retained action key, then redirect to a GET receipt.
+The backend owns durable intent coalescing and domain eligibility. Audited panel
+assignments now include a fresh random grant generation, preventing restored roles
+from reviving older sessions. Legacy unversioned grants remain read-only compatible
+but cannot enable Operator/Administrator commands. This adds no release/readiness,
+review disposition, user administration, runtime or signing operation.

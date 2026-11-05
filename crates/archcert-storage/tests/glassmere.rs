@@ -142,6 +142,63 @@ impl Database {
 
 #[tokio::test]
 #[ignore = "requires real PostgreSQL and role provisioning"]
+async fn exact_source_selection_ignores_history_page_and_preserves_project_scope() -> R {
+    let db = Database::open().await?;
+    let request = db.request().await?;
+    let foreign = db.request().await?;
+    let project = request.inputs.project;
+    let mut submissions = vec![request.inputs.submission.to_string()];
+
+    for ordinal in 0..55 {
+        let submission = SourceSubmissionId::new();
+        let source = SourceSnapshot::seal(
+            project,
+            request.inputs.repository.clone(),
+            GitObjectId::parse(format!("{ordinal:040x}"))?,
+            GitObjectId::parse("b".repeat(40))?,
+            vec![],
+            1,
+            1700000000,
+        )?;
+        db.repository.register_source(&submission, &source).await?;
+        submissions.push(submission.to_string());
+    }
+    submissions.sort();
+    let selected = submissions.last().ok_or("source fixture")?;
+    let reader = ObservationRepository::connect(&db.reader_url).await?;
+
+    let first = reader.snapshot(project, 0).await?;
+    assert_eq!(first.sources.len(), MAX_PAGE_SIZE);
+    assert!(first.sources.iter().all(|source| &source.id != selected));
+
+    for offset in [0, 50, 100_000] {
+        let exact = reader.entity(project, selected, offset).await?;
+        assert_eq!(exact.sources.len(), 1);
+        assert_eq!(&exact.sources[0].id, selected);
+        assert_eq!(exact.project.project, project);
+        assert!(exact.sources[0].fields.iter().any(|field| {
+            field.label == "Repository" && field.value == request.inputs.repository.as_str()
+        }));
+        assert!(exact.jobs.is_empty());
+        assert!(exact.sessions.is_empty());
+    }
+    assert!(matches!(
+        reader
+            .entity(project, &foreign.inputs.submission.to_string(), 0)
+            .await,
+        Err(JobStoreError::Precondition)
+    ));
+    assert!(matches!(
+        reader.entity(project, selected, 100_001).await,
+        Err(JobStoreError::Invalid)
+    ));
+
+    drop(reader);
+    db.close().await
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL and role provisioning"]
 async fn readonly_queries_scope_objects_bound_pages_and_reconstruct_after_restart() -> R {
     let db = Database::open().await?;
     let request = db.request().await?;
