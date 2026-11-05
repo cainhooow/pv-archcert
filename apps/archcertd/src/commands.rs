@@ -85,6 +85,7 @@ fn authorize(
     if !matches!(
         query.operation,
         ControlOperation::RequestCertification
+            | ControlOperation::RequestReleaseReadinessEvaluation
             | ControlOperation::CancelEligibleJob
             | ControlOperation::RetryEligibleJob
     ) {
@@ -153,7 +154,8 @@ async fn context(
             repository: scope.repository.clone(),
             operation: authorization.operation(),
             authority_context,
-            requires_reviewed_session: grant.ironcrest,
+            requires_reviewed_session: grant.ironcrest
+                && authorization.operation() != ControlOperation::RequestReleaseReadinessEvaluation,
         })
     })
     .await;
@@ -170,7 +172,7 @@ async fn submit(
     Json(request): Json<CreateControlCommandRequest>,
 ) -> Response {
     let result = bounded(&state, async {
-        if request.schema != 1 {
+        if request.schema != request.action.schema() {
             return Err(JobStoreError::Invalid);
         }
 
@@ -184,6 +186,12 @@ async fn submit(
         let key = IdempotencyKey::parse(single_header(&headers, "idempotency-key")?.into())?;
 
         let record = match request.action {
+            ControlActionRequest::RequestReleaseReadinessEvaluation { invocation } => {
+                state
+                    .control
+                    .request_readiness(&authorization, invocation, &key)
+                    .await?
+            }
             ControlActionRequest::RequestCertification {
                 source_submission,
                 reviewed_session,

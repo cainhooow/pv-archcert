@@ -200,6 +200,14 @@ has `observation_freshness: HISTORICAL_OBSERVATION`; schema-1 job receipts remai
 unchanged. See [private readiness qualification](READINESS_QUALIFICATION.md) for
 explicit historical fixture selection and actual controller/outage/crash checks.
 
+Under [ADR 0063](../adr/0063-readiness-command-transport.md), the opt-in daemon
+command API also accepts schema-2 `REQUEST_RELEASE_READINESS_EVALUATION` with only
+an `invocation` digest in its action. Existing scoped backend credentials and
+grants, expected authority context and explicit idempotency key are mandatory.
+The daemon records a question; the separately provisioned dispatcher evaluates it.
+This enables no browser readiness form. Job request/receipt schema 1 remains
+unchanged, and no caller can post readiness facts or a release recipe.
+
 Evidence inspection rehashes registered project/entity/digest-bound original bytes.
 Certificate and permit signatures are checked under selected public keys. Signature
 validity is distinct from actual artifact authorization, which requires readiness or

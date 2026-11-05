@@ -601,3 +601,11 @@ qualification harness copies explicitly selected historical evidence into an
 isolated schema/store and uses actual controller/public-verifier composition.
 It creates no new source certification, build claim or permit, and enables no
 daemon or browser readiness operation.
+
+[ADR 0063](../adr/0063-readiness-command-transport.md) adds opt-in daemon readiness
+requests with schema 2 and only an exact invocation identifier. The existing
+credential/scope/context/object/idempotency checks mediate durable acceptance;
+the HTTP handler performs no verification or execution. Same-key receipts remain
+historical, and a new explicit key asks a fresh question. Job schemas and all
+resource/authority limits remain unchanged. The browser still exposes only the
+three previously qualified job operations; readiness browser integration is open.

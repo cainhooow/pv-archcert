@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateControlCommandRequest {
-    /// Explicit transport interpretation version, currently one.
+    /// Explicit transport version: one for job actions, two for readiness questions.
     pub schema: u32,
     /// Exact authenticated project scope.
     pub project: ProjectId,
@@ -27,11 +27,16 @@ pub struct CreateControlCommandRequest {
     pub action: ControlActionRequest,
 }
 
-/// Job operations whose existing atomic application mediation is available.
+/// Fixed operations whose application mediation is available.
 /// Other operations remain unavailable until their separate mediation is connected.
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 pub enum ControlActionRequest {
+    /// Ask a fresh historical question about one exact owned admitted release.
+    RequestReleaseReadinessEvaluation {
+        /// Immutable invocation, never posted verification facts or build inputs.
+        invocation: archcert_domain::release::BuildInvocationIdentity,
+    },
     /// Request exact accepted source with an existing reviewed session when mandatory.
     RequestCertification {
         /// Immutable accepted source ID.
@@ -54,9 +59,23 @@ pub enum ControlActionRequest {
 }
 
 impl ControlActionRequest {
+    /// Explicit request grammar. Existing job operations retain schema 1;
+    /// readiness requires schema 2 and its versioned historical receipt contract.
+    pub fn schema(&self) -> u32 {
+        match self {
+            Self::RequestReleaseReadinessEvaluation { .. } => 2,
+            Self::RequestCertification { .. }
+            | Self::CancelEligibleJob { .. }
+            | Self::RetryEligibleJob { .. } => 1,
+        }
+    }
+
     /// Application permission class; the transport DTO never enters application ports.
     pub fn operation(&self) -> ControlOperation {
         match self {
+            Self::RequestReleaseReadinessEvaluation { .. } => {
+                ControlOperation::RequestReleaseReadinessEvaluation
+            }
             Self::RequestCertification { .. } => ControlOperation::RequestCertification,
             Self::CancelEligibleJob { .. } => ControlOperation::CancelEligibleJob,
             Self::RetryEligibleJob { .. } => ControlOperation::RetryEligibleJob,

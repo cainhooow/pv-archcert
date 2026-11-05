@@ -64,7 +64,6 @@ fn command_requests_cannot_carry_authority_overrides_or_direct_effects() -> Resu
         "EXECUTE_DOCKER",
         "REVIEW_DISPOSITION",
         "REQUEST_RELEASE_BUILD",
-        "REQUEST_RELEASE_READINESS_EVALUATION",
     ] {
         let mut forged = original.clone();
         forged["action"]["kind"] = serde_json::json!(kind);
@@ -78,6 +77,59 @@ fn command_requests_cannot_carry_authority_overrides_or_direct_effects() -> Resu
             .remove(field);
         assert!(serde_json::from_value::<CreateControlCommandRequest>(missing).is_err());
     }
+
+    Ok(())
+}
+
+#[test]
+fn readiness_requests_require_schema_two_and_accept_only_an_invocation() -> Result {
+    let mut value = request();
+    value["schema"] = serde_json::json!(2);
+    value["action"] = serde_json::json!({
+        "kind": "REQUEST_RELEASE_READINESS_EVALUATION",
+        "invocation": digest_bytes(b"exact owned invocation"),
+    });
+    let parsed: CreateControlCommandRequest = serde_json::from_value(value.clone())?;
+    assert_eq!(parsed.schema, parsed.action.schema());
+    assert_eq!(
+        parsed.action.operation(),
+        ControlOperation::RequestReleaseReadinessEvaluation
+    );
+
+    for field in [
+        "source",
+        "certificate",
+        "artifact",
+        "permit",
+        "policy",
+        "readiness",
+        "observer",
+        "signing_key",
+        "recipe",
+        "shell",
+        "actor",
+        "result",
+    ] {
+        for nested in [false, true] {
+            let mut forged = value.clone();
+            let object = if nested {
+                &mut forged["action"]
+            } else {
+                &mut forged
+            };
+            object[field] = serde_json::json!("forged authority");
+            assert!(serde_json::from_value::<CreateControlCommandRequest>(forged).is_err());
+        }
+    }
+
+    for schema in [0, 1, 3] {
+        let mut other = value.clone();
+        other["schema"] = serde_json::json!(schema);
+        let parsed: CreateControlCommandRequest = serde_json::from_value(other)?;
+        assert_ne!(parsed.schema, parsed.action.schema());
+    }
+    value["action"]["invocation"] = serde_json::json!("f".repeat(63));
+    assert!(serde_json::from_value::<CreateControlCommandRequest>(value).is_err());
 
     Ok(())
 }
