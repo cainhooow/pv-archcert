@@ -163,8 +163,8 @@ invented. Matching COMPLETED or ELIGIBLE metadata is not signature verification.
 There are no materialized Glassmere projection tables. Restart/refetch reconstructs
 query results from retained authoritative records and rehashed original bytes.
 Deleting browser memory or panel session state cannot delete certification truth.
-Projection database rebuild/update-failure tests are not applicable. Existing
-workflow locking, leases, fences and cleanup are untouched.
+Projection database rebuild/update-failure tests are not applicable. Observation
+reconstruction does not mutate workflow locking, leases, fences or cleanup.
 
 Readiness verifies one immutable release invocation. The selected source certificate,
 source scope, approved recipe/environment, complete independent A/B results,
@@ -189,6 +189,29 @@ representative credentials. Original downloads deliberately preserve bytes and m
 contain confidential source material; they require authorization and use attachment,
 nosniff, a digest filename and a digest header. Do not publish the private evidence
 store. No Markdown HTML or arbitrary link is promoted into a verified citation.
+
+## Job command backend
+
+[ADR 0058](../adr/0058-glassmere-job-command-transport.md) defines the separately
+opt-in daemon command API and trusted controller polling for certification,
+eligible queued cancellation and exact-attempt infrastructure recovery. The daemon
+requires private command-only credentials; those tokens cannot authenticate legacy
+submission. The browser panel remains read-only until its separate broker and role/
+origin/CSRF integration is connected and qualified. Release/readiness commands and
+ReviewDisposition are absent from this initial transport grammar. A request receipt
+is not a certificate, permit or positive target verdict.
+
+## Development authority time
+
+Lease qualification requires a stable authority database clock. Use one coherent
+time source for the PostgreSQL host/VM. Competing VM clock correctors can invalidate
+lease bounds; backward steps can extend an unchanged generation's apparent deadline.
+The current implementation does not claim wall-clock rollback tolerance. Diagnose
+clock/service state and retain failures before correcting development provisioning;
+do not increase timeouts or suppress a lease guard to make tests pass. Bounded
+clock samples establish only the observed local environment. They do not establish
+production time discipline or native qualification. Recheck time services after a
+development VM restart, which may restore its default service configuration.
 
 ## Local retained preview
 

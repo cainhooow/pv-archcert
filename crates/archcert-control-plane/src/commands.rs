@@ -64,6 +64,18 @@ impl AuthorityGrant {
 }
 
 impl ControlPlane {
+    /// Recheck current scope before exposing selection identity. This creates no
+    /// command and grants no execution or signature capability.
+    pub async fn command_context(
+        &self,
+        authorization: &CommandAuthorization,
+    ) -> Result<Sha256Digest, JobStoreError> {
+        self.authorize_command(authorization, authorization.operation())
+            .await?;
+
+        Ok(authorization.context().clone())
+    }
+
     /// Explicit operator provisioning only. Repository authorization remains separate.
     /// Calling this does not revoke older grants or apply database migrations.
     pub async fn provision_commands(
@@ -240,13 +252,25 @@ impl ControlPlane {
         authorization: &CommandAuthorization,
         id: ControlCommandId,
     ) -> Result<ControlCommandRecord, JobStoreError> {
+        self.historical_command_status(authorization, id, authorization.context())
+            .await
+    }
+
+    /// Inspect an original receipt under current scope/operation authorization.
+    /// The context must match that retained record; it cannot select execution inputs.
+    pub async fn historical_command_status(
+        &self,
+        authorization: &CommandAuthorization,
+        id: ControlCommandId,
+        original_context: &Sha256Digest,
+    ) -> Result<ControlCommandRecord, JobStoreError> {
         let scope = self
             .authorize_command(authorization, authorization.operation())
             .await?;
         let record = ControlCommandRepository::get(&self.repository, scope, id).await?;
 
         if record.command.action.operation() != authorization.operation()
-            || record.command.authority_context != *authorization.context()
+            || record.command.authority_context != *original_context
         {
             return Err(JobStoreError::Unauthorized);
         }

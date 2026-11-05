@@ -558,3 +558,13 @@ repository and command grants remain separate. Passive certification resolution
 creates no job before journal acceptance. Reviewed requests require their owned
 existing session before private preparation. No HTTP command route or browser
 mutation is enabled by this composition alone.
+
+[ADR 0058](../adr/0058-glassmere-job-command-transport.md) adds separately opt-in
+loopback daemon routes with strict identifier-only requests and public receipt
+projection for certification, eligible cancellation and exact-attempt recovery.
+Command credentials reload per request and cannot authenticate legacy submission.
+The trusted controller can provision permissions and poll these requests through
+the existing atomic application executors, without target execution or key loading.
+Historical receipt inspection binds original context under current scope/operation
+authorization; mutations require current selection. Release/readiness transport,
+browser mediation and complete M9 qualification remain open.

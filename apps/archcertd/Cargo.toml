@@ -19,6 +19,10 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+tempfile.workspace = true
+archcert-storage = { path = "../../crates/archcert-storage", version = "=0.1.0" }
+sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "json", "migrate"] }
+tower = { version = "0.5", features = ["util"] }
 
 [lints]
 workspace = true

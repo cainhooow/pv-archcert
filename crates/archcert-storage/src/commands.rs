@@ -386,6 +386,23 @@ async fn effect_scope(
 }
 
 impl PostgresJobRepository {
+    /// Read-only command readiness, including known-rejection idempotency semantics.
+    /// Historical admission readiness remains unchanged when commands are disabled.
+    pub async fn check_command_readiness(&self) -> Result<()> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM _sqlx_migrations WHERE version IN (8,9,10) AND success",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db)?;
+
+        if count != 3 {
+            return Err(JobStoreError::Unavailable);
+        }
+
+        Ok(())
+    }
+
     /// Explicit private authority provisioning, never called by the panel or a target.
     /// Existing repository grants alone enable no operational command.
     pub async fn grant_control_command(

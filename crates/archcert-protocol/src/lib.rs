@@ -4,6 +4,9 @@
 
 pub mod protobuf;
 
+/// Strict identifier-only operational requests and explicitly projected public receipts.
+pub mod commands;
+
 use archcert_application::{SubmitCertificationCommand, SubmitCertificationResult};
 use archcert_domain::GitObjectId;
 use serde::{Deserialize, Serialize};

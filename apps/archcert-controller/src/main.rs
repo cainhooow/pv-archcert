@@ -2,6 +2,8 @@
 
 mod ironcrest;
 
+mod commands;
+
 mod runtime;
 
 mod release;
@@ -46,6 +48,14 @@ enum Command {
     },
     /// Explicitly provisions configured development scope grants, without schema DDL.
     Provision,
+    /// Explicitly provisions command permissions after repository grants; no schema DDL.
+    ProvisionCommands {
+        #[arg(long)]
+        credentials: PathBuf,
+    },
+    /// Mediates one durable job command; does not run targets or load signing keys.
+    #[command(name = "dispatch-command")]
+    Dispatch(commands::DispatchArgs),
     /// Checks control-plane/storage readiness without execution or signing.
     Doctor,
     /// Inspects or removes old unlocked development artifact stages, never final objects.
@@ -124,6 +134,14 @@ async fn main() -> Result<()> {
     .await?;
 
     match args.command {
+        Command::ProvisionCommands { credentials } => {
+            let credentials = archcert_control_plane::commands::CommandCredentials::load(
+                &credentials,
+                &state.configuration,
+            )?;
+            state.provision_commands(&credentials).await?;
+        }
+        Command::Dispatch(args) => commands::dispatch(&state, args).await?,
         Command::Release(args) => release::run(&state, *args).await?,
         Command::ReleaseShow {
             project,

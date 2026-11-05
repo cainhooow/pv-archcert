@@ -1,5 +1,7 @@
 //! Authenticated durable ArchCert admission/status API. No execution or signing.
 
+mod commands;
+
 use archcert_application::{artifacts::ImmutableArtifactStore, jobs::JobStoreError};
 use archcert_control_plane::{ControlPlane, ControlPlaneConfiguration};
 use archcert_domain::jobs::{IdempotencyKey, JobId};
@@ -14,12 +16,23 @@ use axum::{
 use clap::Parser;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tower_http::trace::TraceLayer;
+
 #[derive(Parser)]
 struct Args {
     #[arg(long)]
     config: PathBuf,
+    /// Optional strict private command-only credentials; never legacy submission tokens.
+    #[arg(long)]
+    command_credentials: Option<PathBuf>,
     #[arg(long, default_value = "127.0.0.1:8080")]
     listen: SocketAddr,
+}
+
+#[derive(Clone)]
+struct ApiState {
+    control: Arc<ControlPlane>,
+    command_credentials: Option<PathBuf>,
+    command_slots: Arc<tokio::sync::Semaphore>,
 }
 
 #[tokio::main]
@@ -45,15 +58,16 @@ async fn main() -> anyhow::Result<()> {
     // Verify migrations were applied explicitly; do not mutate schema at startup.
     state.repository.check_readiness().await?;
 
-    let app = Router::new()
-        .route("/healthz", get(|| async { "ok" }))
-        .route("/readyz", get(readiness))
-        .route("/api/v1/certifications", post(submit))
-        .route("/api/v1/certifications/{id}", get(status))
-        .route("/api/v1/certifications/{id}/certificate", get(certificate))
-        .layer(DefaultBodyLimit::max(4096))
-        .layer(TraceLayer::new_for_http())
-        .with_state(state);
+    if let Some(path) = &args.command_credentials {
+        archcert_control_plane::commands::CommandCredentials::load(path, &state.configuration)?;
+        state.repository.check_command_readiness().await?;
+    }
+
+    let app = router(ApiState {
+        control: state,
+        command_credentials: args.command_credentials,
+        command_slots: Arc::new(tokio::sync::Semaphore::new(8)),
+    });
 
     tracing::info!(address=%args.listen,"ArchCert durable API listening");
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
@@ -62,8 +76,30 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn readiness(State(state): State<Arc<ControlPlane>>) -> Response {
-    if state.repository.check_readiness().await.is_ok() && state.artifacts.check_readiness().is_ok()
+fn router(state: ApiState) -> Router {
+    let app = Router::new()
+        .route("/healthz", get(|| async { "ok" }))
+        .route("/readyz", get(readiness))
+        .route("/api/v1/certifications", post(submit))
+        .route("/api/v1/certifications/{id}", get(status))
+        .route("/api/v1/certifications/{id}/certificate", get(certificate));
+    let app = if state.command_credentials.is_some() {
+        app.merge(commands::router())
+    } else {
+        app
+    };
+
+    app.layer(DefaultBodyLimit::max(4096))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+async fn readiness(State(state): State<ApiState>) -> Response {
+    let commands_ready = commands::ready(&state).await;
+    let state = state.control;
+    if commands_ready
+        && state.repository.check_readiness().await.is_ok()
+        && state.artifacts.check_readiness().is_ok()
     {
         (StatusCode::OK, "ready").into_response()
     } else {
@@ -101,17 +137,18 @@ fn error(e: JobStoreError) -> Response {
 }
 
 async fn submit(
-    State(state): State<Arc<ControlPlane>>,
+    State(state): State<ApiState>,
     headers: HeaderMap,
     Json(request): Json<CreateCertificationRequest>,
 ) -> Response {
     let result = async {
-        let actor = actor(&state, &headers)?;
+        let actor = actor(&state.control, &headers)?;
         let key = headers
             .get("idempotency-key")
             .and_then(|v| v.to_str().ok())
             .ok_or(JobStoreError::Invalid)?;
         state
+            .control
             .submit(
                 actor,
                 request.project,
@@ -134,13 +171,13 @@ async fn submit(
 }
 
 async fn status(
-    State(state): State<Arc<ControlPlane>>,
+    State(state): State<ApiState>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
     let result = async {
-        let actor = actor(&state, &headers)?;
-        state.status(&actor, JobId::parse(&id)?).await
+        let actor = actor(&state.control, &headers)?;
+        state.control.status(&actor, JobId::parse(&id)?).await
     }
     .await;
 
@@ -151,17 +188,18 @@ async fn status(
 }
 
 async fn certificate(
-    State(state): State<Arc<ControlPlane>>,
+    State(state): State<ApiState>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
     let result = async {
-        let actor = actor(&state, &headers)?;
-        let job = state.status(&actor, JobId::parse(&id)?).await?;
+        let actor = actor(&state.control, &headers)?;
+        let job = state.control.status(&actor, JobId::parse(&id)?).await?;
 
         let cert = job.certificate.ok_or(JobStoreError::Precondition)?;
 
         state
+            .control
             .artifacts
             .get(job.inputs.project, &cert.artifact)
             .await
