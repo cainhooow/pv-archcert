@@ -307,9 +307,12 @@ async fn command_dispatch_race_fencing_and_terminal_receipt_are_durable() -> R {
             .is_none()
     );
     assert_eq!(
-        repo.accept(&command, &key("another-tab")?).await?.id,
+        repo.accept(&command, &key("request")?).await?.id,
         accepted.id
     );
+    let fresh = repo.accept(&command, &key("another-tab")?).await?;
+    assert_ne!(fresh.id, accepted.id);
+    assert_eq!(fresh.state, ControlCommandState::Requested);
     for query in [
         "UPDATE control_commands SET state='REQUESTED',outcome=NULL",
         "UPDATE control_commands SET request_sha256=repeat('a',64)",
@@ -869,6 +872,165 @@ async fn command_cancellation_guard_rejects_missing_or_wrong_reason() -> R {
         assert_eq!(retained.state, JobState::Queued);
         assert!(retained.failure.is_none());
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn command_known_rejection_retains_old_key_and_coalesces_a_fresh_action() -> R {
+    let (repo, pool, command) = fixture().await?;
+    let original = assignment(&repo, &command).await?;
+    repo.finish(
+        &original.lease,
+        &ControlCommandOutcome::Rejected {
+            reason: CommandFailure::DomainPrecondition,
+        },
+    )
+    .await?;
+    let original_key = key("request")?;
+    let second_key = key("explicit-fresh-action")?;
+    let third_key = key("duplicate-fresh-action")?;
+
+    let (old, fresh, duplicate) = tokio::join!(
+        repo.accept(&command, &original_key),
+        repo.accept(&command, &second_key),
+        repo.accept(&command, &third_key),
+    );
+    let (old, fresh, duplicate) = (old?, fresh?, duplicate?);
+    assert_eq!(old.id, original.record.id);
+    assert_eq!(old.state, ControlCommandState::Rejected);
+    assert_ne!(fresh.id, old.id);
+    assert_eq!(fresh.id, duplicate.id);
+
+    let current = ControlCommandRepository::claim(&repo, "fresh-dispatcher", 30)
+        .await?
+        .ok_or("no fresh claim")?;
+    assert_eq!(current.record.id, fresh.id);
+    let result = repo
+        .apply_job_command(&current.lease, &command.authority_context)
+        .await?;
+    assert!(matches!(result, ControlCommandOutcome::Applied { .. }));
+    assert_eq!(
+        repo.accept(&command, &key("fourth-tab")?).await?.id,
+        fresh.id
+    );
+    assert_eq!(repo.accept(&command, &original_key).await?.id, old.id);
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM control_commands),(SELECT count(*) FROM certification_jobs)",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(counts, (2, 1));
+
+    let mut substituted = command.clone();
+    if let ResolvedControlAction::RequestCertification { inputs, .. } = &mut substituted.action {
+        inputs.plan_sha256 = digest_bytes(b"changed original request");
+    }
+    assert!(matches!(
+        repo.accept(&substituted, &original_key).await,
+        Err(JobStoreError::Conflict)
+    ));
+    let retained = ControlCommandRepository::get(&repo, &command.scope, old.id).await?;
+    assert_eq!(retained.state, ControlCommandState::Rejected);
+    assert!(matches!(
+        retained.outcome,
+        Some(ControlCommandOutcome::Rejected {
+            reason: CommandFailure::DomainPrecondition,
+        })
+    ));
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn command_uncertain_outcome_never_authorizes_repetition_with_a_new_key() -> R {
+    let (repo, pool, command) = fixture().await?;
+    let original = assignment(&repo, &command).await?;
+    repo.finish(
+        &original.lease,
+        &ControlCommandOutcome::Inconclusive {
+            reason: CommandFailure::UncertainOutcome,
+        },
+    )
+    .await?;
+
+    let first_key = key("new-key-one")?;
+    let second_key = key("new-key-two")?;
+    let (first, second) = tokio::join!(
+        repo.accept(&command, &first_key),
+        repo.accept(&command, &second_key)
+    );
+    assert_eq!(first?.id, original.record.id);
+    assert_eq!(second?.id, original.record.id);
+    assert!(
+        ControlCommandRepository::claim(&repo, "new-dispatcher", 30)
+            .await?
+            .is_none()
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM control_commands")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(count, 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn command_applied_request_with_policy_failure_cannot_create_another_workflow() -> R {
+    let (repo, pool, command) = fixture().await?;
+    let original = assignment(&repo, &command).await?;
+    let outcome = repo
+        .apply_job_command(&original.lease, &command.authority_context)
+        .await?;
+    let ControlCommandOutcome::Applied { effect } = outcome else {
+        return Err("wrong fixture outcome".into());
+    };
+    let CommandEffect::CertificationRequested { job: Some(job), .. } = *effect else {
+        return Err("wrong fixture effect".into());
+    };
+
+    // Metadata-only negative lifecycle fixture; it establishes no runtime or positive evidence proof.
+    let worker = JobRepository::claim(&repo, "denial-fixture", 30)
+        .await?
+        .ok_or("no worker")?;
+    JobRepository::start(&repo, &worker.lease).await?;
+    let execution = archcert_application::release::release_reference(b"negative execution fixture");
+    repo.stage_artifact(job, Some(worker.lease.attempt), "EXECUTION", &execution)
+        .await?;
+    repo.artifact_available(job, Some(worker.lease.attempt), "EXECUTION", &execution)
+        .await?;
+    JobRepository::accept_evidence(&repo, &worker.lease, &execution).await?;
+    let evaluation = archcert_application::release::release_reference(b"negative policy fixture");
+    repo.stage_artifact(job, None, "EVALUATION", &evaluation)
+        .await?;
+    repo.artifact_available(job, None, "EVALUATION", &evaluation)
+        .await?;
+    JobRepository::record_evaluation(&repo, job, &evaluation, EvaluationDecision::NotEligible)
+        .await?;
+
+    let replay = repo
+        .accept(&command, &key("new-key-after-policy-failure")?)
+        .await?;
+    assert_eq!(replay.id, original.record.id);
+    assert_eq!(replay.state, ControlCommandState::Applied);
+    let retained = JobRepository::get(&repo, job).await?;
+    assert_eq!(retained.state, JobState::NotEligible);
+    assert_eq!(retained.attempts.len(), 1);
+    assert!(retained.certificate.is_none());
+    assert!(
+        JobRepository::claim(&repo, "forbidden-rerun", 30)
+            .await?
+            .is_none()
+    );
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM control_commands),(SELECT count(*) FROM certification_jobs)",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(counts, (1, 1));
 
     Ok(())
 }

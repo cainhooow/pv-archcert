@@ -534,7 +534,11 @@ visibility implementation, not milestone closure or independent certification.
 
 [ADR 0053](../adr/0053-glassmere-operational-command-journal.md) adds a private
 application command journal with explicit operation/context grants, immutable retry
-aliases, intent deduplication and fenced dispatch. These are operational records,
+aliases, intent deduplication and fenced dispatch. Under
+[ADR 0056](../adr/0056-glassmere-known-rejection-idempotency.md), a known no-effect
+rejection permits a fresh action with another key; the original key always retains
+its original receipt. Pending, applied and uncertain work remains coalesced.
+These are operational records,
 not cached query projections. [ADR 0054](../adr/0054-glassmere-atomic-job-commands.md)
 mediates existing non-reviewed admission, narrowly eligible queued cancellation and
 infrastructure-only retry with domain mutation, audit and receipt in one transaction.

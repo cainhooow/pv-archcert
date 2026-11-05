@@ -433,40 +433,82 @@ impl ControlCommandRepository for PostgresJobRepository {
         .await?;
         object_scope(&mut tx, command).await?;
 
-        let proposed = ControlCommandId::new();
-        let inserted = sqlx::query(
-            "INSERT INTO control_commands(
-                id,project,repository,actor,authority_context,operation,
-                request,request_sha256,intent_sha256
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-             ON CONFLICT(project,repository,actor,intent_sha256) DO NOTHING",
-        )
-        .bind(proposed.to_string())
-        .bind(scope.project.to_string())
-        .bind(scope.repository.as_str())
-        .bind(scope.actor.as_str())
-        .bind(command.authority_context.as_str())
-        .bind(command.action.name())
-        .bind(json(command)?)
-        .bind(request.as_str())
-        .bind(intent.as_str())
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?
-        .rows_affected()
-            == 1;
-        let row = sqlx::query(
-            "SELECT * FROM control_commands
-             WHERE project=$1 AND repository=$2 AND actor=$3 AND intent_sha256=$4",
+        // A retained key always resolves its original receipt, including known rejection.
+        let previous = sqlx::query(
+            "SELECT c.*, k.request_sha256 AS bound_request_sha256
+             FROM control_command_keys k JOIN control_commands c ON c.id=k.command
+             WHERE k.project=$1 AND k.repository=$2 AND k.actor=$3 AND k.idempotency_key=$4",
         )
         .bind(scope.project.to_string())
         .bind(scope.repository.as_str())
         .bind(scope.actor.as_str())
-        .bind(intent.as_str())
-        .fetch_one(&mut *tx)
+        .bind(key.as_str())
+        .fetch_optional(&mut *tx)
         .await
         .map_err(db)?;
-        let record = record(&row)?;
+
+        if let Some(row) = previous {
+            let record = record(&row)?;
+
+            if record.request_sha256 != request {
+                return Err(JobStoreError::Conflict);
+            }
+
+            let bound_request_sha256: String = row.try_get("bound_request_sha256").map_err(db)?;
+            if bound_request_sha256 != request.as_str() {
+                return Err(JobStoreError::Conflict);
+            }
+
+            tx.commit().await.map_err(db)?;
+
+            return Ok(record);
+        }
+
+        // Serialize short acceptance for this content identity. PostgreSQL's hash
+        // is a coordination key only; the canonical SHA-256 remains the identity.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(intent.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        let current = sqlx::query(
+            "SELECT * FROM control_commands
+             WHERE project=$1 AND repository=$2 AND actor=$3 AND intent_sha256=$4
+               AND state <> 'REJECTED'
+             FOR UPDATE",
+        )
+        .bind(scope.project.to_string())
+        .bind(scope.repository.as_str())
+        .bind(scope.actor.as_str())
+        .bind(intent.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db)?;
+
+        let (record, inserted) = if let Some(row) = current {
+            (record(&row)?, false)
+        } else {
+            let row = sqlx::query(
+                "INSERT INTO control_commands(
+                    id,project,repository,actor,authority_context,operation,
+                    request,request_sha256,intent_sha256
+                 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
+            )
+            .bind(ControlCommandId::new().to_string())
+            .bind(scope.project.to_string())
+            .bind(scope.repository.as_str())
+            .bind(scope.actor.as_str())
+            .bind(command.authority_context.as_str())
+            .bind(command.action.name())
+            .bind(json(command)?)
+            .bind(request.as_str())
+            .bind(intent.as_str())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db)?;
+
+            (record(&row)?, true)
+        };
 
         if record.request_sha256 != request {
             return Err(JobStoreError::Conflict);
