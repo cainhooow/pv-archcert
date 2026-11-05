@@ -538,6 +538,10 @@ aliases, intent deduplication and fenced dispatch. These are operational records
 not cached query projections. [ADR 0054](../adr/0054-glassmere-atomic-job-commands.md)
 mediates existing non-reviewed admission, narrowly eligible queued cancellation and
 infrastructure-only retry with domain mutation, audit and receipt in one transaction.
-Reviewed admission, release and readiness commands still require separate mediation;
-no HTTP command is enabled by these private ports. Browser RBAC/idempotency and
-actual process-kill command recovery remain unqualified.
+Reviewed certification additionally consumes the existing sealed application
+admission under [ADR 0055](../adr/0055-glassmere-reviewed-command-mediation.md),
+preserving its source/review/challenge chain and atomic linkage/receipt. Retained
+reviews can be restored without any provider invocation capability. Release and
+readiness commands still require separate mediation; no HTTP command is enabled by
+these private ports. Browser RBAC/idempotency and actual process-kill command
+recovery remain unqualified.

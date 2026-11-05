@@ -162,6 +162,32 @@ impl IroncrestWorkflow<'_> {
         Ok(artifact)
     }
 
+    /// Restore an already retained exact review without claiming or invoking a provider.
+    /// Staged publication may become AVAILABLE only after the existing byte validation.
+    pub async fn restore_retained_review(
+        &self,
+        request: &SemanticReviewRequest,
+    ) -> Result<SemanticReviewArtifact, JobStoreError> {
+        let binding = request.binding();
+        let session = self
+            .repository
+            .review_session(binding.project, binding.job)
+            .await?;
+
+        if !session.pin.matches_review(binding.job, binding) {
+            return Err(JobStoreError::Precondition);
+        }
+
+        let evidence = session
+            .evidence
+            .iter()
+            .find(|reference| reference.role == IroncrestEvidenceRole::Review)
+            .ok_or(JobStoreError::Precondition)?;
+
+        self.restore(request, evidence, session.review_timestamp)
+            .await
+    }
+
     async fn restore(
         &self,
         request: &SemanticReviewRequest,

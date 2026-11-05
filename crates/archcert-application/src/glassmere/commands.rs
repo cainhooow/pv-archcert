@@ -2,6 +2,7 @@
 
 use crate::{
     glassmere::ReleaseReadiness,
+    ironcrest::ReviewedIroncrestAdmission,
     jobs::{ArtifactReference, CertificationJob, JobStoreError, RuntimeCleanupState},
     release::{ReleaseAdmission, release_bytes, release_reference},
 };
@@ -235,6 +236,55 @@ impl ResolvedControlCommand {
             Err(JobStoreError::Invalid)
         }
     }
+
+    /// Bind an existing sealed application admission to the original reviewed request.
+    /// Only its validated additive plan/recipe may differ from the frozen base inputs.
+    pub fn validate_reviewed_admission(
+        &self,
+        admission: &ReviewedIroncrestAdmission,
+    ) -> Result<(), JobStoreError> {
+        self.validate()?;
+        let ResolvedControlAction::RequestCertification {
+            inputs,
+            reviewed_session: Some(session),
+        } = &self.action
+        else {
+            return Err(JobStoreError::Invalid);
+        };
+
+        let pin = admission.pin();
+        let admitted = admission.inputs();
+        if admission.id() != *session
+            || pin.project != inputs.project
+            || pin.repository != inputs.repository
+            || pin.actor != inputs.actor
+            || pin.submission != inputs.submission
+            || pin.source != inputs.source
+            || pin.policy != inputs.policy
+            || pin.base_plan_sha256 != inputs.plan_sha256
+        {
+            return Err(JobStoreError::Invalid);
+        }
+
+        if admitted.project != inputs.project
+            || admitted.repository != inputs.repository
+            || admitted.actor != inputs.actor
+            || admitted.submission != inputs.submission
+            || admitted.source != inputs.source
+            || admitted.policy != inputs.policy
+        {
+            return Err(JobStoreError::Invalid);
+        }
+
+        if admitted.profile != inputs.profile
+            || admitted.image != inputs.image
+            || admitted.maximum_attempts != inputs.maximum_attempts
+        {
+            return Err(JobStoreError::Invalid);
+        }
+
+        Ok(())
+    }
 }
 
 /// Operational request state. APPLIED never means a certificate or permit was issued.
@@ -466,5 +516,17 @@ pub trait ControlJobCommandExecutor: Send + Sync {
         &self,
         lease: &ControlCommandLease,
         selected_context: &Sha256Digest,
+    ) -> Result<ControlCommandOutcome, JobStoreError>;
+}
+
+/// Reviewed mediation requires the existing sealed application admission, never a posted gate.
+#[async_trait]
+pub trait ReviewedControlCommandExecutor: Send + Sync {
+    /// Atomically commit the original reviewed admission/linkage, audit and command receipt.
+    async fn apply_reviewed_certification(
+        &self,
+        lease: &ControlCommandLease,
+        selected_context: &Sha256Digest,
+        admission: &ReviewedIroncrestAdmission,
     ) -> Result<ControlCommandOutcome, JobStoreError>;
 }

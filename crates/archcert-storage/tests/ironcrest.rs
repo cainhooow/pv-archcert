@@ -2,6 +2,7 @@
 //! binary is separate from short-lease execution fixtures; its own claim race
 //! remains concurrent. Run both binaries through scripts/test-ravenport.
 
+use archcert_application::glassmere::commands as glassmere_commands;
 use archcert_application::jobs::*;
 use archcert_domain::{GitObjectId, ProjectId, Sha256Digest, ingress::*, jobs::*, source::*};
 use archcert_storage::PostgresJobRepository;
@@ -1142,6 +1143,328 @@ async fn advance_review(
     workflow
         .freeze_admission(f.context(id, request, &review))
         .await
+}
+
+fn certification_command(
+    f: &AdmissionFixture,
+    id: JobId,
+) -> glassmere_commands::ResolvedControlCommand {
+    use glassmere_commands::*;
+
+    ResolvedControlCommand {
+        schema: CONTROL_COMMAND_SCHEMA,
+        scope: CommandScope {
+            project: f.inputs.project,
+            repository: f.inputs.repository.clone(),
+            actor: f.inputs.actor.clone(),
+        },
+        authority_context: digest_bytes(b"explicit reviewed-command fixture authority"),
+        action: ResolvedControlAction::RequestCertification {
+            inputs: Box::new(f.inputs.clone()),
+            reviewed_session: Some(id),
+        },
+    }
+}
+
+async fn reviewed_command_assignment(
+    repo: &PostgresJobRepository,
+    command: &glassmere_commands::ResolvedControlCommand,
+) -> R<glassmere_commands::ControlCommandAssignment> {
+    use glassmere_commands::ControlCommandRepository as CommandRepository;
+    repo.grant_control_command(&command.scope, &command.authority_context, &command.action)
+        .await?;
+    CommandRepository::accept(
+        repo,
+        command,
+        &IdempotencyKey::parse("reviewed-request".into())?,
+    )
+    .await?;
+
+    Ok(CommandRepository::claim(repo, "reviewed-dispatcher", 30)
+        .await?
+        .ok_or("no command claim")?)
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL and private immutable artifact storage"]
+async fn reviewed_command_preserves_sealed_plan_and_restores_without_provider_reinvocation() -> R {
+    use archcert_application::ironcrest::*;
+    use archcert_storage::artifacts::FilesystemArtifactStore;
+    use glassmere_commands::{
+        ControlCommandRepository as CommandRepository,
+        ReviewedControlCommandExecutor as ReviewedExecutor,
+    };
+    use std::{
+        os::unix::fs::PermissionsExt,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    let (repo, pool) = database().await?;
+    let fixture = admission_fixture(&repo).await?;
+    let id = JobId::new();
+    repo.open_session(id, &fixture.pin).await?;
+    let root = tempfile::tempdir()?;
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700))?;
+    let artifacts =
+        FilesystemArtifactStore::open_unencrypted_development(&root.path().canonicalize()?)?;
+    let workflow = IroncrestWorkflow {
+        repository: &repo,
+        artifacts: &artifacts,
+    };
+    let request = fixture.review_request(id)?;
+    let reviewer = CountingSemanticReviewer(AtomicUsize::new(0));
+    workflow
+        .prepare(
+            &request,
+            &fixture.knowledge,
+            &fixture.impact,
+            fixture.profile.artifact(),
+        )
+        .await?;
+
+    assert!(workflow.restore_retained_review(&request).await.is_err());
+    assert!(
+        !repo
+            .review_session(fixture.inputs.project, id)
+            .await?
+            .review_claimed
+    );
+    assert_eq!(reviewer.0.load(Ordering::SeqCst), 0);
+
+    let admission = advance_review(&workflow, &fixture, id, &request, &reviewer).await?;
+    let restored = workflow.restore_retained_review(&request).await?;
+    let reconstructed = workflow
+        .freeze_admission(fixture.context(id, &request, &restored))
+        .await?;
+    assert_eq!(reconstructed.inputs(), admission.inputs());
+    assert_eq!(reviewer.0.load(Ordering::SeqCst), 1);
+
+    let command = certification_command(&fixture, id);
+    let assignment = reviewed_command_assignment(&repo, &command).await?;
+    assert!(matches!(
+        glassmere_commands::ControlJobCommandExecutor::apply_job_command(
+            &repo,
+            &assignment.lease,
+            &command.authority_context
+        )
+        .await,
+        Err(JobStoreError::Invalid)
+    ));
+    assert!(JobRepository::get(&repo, id).await.is_err());
+    let outcome = ReviewedExecutor::apply_reviewed_certification(
+        &repo,
+        &assignment.lease,
+        &command.authority_context,
+        &reconstructed,
+    )
+    .await?;
+
+    assert!(
+        matches!(outcome, glassmere_commands::ControlCommandOutcome::Applied { effect }
+        if matches!(*effect, glassmere_commands::CommandEffect::CertificationRequested {
+            job: Some(job), session: Some(session) } if job == id && session == id))
+    );
+    let job = JobRepository::get(&repo, id).await?;
+    assert_eq!(job.inputs, *admission.inputs());
+    assert_eq!(job.state, JobState::Queued);
+    assert!(job.certificate.is_none());
+    let replay =
+        CommandRepository::accept(&repo, &command, &IdempotencyKey::parse("other-tab".into())?)
+            .await?;
+    assert_eq!(replay.id, assignment.record.id);
+    assert_eq!(
+        replay.state,
+        glassmere_commands::ControlCommandState::Applied
+    );
+    assert!(
+        ReviewedExecutor::apply_reviewed_certification(
+            &repo,
+            &assignment.lease,
+            &command.authority_context,
+            &admission
+        )
+        .await
+        .is_err()
+    );
+    let counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM certification_jobs),
+                (SELECT count(*) FROM ironcrest_admissions),(SELECT count(*) FROM audit_events)",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(counts, (1, 1, 2));
+    assert_eq!(reviewer.0.load(Ordering::SeqCst), 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL and private immutable artifact storage"]
+async fn reviewed_command_cannot_substitute_another_sealed_session_or_frozen_authority() -> R {
+    use archcert_application::ironcrest::*;
+    use archcert_storage::artifacts::FilesystemArtifactStore;
+    use glassmere_commands::{
+        ControlCommandRepository as CommandRepository,
+        ReviewedControlCommandExecutor as ReviewedExecutor,
+    };
+    use std::{os::unix::fs::PermissionsExt, sync::atomic::AtomicUsize};
+
+    let (repo, pool) = database().await?;
+    let fixture = admission_fixture(&repo).await?;
+    let requested = JobId::new();
+    let substitute = JobId::new();
+    repo.open_session(requested, &fixture.pin).await?;
+    repo.open_session(substitute, &fixture.pin).await?;
+    let root = tempfile::tempdir()?;
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700))?;
+    let artifacts =
+        FilesystemArtifactStore::open_unencrypted_development(&root.path().canonicalize()?)?;
+    let workflow = IroncrestWorkflow {
+        repository: &repo,
+        artifacts: &artifacts,
+    };
+    let request = fixture.review_request(substitute)?;
+    let reviewer = CountingSemanticReviewer(AtomicUsize::new(0));
+    let admission = advance_review(&workflow, &fixture, substitute, &request, &reviewer).await?;
+    let command = certification_command(&fixture, requested);
+    let assignment = reviewed_command_assignment(&repo, &command).await?;
+
+    assert!(matches!(
+        ReviewedExecutor::apply_reviewed_certification(
+            &repo,
+            &assignment.lease,
+            &command.authority_context,
+            &admission
+        )
+        .await,
+        Err(JobStoreError::Invalid)
+    ));
+    let retained = CommandRepository::get(&repo, &command.scope, assignment.record.id).await?;
+    assert_eq!(
+        retained.state,
+        glassmere_commands::ControlCommandState::Processing
+    );
+    assert!(retained.outcome.is_none());
+    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM certification_jobs")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(jobs, 0);
+
+    for change in 0..4 {
+        let mut changed = certification_command(&fixture, substitute);
+        let glassmere_commands::ResolvedControlAction::RequestCertification { inputs, .. } =
+            &mut changed.action
+        else {
+            return Err("wrong fixture action".into());
+        };
+        match change {
+            0 => inputs.profile = "another-profile".into(),
+            1 => inputs.image = format!("python@sha256:{}", "f".repeat(64)),
+            2 => inputs.maximum_attempts = 3,
+            _ => inputs.plan_sha256 = digest_bytes(b"different original plan"),
+        }
+        assert!(changed.validate_reviewed_admission(&admission).is_err());
+    }
+
+    let original_request = fixture.review_request(requested)?;
+    let original_admission =
+        advance_review(&workflow, &fixture, requested, &original_request, &reviewer).await?;
+    let outcome = ReviewedExecutor::apply_reviewed_certification(
+        &repo,
+        &assignment.lease,
+        &digest_bytes(b"different authority selection"),
+        &original_admission,
+    )
+    .await?;
+    assert!(matches!(
+        outcome,
+        glassmere_commands::ControlCommandOutcome::Rejected {
+            reason: glassmere_commands::CommandFailure::UnsupportedAuthorityContext,
+        }
+    ));
+    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM certification_jobs")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(jobs, 0);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL and private immutable artifact storage"]
+async fn reviewed_command_receipt_failure_rolls_back_job_linkage_and_domain_audit() -> R {
+    use archcert_application::ironcrest::*;
+    use archcert_storage::artifacts::FilesystemArtifactStore;
+    use glassmere_commands::{
+        ControlCommandRepository as CommandRepository,
+        ReviewedControlCommandExecutor as ReviewedExecutor,
+    };
+    use std::{os::unix::fs::PermissionsExt, sync::atomic::AtomicUsize};
+
+    let (repo, pool) = database().await?;
+    let fixture = admission_fixture(&repo).await?;
+    let id = JobId::new();
+    repo.open_session(id, &fixture.pin).await?;
+    let root = tempfile::tempdir()?;
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700))?;
+    let artifacts =
+        FilesystemArtifactStore::open_unencrypted_development(&root.path().canonicalize()?)?;
+    let workflow = IroncrestWorkflow {
+        repository: &repo,
+        artifacts: &artifacts,
+    };
+    let request = fixture.review_request(id)?;
+    let reviewer = CountingSemanticReviewer(AtomicUsize::new(0));
+    let admission = advance_review(&workflow, &fixture, id, &request, &reviewer).await?;
+    let command = certification_command(&fixture, id);
+    let assignment = reviewed_command_assignment(&repo, &command).await?;
+    sqlx::query("ALTER TABLE control_commands ADD CONSTRAINT reject_reviewed_receipt CHECK (state <> 'APPLIED')")
+        .execute(&pool).await?;
+
+    assert!(matches!(
+        ReviewedExecutor::apply_reviewed_certification(
+            &repo,
+            &assignment.lease,
+            &command.authority_context,
+            &admission
+        )
+        .await,
+        Err(JobStoreError::Unavailable)
+    ));
+    let counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM certification_jobs),
+                (SELECT count(*) FROM ironcrest_admissions),(SELECT count(*) FROM audit_events)",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(counts, (0, 0, 0));
+    let retained = CommandRepository::get(&repo, &command.scope, assignment.record.id).await?;
+    assert_eq!(
+        retained.state,
+        glassmere_commands::ControlCommandState::Processing
+    );
+    assert!(retained.outcome.is_none());
+
+    sqlx::query("ALTER TABLE control_commands DROP CONSTRAINT reject_reviewed_receipt")
+        .execute(&pool)
+        .await?;
+    let outcome = ReviewedExecutor::apply_reviewed_certification(
+        &repo,
+        &assignment.lease,
+        &command.authority_context,
+        &admission,
+    )
+    .await?;
+    assert!(matches!(
+        outcome,
+        glassmere_commands::ControlCommandOutcome::Applied { .. }
+    ));
+    assert_eq!(
+        JobRepository::get(&repo, id).await?.inputs,
+        *admission.inputs()
+    );
+
+    Ok(())
 }
 
 #[tokio::test]
