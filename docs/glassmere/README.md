@@ -193,6 +193,13 @@ Missing observation capability records unavailability; invalid provided
 configuration fails initialization. This foundation enables no browser or daemon
 readiness action and acquires no build/runtime/signing capability.
 
+The private controller `request-readiness` entrypoint additionally requires its
+separate scoped credential and expected authority-context identity under
+[ADR 0062](../adr/0062-readiness-request-entrypoint.md). Its schema-2 public receipt
+has `observation_freshness: HISTORICAL_OBSERVATION`; schema-1 job receipts remain
+unchanged. See [private readiness qualification](READINESS_QUALIFICATION.md) for
+explicit historical fixture selection and actual controller/outage/crash checks.
+
 Evidence inspection rehashes registered project/entity/digest-bound original bytes.
 Certificate and permit signatures are checked under selected public keys. Signature
 validity is distinct from actual artifact authorization, which requires readiness or

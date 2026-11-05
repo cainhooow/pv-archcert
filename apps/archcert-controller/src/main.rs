@@ -56,6 +56,8 @@ enum Command {
     /// Mediates one durable job command; does not run targets or load signing keys.
     #[command(name = "dispatch-command")]
     Dispatch(commands::DispatchArgs),
+    /// Request a historical readiness observation using a separate scoped credential.
+    RequestReadiness(commands::ReadinessArgs),
     /// Checks control-plane/storage readiness without execution or signing.
     Doctor,
     /// Inspects or removes old unlocked development artifact stages, never final objects.
@@ -142,6 +144,7 @@ async fn main() -> Result<()> {
             state.provision_commands(&credentials).await?;
         }
         Command::Dispatch(args) => commands::dispatch(&state, args).await?,
+        Command::RequestReadiness(args) => commands::request_readiness(&state, args).await?,
         Command::Release(args) => release::run(&state, *args).await?,
         Command::ReleaseShow {
             project,

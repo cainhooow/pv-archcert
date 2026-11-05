@@ -1,6 +1,9 @@
 //! Isolated browser qualification metadata. Creates no target result or certificate.
 //! Supply a new private fixture directory and a development PostgreSQL administrator URL.
 
+#[path = "glassmere-command-fixture/readiness.rs"]
+mod readiness;
+
 use archcert_application::jobs::*;
 use archcert_control_plane::{
     ControlPlane, ControlPlaneConfiguration, commands::CommandCredentials,
@@ -57,6 +60,26 @@ async fn inspect(root: &Path) -> Result {
     let command_audit: serde_json::Value = sqlx::query_scalar(
         "SELECT coalesce(jsonb_object_agg(event,n),'{}'::jsonb) FROM (SELECT event,count(*) AS n FROM control_command_audit GROUP BY event) counts",
     ).fetch_one(&pool).await?;
+    let releases: serde_json::Value = sqlx::query_scalar(
+        "SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY project,invocation),'[]'::jsonb)
+         FROM release_invocations r",
+    )
+    .fetch_one(&pool)
+    .await?;
+    let release_evidence: serde_json::Value = sqlx::query_scalar(
+        "SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY project,invocation,role),'[]'::jsonb)
+         FROM release_evidence r",
+    )
+    .fetch_one(&pool)
+    .await?;
+    let release_audits: i64 = sqlx::query_scalar("SELECT count(*) FROM release_audit")
+        .fetch_one(&pool)
+        .await?;
+    let release_record_sha256 =
+        archcert_domain::source::digest_bytes(&serde_json::to_vec(&json!({
+            "invocations": releases,
+            "evidence": release_evidence,
+        }))?);
 
     println!(
         "{}",
@@ -70,6 +93,8 @@ async fn inspect(root: &Path) -> Result {
             "commands": commands,
             "audit": audit,
             "command_audit": command_audit,
+            "release_record_sha256": release_record_sha256,
+            "release_audits": release_audits,
         }))?
     );
 
@@ -160,6 +185,10 @@ async fn main() -> Result {
     let args: Vec<_> = std::env::args_os().collect();
     if args.len() == 3 && args[1] == "--inspect" {
         return inspect(&Path::new(&args[2]).canonicalize()?).await;
+    }
+
+    if args.len() == 3 && args[1] == "--import-readiness" {
+        return readiness::import_readiness(&Path::new(&args[2]).canonicalize()?).await;
     }
 
     if args.len() != 2 {

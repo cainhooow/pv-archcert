@@ -143,6 +143,8 @@ fn public_receipt_omits_frozen_recipe_actor_intent_and_dispatch_capabilities() -
     assert_eq!(value["state"], "REJECTED");
     assert_eq!(value["operation"], "REQUEST_CERTIFICATION");
     assert_eq!(value["outcome"]["reason"], "DOMAIN_PRECONDITION");
+    assert_eq!(value["schema"], 1);
+    assert!(value.get("observation_freshness").is_none());
     let encoded = serde_json::to_string(&value)?;
     for excluded in [
         "PRIVATE_RECIPE_CANARY",
@@ -163,6 +165,47 @@ fn public_receipt_omits_frozen_recipe_actor_intent_and_dispatch_capabilities() -
     let decoded: ControlCommandResponse = serde_json::from_value(value)?;
     assert_eq!(decoded.command_id, id);
     assert_eq!(decoded.state, ControlCommandState::Rejected);
+
+    Ok(())
+}
+
+#[test]
+fn readiness_receipts_have_an_explicit_versioned_historical_boundary() -> Result {
+    let command = ResolvedControlCommand {
+        schema: 1,
+        scope: CommandScope {
+            project: ProjectId::new(),
+            repository: RepositoryId::parse("fixture/readiness")?,
+            actor: GitActorId::parse(ControlCommandId::new().to_string())?,
+        },
+        authority_context: digest_bytes(b"explicit selection"),
+        action: ResolvedControlAction::RequestReleaseReadinessEvaluation {
+            invocation: archcert_domain::release::BuildInvocationIdentity(digest_bytes(
+                b"exact invocation",
+            )),
+        },
+    };
+    let record = ControlCommandRecord {
+        id: ControlCommandId::new(),
+        request_sha256: command.digest()?,
+        intent_sha256: digest_bytes(b"explicit observation key"),
+        command,
+        state: ControlCommandState::Requested,
+        created_at: 1_700_000_000,
+        dispatches: 0,
+        outcome: None,
+    };
+
+    let value = serde_json::to_value(ControlCommandResponse::from(record))?;
+    assert_eq!(value["schema"], 2);
+    assert_eq!(value["observation_freshness"], "HISTORICAL_OBSERVATION");
+    assert_eq!(value["operation"], "REQUEST_RELEASE_READINESS_EVALUATION");
+    let decoded: ControlCommandResponse = serde_json::from_value(value.clone())?;
+    assert_eq!(decoded.schema, 2);
+
+    let mut forged = value;
+    forged["observation_freshness"] = serde_json::json!("CURRENT_RELEASE_AUTHORIZATION");
+    assert!(serde_json::from_value::<ControlCommandResponse>(forged).is_err());
 
     Ok(())
 }

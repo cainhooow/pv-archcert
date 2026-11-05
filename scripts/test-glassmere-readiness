@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+"""Qualify private readiness requests against explicitly retained development evidence."""
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import secrets
+import signal
+import stat
+import subprocess
+import time
+import uuid
+
+
+REPOSITORY = Path(__file__).resolve().parent.parent
+
+
+def private_json(path, value):
+    with path.open("x", encoding="utf-8") as stream:
+        os.chmod(path, 0o600)
+        json.dump(value, stream, indent=2)
+        stream.write("\n")
+
+
+def read_private(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+        metadata = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+            or metadata.st_size > 256 * 1024
+        ):
+            raise RuntimeError("Expected a bounded owned mode-0600 selection file")
+        return json.load(stream)
+
+
+def sha256(value):
+    return hashlib.sha256(value).hexdigest()
+
+
+class Qualification:
+    def __init__(self):
+        self.output = Path(
+            os.environ.get("GLASSMERE_READINESS_OUTPUT", "target/glassmere-readiness")
+        ).absolute()
+        if not self.output.parent.resolve().is_relative_to(REPOSITORY / "target"):
+            raise RuntimeError("Qualification output must be under this repository's target/")
+        self.output.mkdir(mode=0o700)
+        self.output = self.output.resolve(strict=True)
+        self.fixture = Path(
+            os.environ.get(
+                "ARCHCERT_TEST_COMMAND_FIXTURE_BINARY",
+                REPOSITORY / "target/debug/examples/glassmere-command-fixture",
+            )
+        ).resolve(strict=True)
+        self.controller = Path(
+            os.environ.get(
+                "ARCHCERT_TEST_CONTROLLER_BINARY", REPOSITORY / "target/debug/archcert-controller"
+            )
+        ).resolve(strict=True)
+        self.environment = {
+            name: os.environ[name] for name in ("PATH", "HOME", "LANG", "TMPDIR") if name in os.environ
+        }
+        self.environment["ARCHCERT_TEST_DATABASE_URL"] = os.environ["ARCHCERT_TEST_DATABASE_URL"]
+        self.checks = []
+        self.ordinal = 0
+        self.head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=REPOSITORY, text=True
+        ).strip()
+        self.diff = subprocess.check_output(["git", "diff", "HEAD"], cwd=REPOSITORY)
+
+    def record(self, name):
+        self.checks.append({"name": name, "status": "PASS"})
+        print("PASS: " + name, flush=True)
+
+    def run(self, name, arguments, denied=False, environment=None):
+        self.ordinal += 1
+        prefix = self.output / f"{self.ordinal:02d}-{name}"
+        with prefix.with_suffix(".stdout").open("xb") as out:
+            with prefix.with_suffix(".stderr").open("xb") as err:
+                result = subprocess.run(
+                    [str(argument) for argument in arguments],
+                    env=environment or self.environment,
+                    cwd=REPOSITORY,
+                    stdout=out,
+                    stderr=err,
+                    timeout=45,
+                    check=False,
+                )
+        if (result.returncode == 0) == denied:
+            raise RuntimeError(name + ": unexpected exit status; inspect private retained logs")
+        if denied:
+            return None
+        text = prefix.with_suffix(".stdout").read_text()
+        return json.loads(text) if text.lstrip().startswith("{") else None
+
+    def request(self, name, key, extra=None, denied=False):
+        arguments = self.base + [
+            "request-readiness",
+            "--project", self.subject["project"],
+            "--repository", self.subject["repository"],
+            "--invocation", self.subject["invocation"],
+            "--authority-context", self.context,
+            "--idempotency-key", key,
+            "--credentials", self.output / "readiness-credentials.json",
+            "--token-file", self.output / "command-token",
+        ]
+        if extra:
+            for option, value in extra.items():
+                arguments[arguments.index(option) + 1] = value
+        result = self.run(name, arguments, denied=denied)
+        if not denied:
+            assert result["schema"] == 2
+            assert result["observation_freshness"] == "HISTORICAL_OBSERVATION"
+            assert result["project"] == self.subject["project"]
+            assert result["repository"] == self.subject["repository"]
+        return result
+
+    def dispatch(self, name, environment=None):
+        return self.run(
+            name,
+            self.base + ["dispatch-command", "--observation-config", self.output / "readiness-query.json"],
+            environment=environment,
+        )
+
+    def observation(self, receipt, allowed):
+        assert receipt["schema"] == 2
+        assert receipt["observation_freshness"] == "HISTORICAL_OBSERVATION"
+        assert receipt["state"] == "APPLIED"
+        assert receipt["outcome"]["state"] == "APPLIED"
+        effect = receipt["outcome"]["effect"]
+        assert effect["kind"] == "READINESS_EVALUATED"
+        observation = effect["observation"]
+        assert observation["state"] == ("RELEASE_ALLOWED" if allowed else "RELEASE_DENIED")
+        assert bool(observation["blockers"]) != allowed
+        for name in ("project", "repository", "source", "certificate", "invocation"):
+            assert observation["subject"][name] == self.subject[name]
+        if allowed:
+            for name in ("artifact", "permit"):
+                assert observation["subject"][name] == self.subject[name]
+        return observation
+
+    def kill_dispatcher(self, stage):
+        prefix = self.output / ("sigkill-" + stage)
+        with prefix.with_suffix(".stdout").open("xb") as out:
+            with prefix.with_suffix(".stderr").open("xb") as err:
+                process = subprocess.Popen(
+                    self.base + [
+                        "dispatch-command", "--lease-seconds", "5",
+                        "--observation-config", str(self.output / "readiness-query.json"),
+                        "--stop-after", stage, "--hold-checkpoint",
+                    ],
+                    cwd=REPOSITORY,
+                    env=self.environment,
+                    stdout=out,
+                    stderr=err,
+                )
+                try:
+                    deadline = time.monotonic() + 30
+                    marker = "Controlled Glassmere command interruption after " + stage
+                    while marker not in prefix.with_suffix(".stderr").read_text():
+                        if process.poll() is not None or time.monotonic() >= deadline:
+                            raise RuntimeError("Dispatcher did not reach its selected checkpoint")
+                        time.sleep(0.1)
+                    process.kill()
+                    assert process.wait(timeout=10) == -signal.SIGKILL
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=10)
+
+    def execute(self):
+        selection = read_private(Path(os.environ["ARCHCERT_TEST_READINESS_IMPORT"]))
+        assert set(selection) == {"project", "invocation", "query_config"}
+        assert str(uuid.UUID(selection["project"])) == selection["project"]
+        assert len(selection["invocation"]) == 64
+        assert all(character in "0123456789abcdef" for character in selection["invocation"])
+        principals = {
+            name: {
+                "legacy": sha256(secrets.token_bytes(32)),
+                "command": sha256(secrets.token_bytes(32)),
+            }
+            for name in ("administrator", "operator")
+        }
+        private_json(self.output / "seed.json", {
+            "reader_password": secrets.token_hex(32), "principals": principals,
+        })
+        self.run("fixture", [self.fixture, self.output])
+        token = secrets.token_hex(32)
+        token_path = self.output / "command-token"
+        with token_path.open("x", encoding="ascii") as stream:
+            os.chmod(token_path, 0o600)
+            stream.write(token)
+        private_json(self.output / "import.json", dict(
+            selection,
+            legacy_token_sha256=sha256(secrets.token_bytes(32)),
+            command_token_sha256=sha256(token.encode("ascii")),
+        ))
+        self.run("import", [self.fixture, "--import-readiness", self.output])
+        fixture = read_private(self.output / "readiness-fixture.json")
+        source = fixture["admission"]["input"]["certified_source"]
+        references = {role: reference for role, reference, available in fixture["references"] if available}
+        self.subject = dict(
+            source,
+            certificate=source["certificate_sha256"],
+            invocation=fixture["invocation"],
+            artifact=references["ARTIFACT_A"]["sha256"],
+            permit=references["PERMIT_PAYLOAD"]["sha256"],
+        )
+        self.context = fixture["authority_context"]
+        database = read_private(self.output / "database.json")
+        self.environment["ARCHCERT_DATABASE_URL"] = database["authority_url"]
+        self.environment["ARCHCERT_OBSERVATION_DATABASE_URL"] = database["reader_url"]
+        self.base = [str(self.controller), "--config", str(self.output / "readiness-authority.json")]
+        initial = self.run("inspect-initial", [self.fixture, "--inspect", self.output])
+        assert initial["release_audits"] == 1
+
+        first = self.request("request", "original-observation")
+        retry = self.request("request-retry", "original-observation")
+        assert first == retry
+        published = self.dispatch("evaluate")
+        assert published["command_id"] == first["command_id"]
+        self.observation(published, True)
+        assert self.request("retained", "original-observation") == published
+        self.record("same-key request and immutable historical ALLOWED receipt")
+
+        for name, extra in [
+            ("wrong-project", {"--project": str(uuid.uuid4())}),
+            ("wrong-object", {"--invocation": "f" * 64}),
+            ("wrong-context", {"--authority-context": "e" * 64}),
+        ]:
+            self.request(name, name, extra=extra, denied=True)
+        wrong_token = self.output / "wrong-token"
+        with wrong_token.open("x", encoding="ascii") as stream:
+            os.chmod(wrong_token, 0o600)
+            stream.write(secrets.token_hex(32))
+        self.request("wrong-token", "wrong-token", {"--token-file": wrong_token}, denied=True)
+        other_operation = read_private(self.output / "readiness-credentials.json")
+        other_operation["principals"][0]["operations"] = ["CANCEL_ELIGIBLE_JOB"]
+        other_credentials = self.output / "other-operation-credentials.json"
+        private_json(other_credentials, other_operation)
+        self.request(
+            "wrong-operation", "wrong-operation", {"--credentials": other_credentials}, denied=True
+        )
+        os.chmod(token_path, 0o644)
+        try:
+            self.request("non-private-token", "non-private-token", denied=True)
+        finally:
+            os.chmod(token_path, 0o600)
+        self.record("credential, operation, scope, object, authority selection and private-file denials")
+
+        artifacts = self.output / "readiness-artifacts"
+        unavailable = self.output / "readiness-artifacts-unavailable"
+        artifacts.rename(unavailable)
+        artifacts.mkdir(mode=0o700)
+        try:
+            assert self.request("historical-during-outage", "original-observation") == published
+            fresh = self.request("fresh-during-outage", "explicit-outage-observation")
+            assert fresh["command_id"] != published["command_id"]
+            denied = self.dispatch("evaluate-outage")
+            observation = self.observation(denied, False)
+            assert "INFRASTRUCTURE_UNCERTAIN" in [blocker["code"] for blocker in observation["blockers"]]
+        finally:
+            artifacts.rmdir()
+            unavailable.rename(artifacts)
+        assert self.request("retained-denial", "explicit-outage-observation") == denied
+        self.record("artifact outage denies a fresh question while retaining labeled history")
+
+        self.request("missing-observer", "missing-observer")
+        missing = dict(self.environment)
+        del missing["ARCHCERT_OBSERVATION_DATABASE_URL"]
+        inconclusive = self.dispatch("evaluate-missing-observer", environment=missing)
+        assert inconclusive["state"] == "INCONCLUSIVE"
+        assert inconclusive["outcome"]["reason"] == "INFRASTRUCTURE_UNAVAILABLE"
+        self.record("missing SELECT-only observation capability never becomes ALLOWED")
+
+        for stage in ("claimed", "published"):
+            key = "sigkill-" + stage
+            requested = self.request(key, key)
+            self.kill_dispatcher(stage)
+            if stage == "claimed":
+                time.sleep(6)
+                restored = self.dispatch("recover-claimed")
+                self.observation(restored, True)
+            else:
+                restored = self.request("recover-published", key)
+                self.observation(restored, True)
+            assert requested["command_id"] == restored["command_id"]
+            assert self.request("replay-" + stage, key) == restored
+            self.record("actual SIGKILL after " + stage + " retains one exact observation")
+
+        counts = self.run("inspect", [self.fixture, "--inspect", self.output])
+        assert counts["commands_count"] == 5
+        assert counts["keys"] == 5
+        assert counts["jobs"] == 4
+        assert counts["attempts"] == 2
+        assert counts["certificates"] == 0
+        assert counts["command_audit"]["CommandApplied"] == 4
+        assert counts["command_audit"]["CommandInconclusive"] == 1
+        assert counts["release_record_sha256"] == initial["release_record_sha256"]
+        assert counts["release_audits"] == initial["release_audits"]
+        assert self.dispatch("idle") == {"status": "IDLE"}
+        self.record("exact journal/domain counts with no new target execution or signatures")
+
+    def retain(self, status):
+        private_json(self.output / "results.json", {
+            "head": self.head,
+            "tracked_diff_sha256": sha256(self.diff),
+            "exact_committed_source": not self.diff,
+            "controller_sha256": sha256(self.controller.read_bytes()),
+            "fixture_sha256": sha256(self.fixture.read_bytes()),
+            "script_sha256": sha256(Path(__file__).read_bytes()),
+            "status": status,
+            "checks": self.checks,
+            "scope": "Historical development evidence; no new execution, signatures or native qualification",
+        })
+
+
+if __name__ == "__main__":
+    os.umask(0o077)
+    qualification = Qualification()
+    try:
+        qualification.execute()
+    except BaseException:
+        qualification.retain("FAILED")
+        raise
+    else:
+        qualification.retain("PASS")

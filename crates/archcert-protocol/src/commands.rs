@@ -120,12 +120,27 @@ pub struct ControlCommandResponse {
     pub created_at: i64,
     /// Safe typed result only after durable publication.
     pub outcome: Option<ControlCommandOutcome>,
+    /// Schema 2 readiness receipts are always historical, including retained ALLOWED.
+    /// Absent from the unchanged schema 1 job receipt grammar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_freshness: Option<ReadinessReceiptFreshness>,
+}
+
+/// An observation receipt never grants current deployment authorization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ReadinessReceiptFreshness {
+    /// Recheck the live readiness query before making a current decision.
+    HistoricalObservation,
 }
 
 impl From<ControlCommandRecord> for ControlCommandResponse {
     fn from(record: ControlCommandRecord) -> Self {
+        let readiness = record.command.action.operation()
+            == ControlOperation::RequestReleaseReadinessEvaluation;
+
         Self {
-            schema: 1,
+            schema: if readiness { 2 } else { 1 },
             command_id: record.id,
             project: record.command.scope.project,
             repository: record.command.scope.repository,
@@ -135,6 +150,8 @@ impl From<ControlCommandRecord> for ControlCommandResponse {
             state: record.state,
             created_at: record.created_at,
             outcome: record.outcome,
+            observation_freshness: readiness
+                .then_some(ReadinessReceiptFreshness::HistoricalObservation),
         }
     }
 }

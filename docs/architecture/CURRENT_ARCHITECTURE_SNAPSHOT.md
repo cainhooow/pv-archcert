@@ -592,3 +592,12 @@ This acquires no build claim and changes no source certificate or Release Permit
 The controller requires an explicit observation configuration and separate
 SELECT-only database capability. No readiness HTTP or browser operation is enabled;
 current readiness still requires a fresh live dependency check.
+
+[ADR 0062](../adr/0062-readiness-request-entrypoint.md) adds the trusted controller's
+identifier-only `request-readiness` entrypoint with a separate private scoped token
+file. Readiness receipts use public schema 2 and an explicit historical-observation
+marker; existing job receipts retain their exact schema-1 grammar. The development
+qualification harness copies explicitly selected historical evidence into an
+isolated schema/store and uses actual controller/public-verifier composition.
+It creates no new source certification, build claim or permit, and enables no
+daemon or browser readiness operation.

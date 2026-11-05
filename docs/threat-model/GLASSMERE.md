@@ -15,6 +15,11 @@ existing fenced command journal. It enables no HTTP/browser readiness request.
 An immutable receipt records a historical observation, never a current release
 lease. New evaluation rechecks current grants and exact scope; publication also
 requires the original live coordination generation and immutable source binding.
+ADR 0062 adds an identifier-only private controller request, authenticated through
+a separate owned private token file. Its schema-2 receipt explicitly labels every
+readiness result historical; schema-1 job receipts retain their grammar. The
+historical fixture importer is development tooling with explicit database/source
+selection, never an HTTP data-repair endpoint or new issuance operation.
 
 | Threat / asset | Attacker capability | Control | Remaining limitation |
 | --- | --- | --- | --- |

@@ -1,4 +1,4 @@
-//! Trusted polling of private job commands, without acquiring runtime or signing keys.
+//! Trusted operational requests and polling, without target execution or signing keys.
 
 use anyhow::Result;
 use archcert_application::{
@@ -6,8 +6,57 @@ use archcert_application::{
     ironcrest::{IroncrestWorkflow, ReviewedIroncrestAdmission},
     jobs::JobStoreError,
 };
-use archcert_control_plane::ControlPlane;
+use archcert_control_plane::{ControlPlane, commands::CommandCredentials, read_private};
+use archcert_domain::{ProjectId, Sha256Digest, jobs::IdempotencyKey, source::RepositoryId};
 use archcert_protocol::commands::ControlCommandResponse;
+
+#[derive(clap::Args)]
+pub(super) struct ReadinessArgs {
+    #[arg(long)]
+    project: ProjectId,
+    #[arg(long)]
+    repository: String,
+    #[arg(long)]
+    invocation: String,
+    #[arg(long)]
+    authority_context: String,
+    #[arg(long)]
+    idempotency_key: String,
+    #[arg(long)]
+    credentials: std::path::PathBuf,
+    /// Owned mode-0600 file containing only the separate command credential.
+    #[arg(long)]
+    token_file: std::path::PathBuf,
+}
+
+pub(super) async fn request_readiness(state: &ControlPlane, args: ReadinessArgs) -> Result<()> {
+    let repository = RepositoryId::parse(args.repository)?;
+    let invocation =
+        archcert_domain::release::BuildInvocationIdentity(Sha256Digest::parse(args.invocation)?);
+    let context = Sha256Digest::parse(args.authority_context)?;
+    let key = IdempotencyKey::parse(args.idempotency_key)?;
+    let credentials = CommandCredentials::load(&args.credentials, &state.configuration)?;
+    let token_bytes = read_private(&args.token_file, 256)?;
+    let token = std::str::from_utf8(&token_bytes).map_err(|_| JobStoreError::Invalid)?;
+    let authorization = credentials.authorize(
+        &state.configuration,
+        token,
+        args.project,
+        &repository,
+        ControlOperation::RequestReleaseReadinessEvaluation,
+        Some(&context),
+    )?;
+
+    let record = state
+        .request_readiness(&authorization, invocation, &key)
+        .await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&ControlCommandResponse::from(record))?
+    );
+
+    Ok(())
+}
 
 #[derive(clap::Args)]
 pub(super) struct DispatchArgs {
