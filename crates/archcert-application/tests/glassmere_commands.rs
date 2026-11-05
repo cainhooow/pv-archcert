@@ -4,12 +4,18 @@ use archcert_application::{
     glassmere::{
         BlockerCode, ReleaseBlocker, ReleaseReadiness, ReleaseState, ReleaseSubject, commands::*,
     },
-    jobs::JobStoreError,
+    jobs::{
+        AttemptRuntime, CertificationAttempt, CertificationJob, JobStoreError, RuntimeBinding,
+        RuntimeCleanupState,
+    },
 };
 use archcert_domain::{
     GitObjectId, ProjectId,
     ingress::{GitActorId, SourceSubmissionId},
-    jobs::{IdempotencyKey, JobId, JobInputs, PolicyPin},
+    jobs::{
+        AttemptId, AttemptState, FailureCategory, IdempotencyKey, JobId, JobInputs, JobState,
+        PolicyPin,
+    },
     release::BuildInvocationIdentity,
     source::{RepositoryId, SourceSnapshot, digest_bytes},
 };
@@ -249,6 +255,107 @@ fn readiness_receipt_cannot_change_subject_or_hide_denial() -> R {
         }
         assert!(command.validate_outcome(&outcome(substituted)).is_err());
     }
+
+    Ok(())
+}
+
+#[test]
+fn queued_cancellation_denies_active_or_uncertain_attempts_and_positive_checkpoints() -> R {
+    let command = command()?;
+    let ResolvedControlAction::RequestCertification { inputs, .. } = command.action else {
+        return Err("wrong fixture action".into());
+    };
+    let mut job = CertificationJob {
+        id: JobId::new(),
+        inputs: *inputs,
+        created_at: 1_700_000_000,
+        evaluation_at: None,
+        failure: None,
+        state: JobState::Queued,
+        attempts: vec![],
+        evaluation: None,
+        issuance: None,
+        certificate: None,
+    };
+    assert_eq!(queued_cancellation_state(&job)?, JobState::Inconclusive);
+
+    for state in [
+        JobState::Running,
+        JobState::Evaluating,
+        JobState::Signing,
+        JobState::Completed,
+        JobState::NotEligible,
+        JobState::Inconclusive,
+    ] {
+        job.state = state;
+        assert!(queued_cancellation_state(&job).is_err());
+        assert!(state.cancel_queued().is_err());
+    }
+    job.state = JobState::Queued;
+    job.failure = Some(FailureCategory::PolicyFailure);
+    assert!(queued_cancellation_state(&job).is_err());
+    job.failure = None;
+    job.evaluation = Some(archcert_application::release::release_reference(
+        b"evaluation",
+    ));
+    assert!(queued_cancellation_state(&job).is_err());
+    job.evaluation = None;
+
+    job.attempts.push(CertificationAttempt {
+        id: AttemptId::new(),
+        ordinal: 1,
+        worker: "fixture-worker".into(),
+        state: AttemptState::Lost,
+        leased_at: 1_700_000_000,
+        lease_until: 1_700_000_005,
+        ended_at: Some(1_700_000_006),
+        failure: Some(FailureCategory::WorkerLoss),
+        evidence: None,
+        runtime: Some(AttemptRuntime {
+            binding: RuntimeBinding {
+                endpoint: "unix:///fixture/runtime.sock".into(),
+                daemon_id: "fixture-runtime".into(),
+                gate_root: "/fixture/gates".into(),
+            },
+            fenced: true,
+            cleanup: RuntimeCleanupState::Succeeded,
+        }),
+    });
+    assert_eq!(queued_cancellation_state(&job)?, JobState::Inconclusive);
+
+    let retained = job.attempts[0].runtime.take();
+    assert!(queued_cancellation_state(&job).is_err());
+    job.attempts[0].runtime = retained;
+
+    for state in [
+        AttemptState::Leased,
+        AttemptState::Running,
+        AttemptState::EvidenceReady,
+        AttemptState::Completed,
+        AttemptState::Failed,
+    ] {
+        job.attempts[0].state = state;
+        assert!(queued_cancellation_state(&job).is_err());
+    }
+    job.attempts[0].state = AttemptState::Lost;
+    for cleanup in [
+        RuntimeCleanupState::NotRequired,
+        RuntimeCleanupState::Pending,
+        RuntimeCleanupState::InProgress,
+        RuntimeCleanupState::Failed,
+        RuntimeCleanupState::Blocked,
+    ] {
+        job.attempts[0]
+            .runtime
+            .as_mut()
+            .ok_or("missing runtime")?
+            .cleanup = cleanup;
+        assert!(queued_cancellation_state(&job).is_err());
+    }
+    let runtime = job.attempts[0].runtime.as_mut().ok_or("missing runtime")?;
+    runtime.cleanup = RuntimeCleanupState::Succeeded;
+    runtime.fenced = false;
+    assert!(queued_cancellation_state(&job).is_err());
 
     Ok(())
 }

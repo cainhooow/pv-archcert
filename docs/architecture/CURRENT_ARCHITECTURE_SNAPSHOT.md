@@ -528,6 +528,16 @@ The server embeds buildless HTML/CSS/JavaScript. Private provisioned random bear
 credentials exchange for expiring HttpOnly same-origin sessions; role/project
 revocation invalidates the session's grant revision. Viewer, Operator and Reviewer
 have read-only scope; Administrator additionally inspects panel audit. No authority
-command/user/policy administration is implemented. See
+command, user administration or policy administration is exposed through the browser. See
 [operations and known limits](../glassmere/README.md). This is an INCOMPLETE M9
 visibility implementation, not milestone closure or independent certification.
+
+[ADR 0053](../adr/0053-glassmere-operational-command-journal.md) adds a private
+application command journal with explicit operation/context grants, immutable retry
+aliases, intent deduplication and fenced dispatch. These are operational records,
+not cached query projections. [ADR 0054](../adr/0054-glassmere-atomic-job-commands.md)
+mediates existing non-reviewed admission, narrowly eligible queued cancellation and
+infrastructure-only retry with domain mutation, audit and receipt in one transaction.
+Reviewed admission, release and readiness commands still require separate mediation;
+no HTTP command is enabled by these private ports. Browser RBAC/idempotency and
+actual process-kill command recovery remain unqualified.

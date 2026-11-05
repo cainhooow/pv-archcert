@@ -209,11 +209,21 @@ pub enum JobState {
     Completed,
     /// Policy evidence is insufficient or failed; never automatically retried.
     NotEligible,
-    /// Infrastructure uncertainty exhausted safe recovery.
+    /// No certification result established, including explicit queued cancellation.
     Inconclusive,
 }
 
 impl JobState {
+    /// Dedicated queued cancellation. Operational reason and attempt safety are
+    /// checked by application; the generic transition graph remains unchanged.
+    pub fn cancel_queued(self) -> Result<Self, JobError> {
+        if self == Self::Queued {
+            Ok(Self::Inconclusive)
+        } else {
+            Err(JobError)
+        }
+    }
+
     /// True only for states that cannot transition again.
     pub fn terminal(self) -> bool {
         matches!(

@@ -4,7 +4,7 @@ use archcert_application::{glassmere::commands::*, jobs::*};
 use archcert_domain::{
     GitObjectId, ProjectId,
     ingress::{GitActorId, SourceSubmissionId},
-    jobs::{ControlCommandId, IdempotencyKey, JobId, JobInputs, LeaseToken, PolicyPin},
+    jobs::{ControlCommandId, IdempotencyKey, JobId, JobInputs, JobState, LeaseToken, PolicyPin},
     source::{RepositoryId, SourceSnapshot, digest_bytes},
 };
 use archcert_storage::PostgresJobRepository;
@@ -92,6 +92,34 @@ async fn enable(repo: &PostgresJobRepository, command: &ResolvedControlCommand) 
     repo.grant_control_command(&command.scope, &command.authority_context, &command.action)
         .await?;
     Ok(())
+}
+
+async fn admitted_job(repo: &PostgresJobRepository, command: &ResolvedControlCommand) -> R<JobId> {
+    let ResolvedControlAction::RequestCertification { inputs, .. } = &command.action else {
+        return Err("wrong fixture operation".into());
+    };
+    let job = JobRepository::create(
+        repo,
+        CreateJob {
+            inputs: inputs.as_ref().clone(),
+            idempotency: key(&JobId::new().to_string())?,
+        },
+    )
+    .await?;
+
+    Ok(job.id)
+}
+
+async fn assignment(
+    repo: &PostgresJobRepository,
+    command: &ResolvedControlCommand,
+) -> R<ControlCommandAssignment> {
+    enable(repo, command).await?;
+    repo.accept(command, &key("request")?).await?;
+
+    Ok(ControlCommandRepository::claim(repo, "dispatcher", 30)
+        .await?
+        .ok_or("no command claim")?)
 }
 
 #[tokio::test]
@@ -436,6 +464,411 @@ async fn command_grant_lock_contention_has_a_database_deadline() -> R {
 
     // The original key is still usable: no partial acceptance or phantom alias survived.
     repo.accept(&command, &retry_key).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn command_certification_mutation_and_receipt_share_one_durable_result() -> R {
+    let (repo, pool, command) = fixture().await?;
+    let assignment = assignment(&repo, &command).await?;
+    let outcome = repo
+        .apply_job_command(&assignment.lease, &command.authority_context)
+        .await?;
+    let ControlCommandOutcome::Applied { effect } = outcome else {
+        return Err("certification command did not apply".into());
+    };
+    let CommandEffect::CertificationRequested {
+        job: Some(job),
+        session: None,
+    } = *effect
+    else {
+        return Err("wrong command effect".into());
+    };
+
+    let replay = repo.accept(&command, &key("another-tab")?).await?;
+    assert_eq!(replay.id, assignment.record.id);
+    assert_eq!(replay.state, ControlCommandState::Applied);
+    assert!(
+        repo.apply_job_command(&assignment.lease, &command.authority_context)
+            .await
+            .is_err()
+    );
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM certification_jobs),(SELECT count(*) FROM audit_events)",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(counts, (1, 2));
+    assert_eq!(
+        JobRepository::get(&repo, job).await?.state,
+        JobState::Queued
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn command_changed_authority_context_cannot_select_a_new_default() -> R {
+    let (repo, pool, command) = fixture().await?;
+    let assignment = assignment(&repo, &command).await?;
+    let outcome = repo
+        .apply_job_command(&assignment.lease, &digest_bytes(b"new default"))
+        .await?;
+
+    assert!(matches!(
+        outcome,
+        ControlCommandOutcome::Rejected {
+            reason: CommandFailure::UnsupportedAuthorityContext,
+        }
+    ));
+    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM certification_jobs")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(jobs, 0);
+    assert_eq!(
+        ControlCommandRepository::get(&repo, &command.scope, assignment.record.id)
+            .await?
+            .state,
+        ControlCommandState::Rejected
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn command_cancellation_is_terminal_without_target_or_policy_failure() -> R {
+    let (repo, pool, mut command) = fixture().await?;
+    let job = admitted_job(&repo, &command).await?;
+    let original = JobRepository::get(&repo, job).await?;
+    command.action = ResolvedControlAction::CancelEligibleJob { job };
+    let assignment = assignment(&repo, &command).await?;
+    let outcome = repo
+        .apply_job_command(&assignment.lease, &command.authority_context)
+        .await?;
+
+    assert!(matches!(outcome, ControlCommandOutcome::Applied { effect }
+        if matches!(*effect, CommandEffect::JobCanceled { job: affected } if affected == job)));
+    let canceled = JobRepository::get(&repo, job).await?;
+    assert_eq!(canceled.state, JobState::Inconclusive);
+    assert_eq!(
+        canceled.failure,
+        Some(archcert_domain::jobs::FailureCategory::OperatorCancellation)
+    );
+    assert_eq!(canceled.inputs, original.inputs);
+    assert!(canceled.attempts.is_empty());
+    assert!(
+        canceled.evaluation.is_none()
+            && canceled.issuance.is_none()
+            && canceled.certificate.is_none()
+    );
+    assert!(JobRepository::claim(&repo, "worker", 30).await?.is_none());
+    let canceled_events: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_events WHERE event='JobCanceled'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(canceled_events, 1);
+    assert!(
+        sqlx::query("UPDATE certification_jobs SET state='QUEUED',failure=NULL")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn command_cancellation_and_worker_claim_have_one_locked_winner() -> R {
+    let (repo, _, mut command) = fixture().await?;
+    let job = admitted_job(&repo, &command).await?;
+    command.action = ResolvedControlAction::CancelEligibleJob { job };
+    let assignment = assignment(&repo, &command).await?;
+    let (outcome, worker) = tokio::join!(
+        repo.apply_job_command(&assignment.lease, &command.authority_context),
+        JobRepository::claim(&repo, "racing-worker", 30),
+    );
+    let (outcome, worker) = (outcome?, worker?);
+    let state = JobRepository::get(&repo, job).await?;
+
+    match outcome {
+        ControlCommandOutcome::Applied { effect } => {
+            assert!(
+                matches!(*effect, CommandEffect::JobCanceled { job: affected } if affected == job)
+            );
+            assert!(worker.is_none());
+            assert_eq!(state.state, JobState::Inconclusive);
+            assert!(state.attempts.is_empty());
+        }
+        ControlCommandOutcome::Rejected {
+            reason: CommandFailure::DomainPrecondition,
+        } => {
+            assert_eq!(worker.ok_or("claim winner missing")?.job.id, job);
+            assert_eq!(state.state, JobState::Running);
+            assert_eq!(state.attempts.len(), 1);
+        }
+        _ => return Err("unexpected racing outcome".into()),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn command_cancellation_never_changes_running_work_or_its_lease() -> R {
+    let (repo, _, mut command) = fixture().await?;
+    let job = admitted_job(&repo, &command).await?;
+    let worker = JobRepository::claim(&repo, "active-worker", 30)
+        .await?
+        .ok_or("no worker")?;
+    JobRepository::start(&repo, &worker.lease).await?;
+    command.action = ResolvedControlAction::CancelEligibleJob { job };
+    let assignment = assignment(&repo, &command).await?;
+    let outcome = repo
+        .apply_job_command(&assignment.lease, &command.authority_context)
+        .await?;
+
+    assert!(matches!(
+        outcome,
+        ControlCommandOutcome::Rejected {
+            reason: CommandFailure::DomainPrecondition
+        }
+    ));
+    let retained = JobRepository::get(&repo, job).await?;
+    assert_eq!(retained.state, JobState::Running);
+    assert_eq!(retained.attempts.len(), 1);
+    assert_eq!(
+        retained.attempts[0].state,
+        archcert_domain::jobs::AttemptState::Running
+    );
+    JobRepository::renew(&repo, &worker.lease, 30).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn command_recovery_receipt_retains_original_attempt_after_worker_advances() -> R {
+    let (repo, pool, mut command) = fixture().await?;
+    let job = admitted_job(&repo, &command).await?;
+    let old = JobRepository::claim(&repo, "lost-before-start", 5)
+        .await?
+        .ok_or("no worker")?;
+    // Same controlled clock fixture as the original lease regressions; runtime bounds stay intact.
+    sqlx::query("UPDATE certification_attempts SET lease_until=leased_at+1")
+        .execute(&pool)
+        .await?;
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    command.action = ResolvedControlAction::RetryEligibleJob {
+        job,
+        attempt: old.lease.attempt,
+    };
+    let assignment = assignment(&repo, &command).await?;
+    let outcome = repo
+        .apply_job_command(&assignment.lease, &command.authority_context)
+        .await?;
+
+    assert!(matches!(outcome, ControlCommandOutcome::Applied { effect }
+        if matches!(*effect, CommandEffect::JobRecoveryRequested { job: affected, attempt }
+            if affected == job && attempt == old.lease.attempt)));
+    let replacement = JobRepository::claim(&repo, "replacement", 30)
+        .await?
+        .ok_or("no replacement")?;
+    assert_ne!(old.lease.attempt, replacement.lease.attempt);
+    let replay = repo.accept(&command, &key("another-tab")?).await?;
+    assert_eq!(replay.id, assignment.record.id);
+    assert!(
+        matches!(replay.outcome, Some(ControlCommandOutcome::Applied { effect })
+        if matches!(*effect, CommandEffect::JobRecoveryRequested { attempt, .. } if attempt == old.lease.attempt))
+    );
+    let retained = JobRepository::get(&repo, job).await?;
+    assert_eq!(retained.state, JobState::Running);
+    assert_eq!(retained.attempts.len(), 2);
+    assert!(JobRepository::renew(&repo, &old.lease, 30).await.is_err());
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn command_receipt_failure_rolls_back_both_admission_and_domain_audit() -> R {
+    let (repo, pool, command) = fixture().await?;
+    let assignment = assignment(&repo, &command).await?;
+    sqlx::query(
+        "CREATE FUNCTION fail_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           IF NEW.state='APPLIED' THEN RAISE EXCEPTION 'injected receipt failure'; END IF;
+           RETURN NEW;
+         END $$",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TRIGGER fail_receipt BEFORE UPDATE ON control_commands
+         FOR EACH ROW EXECUTE FUNCTION fail_receipt()",
+    )
+    .execute(&pool)
+    .await?;
+
+    assert!(matches!(
+        repo.apply_job_command(&assignment.lease, &command.authority_context)
+            .await,
+        Err(JobStoreError::Unavailable)
+    ));
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM certification_jobs),(SELECT count(*) FROM audit_events)",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(counts, (0, 0));
+    let retained =
+        ControlCommandRepository::get(&repo, &command.scope, assignment.record.id).await?;
+    assert_eq!(retained.state, ControlCommandState::Processing);
+    assert!(retained.outcome.is_none());
+
+    sqlx::query("DROP TRIGGER fail_receipt ON control_commands")
+        .execute(&pool)
+        .await?;
+    let outcome = repo
+        .apply_job_command(&assignment.lease, &command.authority_context)
+        .await?;
+    assert!(matches!(outcome, ControlCommandOutcome::Applied { .. }));
+    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM certification_jobs")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(jobs, 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn command_retry_requires_confirmed_cleanup_after_started_attempt() -> R {
+    let (repo, pool, mut command) = fixture().await?;
+    let job = admitted_job(&repo, &command).await?;
+    let worker = JobRepository::claim(&repo, "uncertain-worker", 5)
+        .await?
+        .ok_or("no worker")?;
+    JobRepository::start(&repo, &worker.lease).await?;
+    sqlx::query("UPDATE certification_attempts SET lease_until=leased_at+1")
+        .execute(&pool)
+        .await?;
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    command.action = ResolvedControlAction::RetryEligibleJob {
+        job,
+        attempt: worker.lease.attempt,
+    };
+    let assignment = assignment(&repo, &command).await?;
+    let outcome = repo
+        .apply_job_command(&assignment.lease, &command.authority_context)
+        .await?;
+
+    assert!(matches!(
+        outcome,
+        ControlCommandOutcome::Rejected {
+            reason: CommandFailure::DomainPrecondition
+        }
+    ));
+    let retained = JobRepository::get(&repo, job).await?;
+    assert_eq!(retained.state, JobState::Running);
+    assert_eq!(retained.attempts.len(), 1);
+    assert_eq!(
+        retained.attempts[0].state,
+        archcert_domain::jobs::AttemptState::Running
+    );
+    assert!(retained.attempts[0].runtime.is_none());
+    assert!(
+        JobRepository::claim(&repo, "replacement", 30)
+            .await?
+            .is_none()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn command_retry_cannot_expand_original_attempt_budget() -> R {
+    let (repo, pool, mut command) = fixture().await?;
+    if let ResolvedControlAction::RequestCertification { inputs, .. } = &mut command.action {
+        inputs.maximum_attempts = 1;
+    }
+    command.authority_context = digest_bytes(b"explicit one-attempt fixture authority");
+    let job = admitted_job(&repo, &command).await?;
+    let worker = JobRepository::claim(&repo, "only-attempt", 5)
+        .await?
+        .ok_or("no worker")?;
+    sqlx::query("UPDATE certification_attempts SET lease_until=leased_at+1")
+        .execute(&pool)
+        .await?;
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    command.action = ResolvedControlAction::RetryEligibleJob {
+        job,
+        attempt: worker.lease.attempt,
+    };
+    let assignment = assignment(&repo, &command).await?;
+    let outcome = repo
+        .apply_job_command(&assignment.lease, &command.authority_context)
+        .await?;
+
+    assert!(matches!(
+        outcome,
+        ControlCommandOutcome::Rejected {
+            reason: CommandFailure::DomainPrecondition
+        }
+    ));
+    let retained = JobRepository::get(&repo, job).await?;
+    assert_eq!(retained.state, JobState::Running);
+    assert_eq!(retained.inputs.maximum_attempts, 1);
+    assert_eq!(retained.attempts.len(), 1);
+    assert!(
+        JobRepository::claim(&repo, "replacement", 30)
+            .await?
+            .is_none()
+    );
+
+    // Existing authority recovery can close uncertainty, without granting another attempt.
+    JobRepository::recover(&repo, job, worker.lease.attempt).await?;
+    assert_eq!(
+        JobRepository::get(&repo, job).await?.state,
+        JobState::Inconclusive
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn command_cancellation_guard_rejects_missing_or_wrong_reason() -> R {
+    let (repo, pool, command) = fixture().await?;
+    let job = admitted_job(&repo, &command).await?;
+
+    for reason in [
+        None,
+        Some("TARGET_FAILURE"),
+        Some("POLICY_FAILURE"),
+        Some("WORKER_LOSS"),
+    ] {
+        let result = sqlx::query(
+            "UPDATE certification_jobs SET state='INCONCLUSIVE',failure=$2 WHERE id=$1",
+        )
+        .bind(job.to_string())
+        .bind(reason)
+        .execute(&pool)
+        .await;
+
+        assert!(
+            result.is_err(),
+            "missing or unrelated reason must not enable queued cancellation"
+        );
+        let retained = JobRepository::get(&repo, job).await?;
+        assert_eq!(retained.state, JobState::Queued);
+        assert!(retained.failure.is_none());
+    }
 
     Ok(())
 }

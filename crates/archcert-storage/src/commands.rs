@@ -1,5 +1,7 @@
 //! Private command coordination. No target execution, signing or policy selection.
 
+mod jobs;
+
 use super::{PostgresJobRepository, Result, db, decode, json, now, state, valid_lease};
 use archcert_application::{glassmere::commands::*, jobs::JobStoreError};
 use archcert_domain::{
@@ -655,32 +657,43 @@ impl ControlCommandRepository for PostgresJobRepository {
             record.command.action.name(),
         )
         .await?;
-        record.command.validate_outcome(outcome)?;
-        effect_scope(&mut tx, &record.command, outcome).await?;
-
-        // This journal receipt cannot perform, authorize or substitute a domain transition.
-        let state = outcome.state();
-        let event = match state {
-            ControlCommandState::Applied => "CommandApplied",
-            ControlCommandState::Rejected => "CommandRejected",
-            ControlCommandState::Inconclusive => "CommandInconclusive",
-            _ => return Err(JobStoreError::Invalid),
-        };
-        sqlx::query(
-            "UPDATE control_commands
-             SET state=$2,outcome=$3,dispatcher=NULL,token=NULL,lease_until=NULL
-             WHERE id=$1",
-        )
-        .bind(lease.command.to_string())
-        .bind(json(&state)?.as_str().ok_or(JobStoreError::Invalid)?)
-        .bind(json(outcome)?)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-        audit(&mut tx, lease.command, event).await?;
+        publish(&mut tx, lease, &record, outcome).await?;
 
         tx.commit().await.map_err(db)
     }
+}
+
+async fn publish(
+    c: &mut PgConnection,
+    lease: &ControlCommandLease,
+    record: &ControlCommandRecord,
+    outcome: &ControlCommandOutcome,
+) -> Result<()> {
+    record.command.validate_outcome(outcome)?;
+    effect_scope(&mut *c, &record.command, outcome).await?;
+
+    // A receipt cannot substitute for its corresponding durable domain transition.
+    let state = outcome.state();
+    let event = match state {
+        ControlCommandState::Applied => "CommandApplied",
+        ControlCommandState::Rejected => "CommandRejected",
+        ControlCommandState::Inconclusive => "CommandInconclusive",
+        _ => return Err(JobStoreError::Invalid),
+    };
+    sqlx::query(
+        "UPDATE control_commands
+         SET state=$2,outcome=$3,dispatcher=NULL,token=NULL,lease_until=NULL
+         WHERE id=$1",
+    )
+    .bind(lease.command.to_string())
+    .bind(json(&state)?.as_str().ok_or(JobStoreError::Invalid)?)
+    .bind(json(outcome)?)
+    .execute(&mut *c)
+    .await
+    .map_err(db)?;
+    audit(&mut *c, lease.command, event).await?;
+
+    Ok(())
 }
 
 async fn fenced(c: &mut PgConnection, lease: &ControlCommandLease) -> Result<ControlCommandRecord> {

@@ -2,13 +2,16 @@
 
 use crate::{
     glassmere::ReleaseReadiness,
-    jobs::{ArtifactReference, JobStoreError},
+    jobs::{ArtifactReference, CertificationJob, JobStoreError, RuntimeCleanupState},
     release::{ReleaseAdmission, release_bytes, release_reference},
 };
 use archcert_domain::{
     ProjectId, Sha256Digest,
     ingress::GitActorId,
-    jobs::{AttemptId, ControlCommandId, IdempotencyKey, JobId, JobInputs, LeaseToken},
+    jobs::{
+        AttemptId, AttemptState, ControlCommandId, FailureCategory, IdempotencyKey, JobId,
+        JobInputs, JobState, LeaseToken,
+    },
     release::BuildInvocationIdentity,
     source::{RepositoryId, digest_bytes},
 };
@@ -416,4 +419,52 @@ pub trait ControlCommandRepository: Send + Sync {
         lease: &ControlCommandLease,
         outcome: &ControlCommandOutcome,
     ) -> Result<(), JobStoreError>;
+}
+
+/// Decide queued cancellation from retained facts, never a browser eligibility flag.
+/// Previously started attempts require the existing durable fence/cleanup result.
+pub fn queued_cancellation_state(job: &CertificationJob) -> Result<JobState, JobStoreError> {
+    if job.state != JobState::Queued
+        || job.failure.is_some()
+        || job.evaluation_at.is_some()
+        || job.evaluation.is_some()
+        || job.issuance.is_some()
+        || job.certificate.is_some()
+        || job.attempts.iter().any(|attempt| {
+            attempt.state != AttemptState::Lost
+                || attempt.failure != Some(FailureCategory::WorkerLoss)
+                || attempt.evidence.is_some()
+                || attempt.runtime.as_ref().is_none_or(|runtime| {
+                    !runtime.fenced || runtime.cleanup != RuntimeCleanupState::Succeeded
+                })
+        })
+    {
+        return Err(JobStoreError::Precondition);
+    }
+
+    job.state.cancel_queued().map_err(Into::into)
+}
+
+/// User-requested retry must have remaining original authority capacity.
+/// The existing controller recovery may separately finalize exhausted work as inconclusive.
+pub fn require_retry_capacity(job: &CertificationJob) -> Result<(), JobStoreError> {
+    if job.state != JobState::Running
+        || job.attempts.len() >= usize::from(job.inputs.maximum_attempts)
+    {
+        return Err(JobStoreError::Precondition);
+    }
+
+    Ok(())
+}
+
+/// Atomic local mediation only. No runtime, review-provider or signing capability.
+#[async_trait]
+pub trait ControlJobCommandExecutor: Send + Sync {
+    /// Recheck exact coordination ownership, authority selection and grants, then
+    /// commit the domain transition, domain audit and command outcome together.
+    async fn apply_job_command(
+        &self,
+        lease: &ControlCommandLease,
+        selected_context: &Sha256Digest,
+    ) -> Result<ControlCommandOutcome, JobStoreError>;
 }

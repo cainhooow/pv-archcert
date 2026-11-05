@@ -10,6 +10,8 @@ mod release;
 
 mod commands;
 
+mod job_mutations;
+
 use archcert_application::jobs::*;
 use archcert_domain::{
     ProjectId,
@@ -471,73 +473,7 @@ impl JobRepository for PostgresJobRepository {
         }
 
         let mut tx = self.pool.begin().await.map_err(db)?;
-        // A grant row lock serializes revocation against authorized admission.
-        let grant = sqlx::query(
-            "SELECT actor FROM repository_grants WHERE project=$1 AND repository=$2 AND actor=$3 FOR SHARE",
-        )
-            .bind(i.project.to_string())
-            .bind(i.repository.as_str())
-            .bind(i.actor.as_str())
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
-
-        if grant.is_none() {
-            return Err(JobStoreError::Unauthorized);
-        }
-
-        let source: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM accepted_sources WHERE submission=$1 AND project=$2 AND repository=$3 AND source=$4)",
-        )
-            .bind(i.submission.to_string())
-            .bind(i.project.to_string())
-            .bind(i.repository.as_str())
-            .bind(json(&i.source)?)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?;
-
-        if !source {
-            return Err(JobStoreError::Unauthorized);
-        }
-
-        let proposed = JobId::new();
-        let inserted = sqlx::query(
-            "INSERT INTO certification_jobs(id,project,repository,actor,idempotency_key,inputs,state) VALUES ($1,$2,$3,$4,$5,$6,'QUEUED') ON CONFLICT(project,repository,actor,idempotency_key) DO NOTHING",
-        )
-            .bind(proposed.to_string())
-            .bind(i.project.to_string())
-            .bind(i.repository.as_str())
-            .bind(i.actor.as_str())
-            .bind(request.idempotency.as_str())
-            .bind(json(i)?)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?
-            .rows_affected() == 1;
-        let id: String = sqlx::query_scalar(
-            "SELECT id FROM certification_jobs WHERE project=$1 AND repository=$2 AND actor=$3 AND idempotency_key=$4",
-        )
-            .bind(i.project.to_string())
-            .bind(i.repository.as_str())
-            .bind(i.actor.as_str())
-            .bind(request.idempotency.as_str())
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?;
-        let id = JobId::parse(&id)?;
-
-        let job = load(&mut tx, id).await?;
-
-        if job.inputs != *i {
-            return Err(JobStoreError::Conflict);
-        }
-
-        if inserted {
-            audit(&mut tx, id, None, "CertificationRequested").await?;
-
-            audit(&mut tx, id, None, "JobCreated").await?;
-        }
+        let job = job_mutations::create(&mut tx, &request).await?;
 
         tx.commit().await.map_err(db)?;
 
@@ -662,66 +598,7 @@ impl JobRepository for PostgresJobRepository {
 
     async fn recover(&self, id: JobId, expected: AttemptId) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(db)?;
-
-        let job = load(&mut tx, id).await?;
-
-        if job.state != JobState::Running {
-            return Err(JobStoreError::Precondition);
-        }
-
-        let a = job.attempts.last().ok_or(JobStoreError::Precondition)?;
-
-        if a.id != expected || a.lease_until > now(&mut tx).await? {
-            return Err(JobStoreError::Precondition);
-        }
-
-        // A caller assertion cannot substitute for durable exact-attempt cleanup.
-        if a.state == AttemptState::Running
-            && a.runtime
-                .as_ref()
-                .is_none_or(|r| !r.fenced || r.cleanup != RuntimeCleanupState::Succeeded)
-        {
-            return Err(JobStoreError::Precondition);
-        }
-
-        let committed: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM artifacts WHERE job=$1 AND attempt=$2 AND kind='EXECUTION' AND state='AVAILABLE')",
-        )
-            .bind(id.to_string())
-            .bind(expected.to_string())
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?;
-
-        if committed {
-            // Committed evidence must be validated/adopted, never discarded for a rerun.
-            return Err(JobStoreError::Precondition);
-        }
-
-        let next = if job.attempts.len() < usize::from(job.inputs.maximum_attempts) {
-            JobState::Queued
-        } else {
-            JobState::Inconclusive
-        };
-        job.state.transition(next)?;
-        sqlx::query(
-            "UPDATE certification_attempts SET state='LOST',failure='WORKER_LOSS',ended_at=$2 WHERE id=$1 AND state IN ('LEASED','RUNNING')",
-        )
-            .bind(a.id.to_string())
-            .bind(now(&mut tx).await?)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        sqlx::query(
-            "UPDATE certification_jobs SET state=$2,failure=CASE WHEN $2='INCONCLUSIVE' THEN 'WORKER_LOSS' ELSE NULL END WHERE id=$1",
-        )
-            .bind(id.to_string())
-            .bind(json(&next)?.as_str().ok_or(JobStoreError::Invalid)?)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-
-        audit(&mut tx, id, Some(a.id), "AttemptRecovered").await?;
+        job_mutations::recover(&mut tx, id, expected).await?;
 
         tx.commit().await.map_err(db)
     }

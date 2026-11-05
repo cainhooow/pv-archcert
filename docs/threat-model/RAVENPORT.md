@@ -18,6 +18,7 @@ This is engineering review, not independent certification or production qualific
 | Policy substitution | Evaluation uses admitted policy | Persist ID/version/canonical digest; controller compares exact built-in bundle; reject unavailable version | Only the current built-in development policy is supported; future version registry required |
 | Source substitution/mutable refs | Recovery executes exact accepted source | Persist full commit/tree/source SHA-256 and submission/scope; Northgate reload/rehash; worker independent codec/scope checks | Accepted source root backup/durability and hostile same-UID protection remain deployment responsibilities |
 | Retry until pass | Target/policy rejection never queues execution | Terminal NOT_ELIGIBLE; infrastructure-only lease-loss recovery; immutable attempt history and max 1–3 attempts | Facts lost before durable acceptance remain uncertainty; trusted controller and runtime/gate integrity remain necessary |
+| Queued cancellation / command crash | No running-target cancellation or half-published local result | ADR 0054 private command grant and exact context; same job/command row locks; no active attempt or uncertain retained cleanup; terminal INCONCLUSIVE with OPERATOR_CANCELLATION; mutation, audit and receipt commit together | HTTP mediation is not enabled; actual process-kill command recovery remains unqualified; v1 status omits the job-level reason |
 | Signing replay/changed payload | One issuance identity cannot sign changed fields | Canonical validated draft; persist key/time/payload digest before sign; exact compare on retry | Same exact certificate replay is allowed; revocation/expiration semantics remain deferred |
 | Crash during signing | Completion has verified persisted envelope | Deterministic same-message Ed25519 recovery; verify selected key; immutable upload before atomic completion/audit | Selected key must remain available; signer failure leaves recoverable SIGNING with classified audit |
 | Credential leakage | Target receives no authority credentials | env_clear worker launch; no key/DB/store capability in assignment or RunnerInput; fixed target environment; dependency guards; live credential canary | Trusted local worker/controller share an OS user in development; separate service identities are required for hostile-worker isolation |
@@ -28,7 +29,8 @@ This is engineering review, not independent certification or production qualific
 | Network partition/database reconnect | Unknown commit is not success | Re-read durable state; idempotent admission, immutable artifact metadata and prepared issuance; fenced result acceptance | Temporary unavailability delays jobs; operators must reconnect/reinvoke controller |
 
 No broker/event platform, event sourcing, cluster membership, general signing RPC,
-production encryption hierarchy, cancellation or public transparency system is added.
+production encryption hierarchy, running-target cancellation or public transparency
+system is added. Private eligible queued cancellation is bounded by ADR 0054.
 ArtifactCipher reserves a maintained-provider encryption boundary: root KEK ->
 organization/project KEK -> per-artifact DEK. The supplied storage is explicitly
 unencrypted development storage, not simulated production encryption.
