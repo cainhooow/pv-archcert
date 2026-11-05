@@ -216,6 +216,11 @@ It has no live-confirmation behavior. Refresh retains the original result; anoth
 explicit question gets a new key. Use its separate exact live-query link to inspect
 current readiness. No new build or signing capability is granted.
 
+The [readiness qualification guide](READINESS_QUALIFICATION.md#browser-question-qualification)
+documents the dedicated real-browser/controller/daemon/PostgreSQL corpus, explicit
+historical evidence selection, role cycle, idempotency and artifact-outage checks.
+It creates no new M6 execution, signature or native qualification.
+
 Evidence inspection rehashes registered project/entity/digest-bound original bytes.
 Certificate and permit signatures are checked under selected public keys. Signature
 validity is distinct from actual artifact authorization, which requires readiness or

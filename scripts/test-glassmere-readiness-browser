@@ -1,0 +1,432 @@
+#!/usr/bin/env node
+/* Real browser readiness questions over retained M6 bytes. No execution or signer. */
+"use strict";
+
+const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const net = require("node:net");
+const path = require("node:path");
+const { execFileSync, execFile, spawn } = require("node:child_process");
+const { promisify } = require("node:util");
+const execute = promisify(execFile);
+const root = path.resolve(__dirname, "..");
+const digest = value => crypto.createHash("sha256").update(value).digest("hex");
+const read = file => JSON.parse(fs.readFileSync(file, "utf8"));
+const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+const secrets = [];
+const redact = value => secrets.reduce((text, secret) => text.split(secret).join("[REDACTED]"), String(value));
+
+function privateWrite(file, value) {
+  fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+}
+
+function environment(extra = {}) {
+  const result = {};
+  for (const key of ["PATH", "LANG", "TMPDIR"]) if (process.env[key]) result[key] = process.env[key];
+  return { ...result, ...extra };
+}
+
+async function availablePort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const port = server.address().port;
+  await new Promise(resolve => server.close(resolve));
+  return port;
+}
+
+async function main() {
+  process.umask(0o077);
+  assert(process.env.ARCHCERT_TEST_DATABASE_URL, "Select a disposable development PostgreSQL administrator URL");
+  assert(process.env.ARCHCERT_TEST_READINESS_IMPORT, "Select an explicit private historical readiness import");
+  secrets.push(process.env.ARCHCERT_TEST_DATABASE_URL);
+  const selectionPath = process.env.ARCHCERT_TEST_READINESS_IMPORT;
+  const selectionMetadata = fs.lstatSync(selectionPath);
+  assert(selectionMetadata.isFile() && !selectionMetadata.isSymbolicLink());
+  assert.equal(selectionMetadata.uid, process.getuid());
+  assert.equal(selectionMetadata.mode & 0o777, 0o600);
+  assert.equal(selectionMetadata.nlink, 1);
+  assert(selectionMetadata.size <= 8192);
+  const selection = read(selectionPath);
+  assert.deepEqual(Object.keys(selection).sort(), ["invocation", "project", "query_config"]);
+
+  const output = path.resolve(process.env.GLASSMERE_READINESS_BROWSER_OUTPUT || path.join(root, "target/glassmere-readiness-browser"));
+  assert(output.startsWith(path.join(root, "target") + path.sep));
+  fs.mkdirSync(output, { mode: 0o700 });
+  assert.equal(fs.realpathSync(output), output, "Use a canonical private output directory");
+  const binary = (variable, fallback) => {
+    const selected = path.resolve(process.env[variable] || path.join(root, fallback));
+    assert(fs.statSync(selected).isFile(), variable);
+    fs.accessSync(selected, fs.constants.X_OK);
+    return fs.realpathSync(selected);
+  };
+  const panelBinary = binary("ARCHCERT_TEST_PANEL_BINARY", "target/release/archcert-panel");
+  const daemonBinary = binary("ARCHCERT_TEST_DAEMON_BINARY", "target/debug/archcertd");
+  const controllerBinary = binary("ARCHCERT_TEST_CONTROLLER_BINARY", "target/debug/archcert-controller");
+  const fixtureBinary = binary("ARCHCERT_TEST_COMMAND_FIXTURE_BINARY", "target/debug/examples/glassmere-command-fixture");
+  const random = () => {
+    const value = crypto.randomBytes(32).toString("hex");
+    secrets.push(value);
+    return value;
+  };
+  privateWrite(path.join(output, "seed.json"), {
+    reader_password: random(),
+    principals: Object.fromEntries(["administrator", "operator"].map(principal => [principal, {
+      legacy: digest(random()), command: digest(random()),
+    }])),
+  });
+  execFileSync(fixtureBinary, [output], {
+    env: environment({ ARCHCERT_TEST_DATABASE_URL: process.env.ARCHCERT_TEST_DATABASE_URL }),
+    timeout: 60000, stdio: "pipe",
+  });
+  const commandToken = random();
+  privateWrite(path.join(output, "import.json"), {
+    ...selection, legacy_token_sha256: digest(random()), command_token_sha256: digest(commandToken),
+  });
+  execFileSync(fixtureBinary, ["--import-readiness", output], {
+    env: environment(), timeout: 60000, stdio: "pipe",
+  });
+  const fixture = read(path.join(output, "readiness-fixture.json"));
+  const database = read(path.join(output, "database.json"));
+  secrets.push(database.authority_url, database.reader_url);
+  const source = fixture.admission.input.certified_source;
+  const project = fixture.project;
+  const invocation = fixture.invocation;
+  const repository = source.repository;
+  const references = Object.fromEntries(fixture.references.filter(([, , available]) => available).map(([role, reference]) => [role, reference]));
+  const expectedSubject = {
+    project, repository, invocation, source: source.source, certificate: source.certificate_sha256,
+    artifact: references.ARTIFACT_A.sha256, permit: references.PERMIT_PAYLOAD.sha256,
+  };
+  const daemonPort = await availablePort();
+  let panelPort = await availablePort();
+  while (panelPort === daemonPort) panelPort = await availablePort();
+  const base = `http://127.0.0.1:${panelPort}`;
+  const panelConfig = path.join(output, "panel.json");
+  const principal = "readiness-user";
+  function provision(args) {
+    execFileSync("/usr/bin/python3", [path.join(root, "scripts/glassmere-provision"),
+      "--config", panelConfig, "--operator", "readiness-browser-qualification", ...args],
+    { env: environment(), timeout: 20000, stdio: "pipe" });
+  }
+  const delivery = path.join(output, "panel-access.json");
+  provision(["bootstrap", "--origin", base, "--development-http", "--demonstration-data",
+    "--principal", principal, "--project", project, "--credential-file", delivery]);
+  const credential = read(delivery).credential;
+  secrets.push(credential);
+  privateWrite(path.join(output, "broker.json"), {
+    schema: 1, endpoint: `127.0.0.1:${daemonPort}`,
+    mappings: [{ principal, project, repository, token: commandToken,
+      operations: ["REQUEST_RELEASE_READINESS_EVALUATION"] }],
+  });
+
+  const children = new Set();
+  async function start(binaryPath, args, extra, logName, url) {
+    const log = fs.openSync(path.join(output, logName), "a", 0o600);
+    const child = spawn(binaryPath, args, { env: environment(extra), stdio: ["ignore", log, log] });
+    fs.closeSync(log);
+    let startError;
+    child.once("error", error => { startError = error; });
+    children.add(child);
+    child.once("exit", () => children.delete(child));
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      if (startError) throw startError;
+      assert(child.exitCode === null && child.signalCode === null, `${logName} exited during startup`);
+      try {
+        const response = await fetch(url + "/readyz", { signal: AbortSignal.timeout(1000) });
+        await response.text();
+        if (response.ok) return child;
+      } catch { /* The owned process may still be starting. */ }
+      await pause(100);
+    }
+    throw new Error(`${logName} did not become ready`);
+  }
+  async function stop(child) {
+    if (!children.has(child)) return;
+    const exited = new Promise(resolve => child.once("exit", resolve));
+    child.kill("SIGTERM");
+    let timer;
+    await Promise.race([exited, new Promise(resolve => { timer = setTimeout(resolve, 10000); })]);
+    clearTimeout(timer);
+    if (children.has(child)) { child.kill("SIGKILL"); await exited; }
+  }
+  const inspect = () => JSON.parse(execFileSync(fixtureBinary, ["--inspect", output], {
+    env: environment(), encoding: "utf8", timeout: 20000,
+  }));
+  async function dispatch() {
+    const { stdout } = await execute(controllerBinary, ["--config", path.join(output, "readiness-authority.json"),
+      "dispatch-command", "--observation-config", path.join(output, "readiness-query.json")], {
+      env: environment({ ARCHCERT_DATABASE_URL: database.authority_url, ARCHCERT_OBSERVATION_DATABASE_URL: database.reader_url }),
+      encoding: "utf8", timeout: 60000,
+    });
+    return JSON.parse(stdout);
+  }
+  function observation(receipt, allowed) {
+    assert.equal(receipt.schema, 2);
+    assert.equal(receipt.observation_freshness, "HISTORICAL_OBSERVATION");
+    assert.equal(receipt.state, "APPLIED");
+    const value = receipt.outcome.effect.observation;
+    assert.equal(receipt.outcome.effect.kind, "READINESS_EVALUATED");
+    assert.equal(value.state, allowed ? "RELEASE_ALLOWED" : "RELEASE_DENIED");
+    assert.equal(value.blockers.length === 0, allowed);
+    for (const key of ["project", "repository", "source", "certificate", "invocation"]) {
+      assert.deepEqual(value.subject[key], expectedSubject[key], key);
+    }
+    if (allowed) for (const key of ["artifact", "permit"]) assert.equal(value.subject[key], expectedSubject[key], key);
+    return value;
+  }
+
+  const results = [];
+  const dialogs = [];
+  const externalRequests = [];
+  const readinessRequests = [];
+  let browser;
+  let browserVersion;
+  let initial;
+  let final;
+  let outageBlockers;
+  const sourceHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  const sourceDiff = execFileSync("git", ["diff", "HEAD"], { cwd: root });
+  let scriptTracked = true;
+  try { execFileSync("git", ["ls-files", "--error-unmatch", path.relative(root, __filename)], { cwd: root, stdio: "pipe" }); }
+  catch { scriptTracked = false; }
+  async function check(name, action) {
+    const started = performance.now();
+    try {
+      await action();
+      results.push({ name, status: "PASS", milliseconds: performance.now() - started });
+      console.log("PASS", name);
+    } catch (error) {
+      results.push({ name, status: "FAILED", error: redact(error.message) });
+      throw error;
+    }
+  }
+  try {
+    await start(daemonBinary, ["--config", path.join(output, "readiness-authority.json"),
+      "--command-credentials", path.join(output, "readiness-credentials.json"), "--listen", `127.0.0.1:${daemonPort}`],
+    { ARCHCERT_DATABASE_URL: database.authority_url }, "daemon.log", `http://127.0.0.1:${daemonPort}`);
+    await start(panelBinary, ["--config", panelConfig, "--query-config", path.join(output, "readiness-query.json"),
+      "--command-config", path.join(output, "broker.json"), "--listen", `127.0.0.1:${panelPort}`],
+    { ARCHCERT_OBSERVATION_DATABASE_URL: database.reader_url }, "panel.log", base);
+    const moduleRoot = path.join(root, "tools/glassmere-browser/node_modules/playwright");
+    assert.equal(require(path.join(moduleRoot, "package.json")).version, "1.56.1");
+    const { chromium } = require(moduleRoot);
+    const launch = { headless: true };
+    if (process.env.GLASSMERE_CHROME_EXECUTABLE) {
+      assert(path.isAbsolute(process.env.GLASSMERE_CHROME_EXECUTABLE));
+      launch.executablePath = fs.realpathSync(process.env.GLASSMERE_CHROME_EXECUTABLE);
+    } else { launch.channel = "chrome"; }
+    browser = await chromium.launch(launch);
+    browserVersion = browser.version();
+    initial = inspect();
+    assert.equal(initial.commands_count, 0);
+    const live = `${base}/projects/${project}/readiness/${invocation}`;
+    const formUrl = `${base}/projects/${project}/commands/new?operation=REQUEST_RELEASE_READINESS_EVALUATION&target=RELEASE&entity=${invocation}`;
+    let liveReads = 0;
+    async function liveValue(context) {
+      const response = await context.request.get(`${base}/api/v1/projects/${project}/readiness/${invocation}`);
+      const value = await response.json();
+      privateWrite(path.join(output, `live-api-${++liveReads}.json`), { status: response.status(), value });
+      assert.equal(response.status(), 200, `Live readiness HTTP ${response.status()}: ${JSON.stringify(value)}`);
+      return value;
+    }
+    async function login(role) {
+      provision(["set-grant", "--principal", principal, "--role", role, "--project", project]);
+      const context = await browser.newContext();
+      context.on("page", page => {
+        page.on("dialog", async dialog => { dialogs.push(dialog.message()); await dialog.dismiss(); });
+        page.on("request", request => { if (new URL(request.url()).origin !== base) externalRequests.push(request.url()); });
+        page.on("response", response => {
+          if (response.url().includes(`/api/v1/projects/${project}/readiness/`) && readinessRequests.length < 100) {
+            readinessRequests.push({ status: response.status(), milliseconds: performance.now() });
+          }
+        });
+      });
+      const page = await context.newPage();
+      await page.goto(base + "/login");
+      await page.getByLabel("Access credential").fill(credential);
+      await page.getByRole("button", { name: "Sign in to Glassmere" }).click();
+      await page.waitForURL(base + "/projects");
+      return { context, page };
+    }
+    async function form(page) {
+      await page.goto(formUrl);
+      return await page.locator("form[data-command-form]").evaluate(form => Object.fromEntries(new FormData(form)));
+    }
+    const post = (context, fields, headers = { Origin: base }) => context.request.post(`${base}/projects/${project}/commands`, {
+      form: fields, headers, maxRedirects: 0,
+    });
+    async function historical(page, url, allowed) {
+      await page.goto(url);
+      assert.equal(await page.locator("[data-readiness]").count(), 0);
+      assert.equal(await page.locator("[data-check-url]").count(), 0);
+      assert.equal(await page.locator("[data-historical-readiness]").count(), 1);
+      assert(await page.getByRole("heading", { name: `Historical readiness observation: ${allowed ? "RELEASE_ALLOWED" : "RELEASE_DENIED"}`, exact: true }).isVisible());
+      assert((await page.locator("main").innerText()).includes("HISTORICAL_OBSERVATION"));
+      assert.equal(await page.getByRole("link", { name: "Check current readiness", exact: true }).getAttribute("href"), `/projects/${project}/readiness/${invocation}`);
+    }
+
+    for (const role of ["VIEWER", "REVIEWER"]) {
+      await check(`${role.toLowerCase()}-read-only-and-command-denial`, async () => {
+        const { context, page } = await login(role);
+        try {
+          assert.equal((await page.goto(live)).status(), 200);
+          // Initial script evaluation and pageshow each ask for confirmation.
+          // Wait for the existing UI state before adding a manual API request;
+          // the authority's unchanged verification concurrency bound is two.
+          await page.waitForFunction(() => document.querySelector("[data-readiness]").classList.contains("confirmed"));
+          assert.equal((await liveValue(context)).state, "RELEASE_ALLOWED");
+          assert.equal(await page.getByRole("link", { name: "Request readiness observation", exact: true }).count(), 0);
+          const csrf = await page.locator('form[action="/logout"] input[name="csrf"]').inputValue();
+          const fields = { csrf, idempotency: role.toLowerCase() + "-denied", operation: "REQUEST_RELEASE_READINESS_EVALUATION",
+            target: "RELEASE", entity: invocation, repository, authority_context: fixture.authority_context };
+          assert.equal((await context.request.get(formUrl)).status(), 403);
+          assert.equal((await post(context, fields)).status(), 403);
+          assert.equal(inspect().commands_count, 0);
+        } finally { await context.close(); }
+      });
+    }
+
+    const operator = await login("OPERATOR");
+    let firstReceipt;
+    try {
+      await check("operator-double-click-http-retry-and-get-refresh", async () => {
+        const fields = await form(operator.page);
+        await Promise.all([
+          operator.page.waitForURL(/\/commands\/[0-9a-f-]{36}\?/),
+          operator.page.locator("form[data-command-form] button[type=submit]").evaluate(button => { button.click(); button.click(); }),
+        ]);
+        firstReceipt = operator.page.url();
+        for (let index = 0; index < 2; index++) {
+          const retry = await post(operator.context, fields);
+          assert.equal(retry.status(), 303);
+          assert.equal(new URL(retry.headers().location, base).href, firstReceipt);
+        }
+        const before = inspect();
+        assert.equal(before.commands_count, 1);
+        assert.equal(before.keys, 1);
+        observation(await dispatch(), true);
+        await historical(operator.page, firstReceipt, true);
+        await operator.page.getByRole("link", { name: "Refresh receipt", exact: true }).click();
+        assert.equal(inspect().commands_count, 1);
+      });
+      await check("different-tab-key-asks-a-fresh-question-without-a-build", async () => {
+        const second = await operator.context.newPage();
+        try {
+          const fields = await form(second);
+          const response = await post(operator.context, fields);
+          assert.equal(response.status(), 303);
+          const url = new URL(response.headers().location, base).href;
+          assert.notEqual(url, firstReceipt);
+          assert.equal(inspect().commands_count, 2);
+          observation(await dispatch(), true);
+          await historical(second, url, true);
+        } finally { await second.close(); }
+      });
+      await check("csrf-forged-fact-scope-and-backend-credential-denials", async () => {
+        const fields = await form(operator.page);
+        assert.equal((await post(operator.context, fields, { Origin: "https://attacker.invalid" })).status(), 403);
+        assert.equal((await post(operator.context, { ...fields, csrf: "wrong-csrf" })).status(), 403);
+        assert.equal((await post(operator.context, { ...fields, readiness: "RELEASE_ALLOWED" })).status(), 400);
+        assert.equal((await post(operator.context, { ...fields, entity: "f".repeat(64) })).status(), 404);
+        const backend = path.join(output, "readiness-credentials.json");
+        const unavailable = path.join(output, "readiness-credentials-unavailable.json");
+        fs.renameSync(backend, unavailable);
+        try { assert.equal((await post(operator.context, fields)).status(), 503); }
+        finally { fs.renameSync(unavailable, backend); }
+        assert.equal(inspect().commands_count, 2);
+      });
+      await check("artifact-outage-denies-current-and-fresh-questions-with-historical-allowed-retained", async () => {
+        const original = path.join(output, "readiness-artifacts", project);
+        const unavailable = path.join(output, "artifact-project-unavailable");
+        fs.renameSync(original, unavailable);
+        let deniedReceipt;
+        try {
+          await historical(operator.page, firstReceipt, true);
+          const current = await liveValue(operator.context);
+          assert.equal(current.state, "RELEASE_DENIED");
+          assert(current.blockers.some(blocker => blocker.code === "INFRASTRUCTURE_UNCERTAIN"));
+          const fields = await form(operator.page);
+          const response = await post(operator.context, fields);
+          assert.equal(response.status(), 303);
+          deniedReceipt = new URL(response.headers().location, base).href;
+          const denied = observation(await dispatch(), false);
+          outageBlockers = denied.blockers.map(blocker => blocker.code);
+          assert(outageBlockers.includes("INFRASTRUCTURE_UNCERTAIN"));
+          await historical(operator.page, deniedReceipt, false);
+        } finally { fs.renameSync(unavailable, original); }
+        assert.equal((await liveValue(operator.context)).state, "RELEASE_ALLOWED");
+        await historical(operator.page, deniedReceipt, false);
+      });
+    } finally { await operator.context.close(); }
+
+    await check("administrator-request-remains-separate-from-signing-and-old-role-sessions", async () => {
+      const administrator = await login("ADMINISTRATOR");
+      try {
+        const fields = await form(administrator.page);
+        const response = await post(administrator.context, fields);
+        assert.equal(response.status(), 303);
+        observation(await dispatch(), true);
+        await historical(administrator.page, new URL(response.headers().location, base).href, true);
+        for (const url of ["/sign-certificate", "/sign-release-permit", "/admin/users", "/review-disposition"]) {
+          assert.equal((await administrator.context.request.post(base + url, { headers: { Origin: base } })).status(), 403);
+        }
+        provision(["set-grant", "--principal", principal, "--role", "VIEWER", "--project", project]);
+        provision(["set-grant", "--principal", principal, "--role", "ADMINISTRATOR", "--project", project]);
+        assert.equal((await administrator.context.request.get(formUrl)).status(), 401);
+      } finally { await administrator.context.close(); }
+    });
+    await check("exact-journal-counts-and-unchanged-imported-m6-state", async () => {
+      final = inspect();
+      assert.equal(final.commands_count, 4);
+      assert.equal(final.keys, 4);
+      assert.equal(final.command_audit.CommandRequested, 4);
+      assert.equal(final.command_audit.CommandApplied, 4);
+      assert.equal(final.jobs, initial.jobs);
+      assert.equal(final.attempts, initial.attempts);
+      assert.equal(final.certificates, 0);
+      assert.equal(final.release_record_sha256, initial.release_record_sha256);
+      assert.equal(final.release_audits, 1);
+      assert.deepEqual(dialogs, []);
+      assert.deepEqual(externalRequests, []);
+    });
+  } finally {
+    try {
+      privateWrite(path.join(output, "results.json"), {
+        head: sourceHead,
+        tracked_diff_sha256: digest(sourceDiff),
+        exact_committed_source: sourceDiff.length === 0 && scriptTracked,
+        script_sha256: digest(fs.readFileSync(__filename)),
+        binaries: Object.fromEntries(Object.entries({
+          panel: panelBinary,
+          daemon: daemonBinary,
+          controller: controllerBinary,
+          fixture: fixtureBinary,
+        }).map(([name, binaryPath]) => [name, digest(fs.readFileSync(binaryPath))])),
+        results,
+        browser_version: browserVersion,
+        playwright: "1.56.1",
+        dialogs,
+        external_requests: externalRequests,
+        readiness_requests: readinessRequests,
+        initial,
+        final,
+        outage_blockers: outageBlockers,
+        subject: expectedSubject,
+        scope: "Historical development M6 evidence; no new execution, claims, signatures or independent certification",
+      });
+    } finally {
+      try {
+        if (browser) await browser.close();
+      } finally {
+        for (const child of [...children]) await stop(child);
+      }
+    }
+  }
+}
+
+main().catch(error => { console.error(redact(error.message)); process.exitCode = 1; });
