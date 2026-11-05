@@ -10,6 +10,12 @@ ADR 0060 places the existing SELECT-only/public-verifier composition in the shar
 provider or private-key port. Its direct allowlist and transitive capability guard
 preserve that boundary for every executable that composes it.
 
+ADR 0061 adds private readiness-request evaluation through this observer and the
+existing fenced command journal. It enables no HTTP/browser readiness request.
+An immutable receipt records a historical observation, never a current release
+lease. New evaluation rechecks current grants and exact scope; publication also
+requires the original live coordination generation and immutable source binding.
+
 | Threat / asset | Attacker capability | Control | Remaining limitation |
 | --- | --- | --- | --- |
 | Stolen session / private state | Replay a cookie | HttpOnly, SameSite Strict, Secure in TLS mode; expiry, server-side logout; grant revision recheck | Compromised browser/host or stolen active cookie can act within its remaining scope |
@@ -25,7 +31,7 @@ preserve that boundary for every executable that composes it.
 | Evidence substitution / identity | Replace bytes or cross-bind metadata | Project-scoped references; verify size/hash; selected-key verifier; exact M6 source/recipe/artifact/comparison bindings | Authority storage loss can deny availability |
 | Download abuse / availability | Repeated large requests | Fixed size, finite concurrency/rate bounds; digest filename; attachment and nosniff | Host-level network resource protection still needed |
 | Search injection / private history | Forge dimensions, values or cursors | Fixed exact vocabulary; canonical 64-byte values; 256-byte project/query-bound cursors; bound SQL; 50 hits; read-only transaction and statement deadline | Pages are fresh reads; new earlier keys require a restarted search and state changes can remove matches |
-| Operational request replay / private coordination | Retry with changed or different keys | ADRs 0053/0056/0058 bind exact scope, context, operation and inputs; immutable keys reject substitution; pending/applied/uncertain intent coalesces; only known no-effect rejection permits a fresh key | Job command HTTP/browser mediation is opt-in; release/readiness mediation remains unimplemented; dispatchers must never misclassify an uncertain side effect as rejection |
+| Operational request replay / private coordination | Retry with changed or different keys | ADRs 0053/0056/0058 bind exact scope, context, operation and inputs; immutable keys reject substitution; pending/applied/uncertain workflow intent coalesces; only known no-effect rejection permits a fresh workflow key; readiness explicitly allows new observation keys | Job command HTTP/browser mediation is opt-in; release-build mediation and readiness transport remain open; dispatchers must never misclassify an uncertain side effect as rejection |
 | Command credential bypass | Reuse a panel broker token on the legacy submission API or post another actor/operation | ADRs 0057–0058 separate token namespaces; strict private per-scope operation mappings; daemon reloads credentials per request and projects safe receipts; context and repository/operation grants checked independently | Release/readiness mediation remains unimplemented; panel role alone grants no backend permission |
 | Restored role / old session | Keep a cookie unused through revocation and restoration | ADR 0059 binds audited fresh assignment generations into session revisions; command mode rejects unversioned privileged grants | Legacy manual writers do not establish role-cycle history; trusted provisioner/root can replace private files |
 | Backend credential forwarding | Forge a destination, redirect or panel principal | Fixed literal loopback endpoint, per-principal/project/repository/operation private mapping, no redirects/proxies, independent tokens, bounded typed responses | Same-UID/root compromise and backend availability remain deployment concerns |

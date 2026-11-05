@@ -1,8 +1,10 @@
 //! Durable operational requests. Request acceptance creates no certification proof.
 
 mod presentation;
+mod readiness;
 
 pub use presentation::*;
+pub use readiness::{ReadinessRequestEvaluator, ReleaseReadinessObserver};
 
 use crate::{
     glassmere::ReleaseReadiness,

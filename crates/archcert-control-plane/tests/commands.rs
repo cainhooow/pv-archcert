@@ -1,10 +1,12 @@
 //! Real PostgreSQL command authentication, object scope and durable acceptance.
 //! Metadata fixtures establish no target execution or certificate issuance.
 
+use archcert_application::release::*;
 use archcert_application::{glassmere::commands::*, jobs::*};
 use archcert_control_plane::{
     AuthorityGrant, ControlPlane, ControlPlaneConfiguration, commands::CommandCredentials,
 };
+use archcert_domain::release::CertifiedSourceIdentity;
 use archcert_domain::{
     GitObjectId, ProjectId,
     ingress::{DeviceKeyId, GitActorId, SourceSubmissionId},
@@ -18,6 +20,176 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::{os::unix::fs::PermissionsExt, sync::Arc};
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+// These rows establish scoped request admission only. No certificate, permit or
+// runtime evidence is manufactured or accepted by a verifier in this fixture.
+async fn readiness_invocation(
+    fixture: &Fixture,
+) -> Result<archcert_domain::release::BuildInvocationIdentity> {
+    let grant = &fixture.state.configuration.grants[0];
+    let job = fixture
+        .state
+        .submit(
+            grant.actor.clone(),
+            grant.project,
+            grant.repository.clone(),
+            fixture.submission.clone(),
+            IdempotencyKey::parse("readiness-source-metadata".into())?,
+        )
+        .await?;
+    let recipe = RustReleaseRecipe::new(
+        BuildEnvironment {
+            image: format!("authority/rust@sha256:{}", "a".repeat(64)),
+            dependency_bundle_sha256: digest_bytes(b"metadata dependencies"),
+            toolchain_sha256: digest_bytes(b"metadata toolchain"),
+        },
+        "fixture",
+    )?;
+    let input = BuildInputManifest {
+        schema: 1,
+        kind: "ARCHCERT_BUILD_INPUT".into(),
+        certified_source: CertifiedSourceIdentity {
+            project: grant.project,
+            repository: grant.repository.clone(),
+            source: job.inputs.source,
+            certificate_sha256: digest_bytes(b"metadata certificate identity"),
+        },
+        recipe: recipe.description().clone(),
+        recipe_identity: recipe.identity()?,
+        environment_identity: recipe.environment_identity()?,
+        source_policy_sha256: job.inputs.policy.sha256,
+        source_authority_key_sha256: digest_bytes(b"metadata source key"),
+        release_authority_key_sha256: digest_bytes(b"metadata release key"),
+        release_policy: RELEASE_POLICY.into(),
+        release_policy_sha256: release_policy_digest(),
+    };
+    let admission = ReleaseAdmission {
+        input_reference: release_reference(&release_bytes(&input)?),
+        input,
+        submission: fixture.submission.clone(),
+        actor: grant.actor.clone(),
+    };
+    ReleaseRepository::open(&fixture.state.repository, &admission).await?;
+
+    Ok(admission.input.identity()?)
+}
+
+#[tokio::test]
+#[ignore = "requires real PostgreSQL; scripts/test-ravenport"]
+async fn authenticated_readiness_requests_keep_original_keys_and_scope_fresh_observations() -> Result
+{
+    let fixture = fixture(false).await?;
+    fixture.state.provision().await?;
+    let grant = &fixture.state.configuration.grants[0];
+    let path = fixture
+        .state
+        .configuration
+        .artifact_root
+        .parent()
+        .ok_or("fixture root")?
+        .join("readiness-credentials.json");
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&serde_json::json!({
+            "schema": 1,
+            "principals": [{
+                "scope": {
+                    "project": grant.project,
+                    "repository": grant.repository,
+                    "actor": grant.actor,
+                },
+                "token_sha256": digest_bytes(COMMAND_TOKEN.as_bytes()),
+                "operations": ["REQUEST_RELEASE_READINESS_EVALUATION"],
+            }],
+        }))?,
+    )?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    let credentials = CommandCredentials::load(&path, &fixture.state.configuration)?;
+    fixture.state.provision_commands(&credentials).await?;
+    let readiness_authorization = credentials.authorize(
+        &fixture.state.configuration,
+        COMMAND_TOKEN,
+        grant.project,
+        &grant.repository,
+        ControlOperation::RequestReleaseReadinessEvaluation,
+        Some(&grant.command_context()?),
+    )?;
+    let invocation = readiness_invocation(&fixture).await?;
+    let first_key = IdempotencyKey::parse("first-observation".into())?;
+
+    let first = fixture
+        .state
+        .request_readiness(&readiness_authorization, invocation.clone(), &first_key)
+        .await?;
+    let retry = fixture
+        .state
+        .request_readiness(&readiness_authorization, invocation.clone(), &first_key)
+        .await?;
+    let fresh = fixture
+        .state
+        .request_readiness(
+            &readiness_authorization,
+            invocation.clone(),
+            &IdempotencyKey::parse("explicit-fresh-observation".into())?,
+        )
+        .await?;
+    assert_eq!(first.id, retry.id);
+    assert_ne!(first.id, fresh.id);
+    assert_eq!(first.state, ControlCommandState::Requested);
+
+    let wrong_operation = authorization(&fixture, ControlOperation::CancelEligibleJob)?;
+    assert!(matches!(
+        fixture
+            .state
+            .request_readiness(
+                &wrong_operation,
+                invocation.clone(),
+                &IdempotencyKey::parse("wrong-operation".into())?
+            )
+            .await,
+        Err(JobStoreError::Unauthorized)
+    ));
+    assert!(matches!(
+        fixture
+            .state
+            .request_readiness(
+                &readiness_authorization,
+                archcert_domain::release::BuildInvocationIdentity(digest_bytes(
+                    b"absent invocation"
+                )),
+                &IdempotencyKey::parse("wrong-object".into())?
+            )
+            .await,
+        Err(JobStoreError::Unauthorized)
+    ));
+    sqlx::query(
+        "DELETE FROM control_command_grants WHERE operation='REQUEST_RELEASE_READINESS_EVALUATION'",
+    )
+    .execute(&fixture.pool)
+    .await?;
+    assert!(matches!(
+        fixture
+            .state
+            .request_readiness(
+                &readiness_authorization,
+                invocation,
+                &IdempotencyKey::parse("revoked".into())?
+            )
+            .await,
+        Err(JobStoreError::Unauthorized)
+    ));
+
+    let counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM control_commands),
+                (SELECT count(*) FROM control_command_keys),
+                (SELECT count(*) FROM release_invocations)",
+    )
+    .fetch_one(&fixture.pool)
+    .await?;
+    assert_eq!(counts, (2, 2, 1));
+
+    Ok(())
+}
 
 const COMMAND_TOKEN: &str = "public-regression-command-token-00000001";
 

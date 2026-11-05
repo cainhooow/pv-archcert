@@ -552,10 +552,9 @@ infrastructure-only retry with domain mutation, audit and receipt in one transac
 Reviewed certification additionally consumes the existing sealed application
 admission under [ADR 0055](../adr/0055-glassmere-reviewed-command-mediation.md),
 preserving its source/review/challenge chain and atomic linkage/receipt. Retained
-reviews can be restored without any provider invocation capability. Release and
-readiness commands still require separate mediation; no HTTP command is enabled by
-these private ports. Browser RBAC/idempotency and actual process-kill command
-recovery remain unqualified.
+reviews can be restored without any provider invocation capability. Release-build
+mediation remains open. These private ports enable no HTTP command by themselves;
+transport and browser qualification are separate boundaries.
 
 [ADR 0057](../adr/0057-glassmere-command-credential-boundary.md) separates private
 command credentials from legacy submission tokens. Existing authority configuration
@@ -583,3 +582,13 @@ assignments now include a fresh random grant generation, preventing restored rol
 from reviving older sessions. Legacy unversioned grants remain read-only compatible
 but cannot enable Operator/Administrator commands. This adds no release/readiness,
 review disposition, user administration, runtime or signing operation.
+
+[ADR 0061](../adr/0061-private-readiness-request-evaluation.md) adds private
+readiness-request mediation. A narrow application observer reuses the shared live
+query/verifier; the journal rechecks current grants, original scope/context and
+coordination ownership before publishing a historical receipt and audit. Same-key
+replay retains that receipt; a new explicit key can request another observation.
+This acquires no build claim and changes no source certificate or Release Permit.
+The controller requires an explicit observation configuration and separate
+SELECT-only database capability. No readiness HTTP or browser operation is enabled;
+current readiness still requires a fresh live dependency check.

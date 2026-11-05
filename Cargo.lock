@@ -161,6 +161,7 @@ dependencies = [
  "archcert-domain",
  "archcert-evidence",
  "archcert-materialization",
+ "archcert-observation",
  "archcert-policy",
  "archcert-protocol",
  "archcert-runner",

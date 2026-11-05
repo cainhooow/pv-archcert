@@ -195,6 +195,21 @@ impl ControlPlane {
         self.repository.accept(&command, key).await
     }
 
+    /// Request a fresh historical readiness observation for one exact owned invocation.
+    pub async fn request_readiness(
+        &self,
+        authorization: &CommandAuthorization,
+        invocation: archcert_domain::release::BuildInvocationIdentity,
+        key: &IdempotencyKey,
+    ) -> Result<ControlCommandRecord, JobStoreError> {
+        self.request_object_action(
+            authorization,
+            ResolvedControlAction::RequestReleaseReadinessEvaluation { invocation },
+            key,
+        )
+        .await
+    }
+
     /// Accept an exact owned job cancellation; eligibility is checked atomically at dispatch.
     pub async fn request_cancellation(
         &self,
@@ -202,7 +217,7 @@ impl ControlPlane {
         job: JobId,
         key: &IdempotencyKey,
     ) -> Result<ControlCommandRecord, JobStoreError> {
-        self.request_job_action(
+        self.request_object_action(
             authorization,
             ResolvedControlAction::CancelEligibleJob { job },
             key,
@@ -218,7 +233,7 @@ impl ControlPlane {
         attempt: AttemptId,
         key: &IdempotencyKey,
     ) -> Result<ControlCommandRecord, JobStoreError> {
-        self.request_job_action(
+        self.request_object_action(
             authorization,
             ResolvedControlAction::RetryEligibleJob { job, attempt },
             key,
@@ -226,7 +241,7 @@ impl ControlPlane {
         .await
     }
 
-    async fn request_job_action(
+    async fn request_object_action(
         &self,
         authorization: &CommandAuthorization,
         action: ResolvedControlAction,

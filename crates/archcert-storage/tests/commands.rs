@@ -1,5 +1,8 @@
 //! Real PostgreSQL command coordination; no browser or target execution is simulated.
 
+#[path = "commands/readiness.rs"]
+mod readiness;
+
 use archcert_application::{glassmere::commands::*, jobs::*};
 use archcert_domain::{
     GitObjectId, ProjectId,

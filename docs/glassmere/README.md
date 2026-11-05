@@ -182,6 +182,17 @@ missed confirmation budget, tab switch or history restoration invalidates freshn
 Scripts never recalculate release policy. With scripts disabled the historical
 warning remains. Confirmation is not a lease for deployment at a later moment.
 
+[ADR 0061](../adr/0061-private-readiness-request-evaluation.md) additionally defines
+a private readiness command evaluator. Its narrow observer reuses the live query;
+the journal publishes only through current grants and the original coordination
+fence. The receipt is historical even when its observation says RELEASE_ALLOWED.
+Same-key replay preserves it; another explicit key requests a new observation.
+The controller's `dispatch-command --observation-config /private/query.json`
+requires a separate SELECT-only `ARCHCERT_OBSERVATION_DATABASE_URL` for that path.
+Missing observation capability records unavailability; invalid provided
+configuration fails initialization. This foundation enables no browser or daemon
+readiness action and acquires no build/runtime/signing capability.
+
 Evidence inspection rehashes registered project/entity/digest-bound original bytes.
 Certificate and permit signatures are checked under selected public keys. Signature
 validity is distinct from actual artifact authorization, which requires readiness or

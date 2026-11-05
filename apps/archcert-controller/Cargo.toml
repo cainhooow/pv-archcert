@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
 [dependencies]
+archcert-observation = { path = "../../crates/archcert-observation", version = "=0.1.0" }
 async-trait.workspace = true
 archcert-semantic = { path = "../../crates/archcert-semantic", version = "=0.1.0" }
 anyhow.workspace = true

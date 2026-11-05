@@ -11,6 +11,10 @@ use archcert_protocol::commands::ControlCommandResponse;
 
 #[derive(clap::Args)]
 pub(super) struct DispatchArgs {
+    /// Explicit public-key/recipe observation selection. Readiness also requires
+    /// ARCHCERT_OBSERVATION_DATABASE_URL with a separately provisioned SELECT-only role.
+    #[arg(long)]
+    observation_config: Option<std::path::PathBuf>,
     #[arg(long, default_value = "development-command-dispatcher")]
     dispatcher: String,
     #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u32).range(5..=300))]
@@ -155,8 +159,25 @@ pub(super) async fn dispatch(state: &ControlPlane, args: DispatchArgs) -> Result
                     .apply_job_command(&assignment.lease, &context)
                     .await?;
             }
-            ResolvedControlAction::RequestReleaseBuild { .. }
-            | ResolvedControlAction::RequestReleaseReadinessEvaluation { .. } => {
+            ResolvedControlAction::RequestReleaseReadinessEvaluation { .. } => {
+                let observer = match (
+                    args.observation_config.as_ref(),
+                    std::env::var("ARCHCERT_OBSERVATION_DATABASE_URL").ok(),
+                ) {
+                    (Some(path), Some(url)) => {
+                        Some(archcert_observation::QueryService::connect(&url, path).await?)
+                    }
+                    _ => None,
+                };
+                let evaluator = ReadinessRequestEvaluator {
+                    commands: &state.repository,
+                    observer: observer
+                        .as_ref()
+                        .map(|query| query as &dyn ReleaseReadinessObserver),
+                };
+                evaluator.evaluate(&assignment, &context).await?;
+            }
+            ResolvedControlAction::RequestReleaseBuild { .. } => {
                 state
                     .repository
                     .finish(

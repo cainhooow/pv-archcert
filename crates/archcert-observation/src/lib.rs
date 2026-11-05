@@ -270,6 +270,17 @@ impl GlassmereQuery for QueryService {
     }
 }
 
+#[async_trait]
+impl archcert_application::glassmere::commands::ReleaseReadinessObserver for QueryService {
+    async fn observe(
+        &self,
+        project: ProjectId,
+        invocation: &archcert_domain::release::BuildInvocationIdentity,
+    ) -> Result<ReleaseReadiness> {
+        GlassmereQuery::readiness(self, project, invocation.0.as_str()).await
+    }
+}
+
 fn verification_failure(state: &str, provenance: &str) -> Vec<ObservationField> {
     vec![ObservationField {
         label: "Signature verification".into(),
