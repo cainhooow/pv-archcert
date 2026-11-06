@@ -344,8 +344,10 @@ The private controller's identifier-only `request-build` and verified dispatcher
 are specified in [ADR 0067](docs/adr/0067-native-release-build-command-dispatch.md).
 Schema-3 APPLIED receipts mean workflow admission only. The optional separately
 authenticated HTTP command API accepts identifier-only build requests under
-[ADR 0068](docs/adr/0068-identifier-only-release-build-http.md). Browser build
-requests remain unsupported while their separate integration is pending.
+[ADR 0068](docs/adr/0068-identifier-only-release-build-http.md). The opt-in browser
+form adds current role, scoped object, Origin and CSRF checks under
+[ADR 0069](docs/adr/0069-glassmere-build-browser-request.md). Its receipt reports
+admission only; it grants no runtime or signing capability.
 
 `scripts/test-glassmere-build` additionally re-ingests a complete explicitly selected
 historical source pack through the existing bounded Rust decoder and matches its
@@ -369,3 +371,15 @@ limits and duration without pretending that a network receive occurred.
 Set `ARCHCERT_TEST_BUILD_TRANSPORT=http` to exercise actual loopback daemon
 submission and receipt lookup with the same native dispatcher and crash assertions.
 Build `archcertd` first; the default transport remains the private native CLI.
+
+`scripts/test-glassmere-build-browser` exercises actual Chrome, panel, daemon,
+controller and real PostgreSQL with the same explicit `ARCHCERT_TEST_BUILD_IMPORT`
+selection and development administrator URL. Build the panel in release mode and
+the daemon, controller and fixture example first. Set
+`GLASSMERE_BUILD_BROWSER_OUTPUT` to a new private directory under `target/` and,
+if needed, `GLASSMERE_CHROME_EXECUTABLE` to an explicitly provisioned Chrome binary.
+Playwright is development tooling under `tools/glassmere-browser`; the application
+still needs no Node runtime. The script cycles four panel roles under one externally
+audited development identity, exercises duplicate/tab requests and restarts, and
+asserts one admitted workflow with no execution claims or new signatures. It does
+not qualify separate production identities, new source certification or native builds.

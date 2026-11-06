@@ -53,8 +53,11 @@ ADR 0068 adds the closed schema-3 HTTP build action containing only an owned
 certification job ID. Independent credentials, exact operation-specific context,
 current grants and passive complete-source binding still gate request acceptance.
 Verification and atomic admission remain in the separate controller. Existing
-request bounds are unchanged. Browser build requests remain disabled; M9 remains
-in progress and later milestones remain not started.
+request bounds are unchanged. ADR 0069 adds the opt-in browser form through current
+role/project/object, Origin, CSRF and independent backend-grant checks. Its schema-3
+receipt displays admission only; refresh creates no workflow and grants no current
+release status. The five-operation presentation vocabulary adds no execution or
+signing port. M9 remains in progress and later milestones remain not started.
 
 ADRs 0041–0044 describe the implemented knowledge, semantic review and durable
 lifecycle controls. They were historically mislabeled M6/Ironcrest. The retained

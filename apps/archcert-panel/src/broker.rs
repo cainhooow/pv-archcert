@@ -51,6 +51,7 @@ fn supported(operation: ControlOperation) -> bool {
     matches!(
         operation,
         ControlOperation::RequestCertification
+            | ControlOperation::RequestReleaseBuild
             | ControlOperation::RequestReleaseReadinessEvaluation
             | ControlOperation::CancelEligibleJob
             | ControlOperation::RetryEligibleJob
@@ -123,7 +124,7 @@ impl Configuration {
                 || !(32..=256).contains(&mapping.token.len())
                 || !mapping.token.bytes().all(|byte| byte.is_ascii_graphic())
                 || mapping.operations.is_empty()
-                || mapping.operations.len() > 4
+                || mapping.operations.len() > 5
                 || mapping
                     .operations
                     .iter()
@@ -340,7 +341,11 @@ fn receipt(
             | ControlCommandState::Inconclusive
     );
     let readiness = operation == ControlOperation::RequestReleaseReadinessEvaluation;
-    let expected_schema = if readiness { 2 } else { 1 };
+    let expected_schema = match operation {
+        ControlOperation::RequestReleaseBuild => 3,
+        ControlOperation::RequestReleaseReadinessEvaluation => 2,
+        _ => 1,
+    };
 
     if value.schema != expected_schema
         || value.observation_freshness
@@ -361,6 +366,14 @@ fn receipt(
 
     if let Some(ControlCommandOutcome::Applied { effect }) = &value.outcome {
         let valid = match (operation, effect.as_ref()) {
+            (
+                ControlOperation::RequestReleaseBuild,
+                CommandEffect::ReleaseBuildRequested { .. },
+            ) => {
+                // The typed digest is validated on decode. Its binding to the owned
+                // job and private recipe is established by the authority resolver.
+                true
+            }
             (
                 ControlOperation::RequestReleaseReadinessEvaluation,
                 CommandEffect::ReadinessEvaluated { observation },
@@ -450,6 +463,9 @@ impl GlassmereCommandBroker for CommandBroker {
         let mapping =
             configuration.mapping(principal, request.project, &request.repository, operation)?;
         let action = match &request.action {
+            RequestedJobAction::RequestReleaseBuild { job } => {
+                ControlActionRequest::RequestReleaseBuild { job: *job }
+            }
             RequestedJobAction::RequestReleaseReadinessEvaluation { invocation } => {
                 ControlActionRequest::RequestReleaseReadinessEvaluation {
                     invocation: invocation.clone(),
@@ -501,6 +517,10 @@ impl GlassmereCommandBroker for CommandBroker {
         )?;
         if let Some(ControlCommandOutcome::Applied { effect }) = &receipt.outcome {
             let matches = match (&request.action, effect.as_ref()) {
+                (
+                    RequestedJobAction::RequestReleaseBuild { .. },
+                    CommandEffect::ReleaseBuildRequested { .. },
+                ) => true,
                 (
                     RequestedJobAction::RequestReleaseReadinessEvaluation { invocation },
                     CommandEffect::ReadinessEvaluated { observation },
@@ -609,11 +629,55 @@ mod tests {
     struct Backend {
         project: ProjectId,
         readiness: AtomicBool,
+        build: AtomicBool,
         mode: AtomicUsize,
         calls: AtomicUsize,
         authorization: Mutex<Vec<String>>,
         bodies: Mutex<Vec<serde_json::Value>>,
         redirect: Mutex<String>,
+    }
+
+    fn build_wire(project: ProjectId, mode: usize) -> serde_json::Value {
+        let mut value = serde_json::json!({
+            "schema": 3,
+            "command_id": RECEIPT,
+            "project": project,
+            "repository": "broker/fixture",
+            "operation": "REQUEST_RELEASE_BUILD",
+            "authority_context": digest_bytes(b"broker fixture authority"),
+            "request_sha256": digest_bytes(b"broker fixture request"),
+            "state": "APPLIED",
+            "created_at": 1_700_000_000,
+            "outcome": {
+                "state": "APPLIED",
+                "effect": {
+                    "kind": "RELEASE_BUILD_REQUESTED",
+                    "invocation": digest_bytes(b"broker exact build invocation"),
+                },
+            },
+        });
+        match mode {
+            2 => value["schema"] = serde_json::json!(99),
+            6 => {
+                value["outcome"]["effect"] = serde_json::json!({
+                    "kind": "JOB_CANCELED",
+                    "job": JOB,
+                })
+            }
+            8 => value["schema"] = serde_json::json!(1),
+            9 => value["schema"] = serde_json::json!(2),
+            10 => value["schema"] = serde_json::json!(4),
+            11 => value["observation_freshness"] = serde_json::json!("HISTORICAL_OBSERVATION"),
+            12 => value["outcome"] = serde_json::Value::Null,
+            13 => value["operation"] = serde_json::json!("CANCEL_ELIGIBLE_JOB"),
+            14 => value["outcome"]["effect"]["invocation"] = serde_json::json!("not-a-digest"),
+            15 => value["state"] = serde_json::json!("REQUESTED"),
+            16 => value["authority_context"] = serde_json::json!(digest_bytes(b"wrong context")),
+            17 => value["repository"] = serde_json::json!("other/repository"),
+            _ => {}
+        }
+
+        value
     }
 
     // Explicit metadata responses qualify wire/schema/binding checks only.
@@ -780,15 +844,25 @@ mod tests {
         };
         let context = digest_bytes(b"broker fixture authority");
         let readiness = state.readiness.load(Ordering::Relaxed);
+        let build = state.build.load(Ordering::Relaxed);
+        let operation = if build {
+            "REQUEST_RELEASE_BUILD"
+        } else if readiness {
+            "REQUEST_RELEASE_READINESS_EVALUATION"
+        } else {
+            "CANCEL_ELIGIBLE_JOB"
+        };
         let value = if context_request {
             serde_json::json!({
                 "schema": if mode == 2 { 99 } else { 1 },
                 "project": project,
                 "repository": "broker/fixture",
-                "operation": if readiness { "REQUEST_RELEASE_READINESS_EVALUATION" } else { "CANCEL_ELIGIBLE_JOB" },
+                "operation": operation,
                 "authority_context": context,
                 "requires_reviewed_session": false,
             })
+        } else if build {
+            build_wire(project, mode)
         } else if readiness {
             readiness_wire(project, mode).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         } else {
@@ -838,6 +912,7 @@ mod tests {
             let state = Arc::new(Backend {
                 project: ProjectId::new(),
                 readiness: AtomicBool::new(false),
+                build: AtomicBool::new(false),
                 mode: AtomicUsize::new(0),
                 calls: AtomicUsize::new(0),
                 authorization: Mutex::new(Vec::new()),
@@ -919,6 +994,82 @@ mod tests {
             std::fs::write(&self.configuration, serde_json::to_vec(&value)?)?;
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn broker_build_requests_bind_schema_scope_and_admission_only_effect() -> TestResult {
+        let server = Server::start().await?;
+        server.state.build.store(true, Ordering::Relaxed);
+        let files = Files::new(&server)?;
+        files.change(|value| {
+            value["mappings"][0]["operations"] = serde_json::json!(["REQUEST_RELEASE_BUILD"]);
+        })?;
+        let broker = CommandBroker::open(files.configuration.clone(), files.panel.clone())?;
+        let repository = RepositoryId::parse("broker/fixture")?;
+        let context = broker
+            .context(
+                "operator",
+                server.state.project,
+                &repository,
+                ControlOperation::RequestReleaseBuild,
+            )
+            .await?;
+        let request = RequestedJobCommand {
+            project: server.state.project,
+            repository: repository.clone(),
+            authority_context: context.authority_context.clone(),
+            action: RequestedJobAction::RequestReleaseBuild {
+                job: JobId::parse(JOB)?,
+            },
+        };
+        let key = IdempotencyKey::parse("explicit-build-admission".into())?;
+
+        let accepted = broker.submit("operator", &request, &key).await?;
+        assert_eq!(accepted.state, ControlCommandState::Applied);
+        assert!(matches!(
+            accepted.outcome,
+            Some(ControlCommandOutcome::Applied { effect })
+                if matches!(effect.as_ref(), CommandEffect::ReleaseBuildRequested { invocation }
+                    if invocation.0 == digest_bytes(b"broker exact build invocation"))
+        ));
+        {
+            let bodies = server.state.bodies.lock().map_err(|_| "test mutex")?;
+            let body = bodies.last().ok_or("build request body")?;
+            assert_eq!(body["schema"], 3);
+            assert_eq!(
+                body["action"],
+                serde_json::json!({
+                    "kind": "REQUEST_RELEASE_BUILD",
+                    "job": JOB,
+                })
+            );
+            assert_eq!(body.as_object().ok_or("request object")?.len(), 5);
+        }
+
+        for mode in [1, 2, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] {
+            server.state.mode.store(mode, Ordering::Relaxed);
+            assert!(
+                matches!(
+                    broker.submit("operator", &request, &key).await,
+                    Err(JobStoreError::Unavailable)
+                ),
+                "mode {mode}"
+            );
+        }
+        server.state.mode.store(0, Ordering::Relaxed);
+        let selection = CommandReceiptSelection {
+            id: ControlCommandId::parse(RECEIPT)?,
+            project: request.project,
+            repository,
+            operation: ControlOperation::RequestReleaseBuild,
+            authority_context: context.authority_context,
+        };
+        assert_eq!(
+            broker.receipt("operator", &selection).await?.state,
+            ControlCommandState::Applied
+        );
+
+        Ok(())
     }
 
     #[tokio::test]

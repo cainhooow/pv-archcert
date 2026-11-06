@@ -1,7 +1,7 @@
 # Glassmere private panel threat model
 
 Scope: ADR 0051, bounded read-only operational visibility and browser sessions;
-ADRs 0053–0068 additionally bound the authenticated workflow/observation commands and browser broker.
+ADRs 0053–0069 additionally bound the authenticated workflow/observation commands and browser broker.
 Authority records and verifier semantics remain those of M0–M8. The panel observes
 authority; it does not become authority. This document declares no qualification.
 
@@ -52,7 +52,12 @@ runtime/signing selector. ADR 0068 adds one schema-3 HTTP action accepting only 
 owned completed certification job ID. It uses the same independently granted build
 context and native request port; posted authority fields fail strict decoding.
 No inline verification, build execution, evidence publication or signing occurs.
-Browser build submission remains disabled pending its separate mediation.
+ADR 0069 adds the browser form through current role/project/object, Origin and CSRF
+checks, with a second grant/session check after passive lookup. The independent
+backend mapping now admits five fixed operations. Strict schema-3 build receipts
+display workflow admission only, with no current-readiness attributes. The panel
+cannot derive build identity from a job ID and never selects the private recipe;
+the native resolver, original certificate verifier and atomic executor bind it.
 
 | Threat / asset | Attacker capability | Control | Remaining limitation |
 | --- | --- | --- | --- |
@@ -62,15 +67,15 @@ Browser build submission remains disabled pending its separate mediation.
 | CSRF / session and commands | Cross-origin form/fetch | Exact configured Origin; session-bound CSRF for logout and workflow/observation commands; Strict cookie; no mutating GET/CORS | A compromised same-origin script can submit authorized operations |
 | Stale green / human decisions | Delay/fail updates, restore old tab | Backend exact-identity readiness, content revision; no-store; initial historical label; freshness invalidation | No browser can provide an atomic authorization lease for a later deployment |
 | Inconsistent reads / bindings | Race durable updates | REPEATABLE READ READ ONLY aggregate; immutable exact-object hash checks; no latest-row heuristic | Database operational integrity remains trusted |
-| Authorization bypass / authority | Forge direct HTTP requests | Server-side principal/role/project/object checks before broker calls; recheck after passive lookup; independent backend grants; unsupported mutations denied | Browser release-build requests remain disabled; no human waiver workflow exists |
+| Authorization bypass / authority | Forge direct HTTP requests | Server-side principal/role/project/object checks before broker calls; recheck after passive lookup; independent backend grants; unsupported mutations denied | Build admission grants no execution/signing capability; no human waiver workflow exists |
 | Admin abuse / project truth | Obtain panel Administrator role | Project restrictions still apply; no authority policy/user editor, signer, state setter or audit delete | External provisioning administrator remains trusted |
 | Credential leakage / secrets | Supply diagnostic/provider/log content | Explicit query fields; no raw DB errors, pins, command environments, connection strings or arbitrary logs | Evidence may itself contain source secrets; access is private and downloads are explicit |
 | Arbitrary workflow / runtime | Supply argv or cleanup request | No shell/exec/upload endpoint; no Docker socket, runtime adapter or source/provider credential | A compromised same-UID process may reach separately provisioned host resources |
 | Evidence substitution / identity | Replace bytes or cross-bind metadata | Project-scoped references; verify size/hash; selected-key verifier; exact M6 source/recipe/artifact/comparison bindings | Authority storage loss can deny availability |
 | Download abuse / availability | Repeated large requests | Fixed size, finite concurrency/rate bounds; digest filename; attachment and nosniff | Host-level network resource protection still needed |
 | Search injection / private history | Forge dimensions, values or cursors | Fixed exact vocabulary; canonical 64-byte values; 256-byte project/query-bound cursors; bound SQL; 50 hits; read-only transaction and statement deadline | Pages are fresh reads; new earlier keys require a restarted search and state changes can remove matches |
-| Operational request replay / private coordination | Retry with changed or different keys | ADRs 0053/0056/0058 bind exact scope, context, operation and inputs; immutable keys reject substitution; pending/applied/uncertain workflow intent coalesces; only known no-effect rejection permits a fresh workflow key; readiness explicitly allows new observation keys | Command mediation is opt-in; release-build mediation and complete browser qualification remain open; dispatchers must never misclassify an uncertain side effect as rejection |
-| Command credential bypass | Reuse a panel broker token on the legacy submission API or post another actor/operation | ADRs 0057–0058/0063–0064 separate token namespaces; strict private per-scope operation mappings; daemon reloads credentials per request and projects safe receipts; context and repository/operation grants checked independently | Release-build mediation and complete browser qualification remain open; panel role alone grants no backend permission |
+| Operational request replay / private coordination | Retry with changed or different keys | ADRs 0053/0056/0058 bind exact scope, context, operation and inputs; immutable keys reject substitution; pending/applied/uncertain workflow intent coalesces; only known no-effect rejection permits a fresh workflow key; readiness explicitly allows new observation keys | Command mediation is opt-in; full M9 qualification remains open; dispatchers must never misclassify an uncertain side effect as rejection |
+| Command credential bypass | Reuse a panel broker token on the legacy submission API or post another actor/operation | ADRs 0057–0058/0063–0064/0068–0069 separate token namespaces; strict private per-scope operation mappings; daemon reloads credentials per request and projects safe receipts; context and repository/operation grants checked independently | Full M9 qualification remains open; panel role alone grants no backend permission |
 | Restored role / old session | Keep a cookie unused through revocation and restoration | ADR 0059 binds audited fresh assignment generations into session revisions; command mode rejects unversioned privileged grants | Legacy manual writers do not establish role-cycle history; trusted provisioner/root can replace private files |
 | Backend credential forwarding | Forge a destination, redirect or panel principal | Fixed literal loopback endpoint, per-principal/project/repository/operation private mapping, no redirects/proxies, independent tokens, bounded typed responses | Same-UID/root compromise and backend availability remain deployment concerns |
 | Stale command dispatcher | Publish after coordination expiry or takeover | Exact database-time lease and opaque generation; immutable request and terminal receipt; grant recheck; local job mutation and receipt share a transaction | Existing execution/provider/build claims remain separate; external workflow integration must reconcile their original immutable identities |

@@ -1,0 +1,464 @@
+#!/usr/bin/env node
+/* Real browser build admission from retained source/certificate. No execution or signer. */
+"use strict";
+
+const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const net = require("node:net");
+const path = require("node:path");
+const { execFileSync, execFile, spawn } = require("node:child_process");
+const { promisify } = require("node:util");
+const execute = promisify(execFile);
+const root = path.resolve(__dirname, "..");
+const digest = value => crypto.createHash("sha256").update(value).digest("hex");
+const read = file => JSON.parse(fs.readFileSync(file, "utf8"));
+const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+const secrets = [];
+const redact = value => secrets.reduce((text, secret) => text.split(secret).join("[REDACTED]"), String(value));
+
+function privateWrite(file, value) {
+  fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+}
+
+function environment(extra = {}) {
+  const result = {};
+  for (const key of ["PATH", "LANG", "TMPDIR"]) if (process.env[key]) result[key] = process.env[key];
+  return { ...result, ...extra };
+}
+
+async function availablePort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const port = server.address().port;
+  await new Promise(resolve => server.close(resolve));
+  return port;
+}
+
+async function main() {
+  process.umask(0o077);
+  assert(process.env.ARCHCERT_TEST_DATABASE_URL, "Select a disposable development PostgreSQL administrator URL");
+  assert(process.env.ARCHCERT_TEST_BUILD_IMPORT, "Select an explicit private historical source/certificate import");
+  secrets.push(process.env.ARCHCERT_TEST_DATABASE_URL);
+  const selectionPath = process.env.ARCHCERT_TEST_BUILD_IMPORT;
+  const selectionMetadata = fs.lstatSync(selectionPath);
+  assert(selectionMetadata.isFile() && !selectionMetadata.isSymbolicLink());
+  assert.equal(selectionMetadata.uid, process.getuid());
+  assert.equal(selectionMetadata.mode & 0o777, 0o600);
+  assert.equal(selectionMetadata.nlink, 1);
+  assert(selectionMetadata.size <= 8192);
+  const selection = read(selectionPath);
+  assert.deepEqual(Object.keys(selection).sort(), ["invocation", "project", "query_config", "source_pack"]);
+
+  const output = path.resolve(process.env.GLASSMERE_BUILD_BROWSER_OUTPUT || path.join(root, "target/glassmere-build-browser"));
+  assert(output.startsWith(path.join(root, "target") + path.sep));
+  fs.mkdirSync(output, { mode: 0o700 });
+  assert.equal(fs.realpathSync(output), output, "Use a canonical private output directory");
+  const binary = (variable, fallback) => {
+    const selected = path.resolve(process.env[variable] || path.join(root, fallback));
+    assert(fs.statSync(selected).isFile(), variable);
+    fs.accessSync(selected, fs.constants.X_OK);
+    return fs.realpathSync(selected);
+  };
+  const panelBinary = binary("ARCHCERT_TEST_PANEL_BINARY", "target/release/archcert-panel");
+  const daemonBinary = binary("ARCHCERT_TEST_DAEMON_BINARY", "target/debug/archcertd");
+  const controllerBinary = binary("ARCHCERT_TEST_CONTROLLER_BINARY", "target/debug/archcert-controller");
+  const fixtureBinary = binary("ARCHCERT_TEST_COMMAND_FIXTURE_BINARY", "target/debug/examples/glassmere-command-fixture");
+  const random = () => {
+    const value = crypto.randomBytes(32).toString("hex");
+    secrets.push(value);
+    return value;
+  };
+  privateWrite(path.join(output, "seed.json"), {
+    reader_password: random(),
+    principals: Object.fromEntries(["administrator", "operator"].map(principal => [principal, {
+      legacy: digest(random()), command: digest(random()),
+    }])),
+  });
+  execFileSync(fixtureBinary, [output], {
+    env: environment({ ARCHCERT_TEST_DATABASE_URL: process.env.ARCHCERT_TEST_DATABASE_URL }),
+    timeout: 60000, stdio: "pipe",
+  });
+  const commandToken = random();
+  privateWrite(path.join(output, "build-import.json"), {
+    ...selection, legacy_token_sha256: digest(random()), command_token_sha256: digest(commandToken),
+  });
+  execFileSync(fixtureBinary, ["--import-build-source", output], {
+    env: environment(), timeout: 60000, stdio: "pipe",
+  });
+  const fixture = read(path.join(output, "build-fixture.json"));
+  const database = read(path.join(output, "database.json"));
+  secrets.push(database.authority_url, database.reader_url);
+  const project = fixture.project;
+  const invocation = fixture.invocation;
+  const repository = fixture.repository;
+  const job = fixture.job;
+  const expectedSubject = {
+    project, repository, invocation, job,
+    source: fixture.source,
+    certificate_artifact: fixture.certificate_artifact,
+  };
+  const daemonPort = await availablePort();
+  let panelPort = await availablePort();
+  while (panelPort === daemonPort) panelPort = await availablePort();
+  const base = `http://127.0.0.1:${panelPort}`;
+  const panelConfig = path.join(output, "panel.json");
+  const principal = "build-user";
+  function provision(args) {
+    execFileSync("/usr/bin/python3", [path.join(root, "scripts/glassmere-provision"),
+      "--config", panelConfig, "--operator", "build-browser-qualification", ...args],
+    { env: environment(), timeout: 20000, stdio: "pipe" });
+  }
+  const delivery = path.join(output, "panel-access.json");
+  provision(["bootstrap", "--origin", base, "--development-http", "--demonstration-data",
+    "--principal", principal, "--project", project, "--credential-file", delivery]);
+  const credential = read(delivery).credential;
+  secrets.push(credential);
+  privateWrite(path.join(output, "broker.json"), {
+    schema: 1, endpoint: `127.0.0.1:${daemonPort}`,
+    mappings: [{ principal, project, repository, token: commandToken,
+      operations: ["REQUEST_RELEASE_BUILD"] }],
+  });
+
+  const children = new Set();
+  async function start(binaryPath, args, extra, logName, url) {
+    const log = fs.openSync(path.join(output, logName), "a", 0o600);
+    const child = spawn(binaryPath, args, { env: environment(extra), stdio: ["ignore", log, log] });
+    fs.closeSync(log);
+    let startError;
+    child.once("error", error => { startError = error; });
+    children.add(child);
+    child.once("exit", () => children.delete(child));
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      if (startError) throw startError;
+      assert(child.exitCode === null && child.signalCode === null, `${logName} exited during startup`);
+      try {
+        const response = await fetch(url + "/readyz", { signal: AbortSignal.timeout(1000) });
+        await response.text();
+        if (response.ok) return child;
+      } catch { /* The owned process may still be starting. */ }
+      await pause(100);
+    }
+    throw new Error(`${logName} did not become ready`);
+  }
+  async function stop(child) {
+    if (!children.has(child)) return;
+    const exited = new Promise(resolve => child.once("exit", resolve));
+    child.kill("SIGTERM");
+    let timer;
+    await Promise.race([exited, new Promise(resolve => { timer = setTimeout(resolve, 10000); })]);
+    clearTimeout(timer);
+    if (children.has(child)) { child.kill("SIGKILL"); await exited; }
+  }
+  const inspect = () => JSON.parse(execFileSync(fixtureBinary, ["--inspect", output], {
+    env: environment(), encoding: "utf8", timeout: 20000,
+  }));
+  const inspectBuild = () => JSON.parse(execFileSync(fixtureBinary, ["--inspect-build", output], {
+    env: environment(), encoding: "utf8", timeout: 20000,
+  }));
+  async function dispatch() {
+    const { stdout } = await execute(controllerBinary, ["--config", path.join(output, "build-authority.json"),
+      "dispatch-command", "--observation-config", path.join(output, "build-query.json")], {
+      env: environment({ ARCHCERT_DATABASE_URL: database.authority_url, ARCHCERT_OBSERVATION_DATABASE_URL: database.reader_url }),
+      encoding: "utf8", timeout: 60000,
+    });
+    return JSON.parse(stdout);
+  }
+  function admitted(receipt) {
+    assert.equal(receipt.schema, 3);
+    assert.equal(receipt.project, project);
+    assert.equal(receipt.repository, repository);
+    assert.equal(receipt.operation, "REQUEST_RELEASE_BUILD");
+    assert.equal(receipt.authority_context, fixture.authority_context);
+    assert.equal(receipt.state, "APPLIED");
+    assert.deepEqual(receipt.outcome, {
+      state: "APPLIED",
+      effect: { kind: "RELEASE_BUILD_REQUESTED", invocation },
+    });
+    assert.equal(receipt.observation_freshness, undefined);
+  }
+
+  const results = [];
+  const dialogs = [];
+  const externalRequests = [];
+  let browser;
+  let browserVersion;
+  let initial;
+  let final;
+  let initialBuild;
+  let finalBuild;
+  let daemon;
+  let panel;
+  const sourceHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  const sourceDiff = execFileSync("git", ["diff", "HEAD"], { cwd: root });
+  let scriptTracked = true;
+  try { execFileSync("git", ["ls-files", "--error-unmatch", path.relative(root, __filename)], { cwd: root, stdio: "pipe" }); }
+  catch { scriptTracked = false; }
+  async function check(name, action) {
+    const started = performance.now();
+    try {
+      await action();
+      results.push({ name, status: "PASS", milliseconds: performance.now() - started });
+      console.log("PASS", name);
+    } catch (error) {
+      results.push({ name, status: "FAILED", error: redact(error.message) });
+      throw error;
+    }
+  }
+  const startDaemon = () => start(daemonBinary, [
+    "--config", path.join(output, "build-authority.json"),
+    "--command-credentials", path.join(output, "build-credentials.json"),
+    "--listen", `127.0.0.1:${daemonPort}`,
+  ], { ARCHCERT_DATABASE_URL: database.authority_url }, "daemon.log", `http://127.0.0.1:${daemonPort}`);
+  const startPanel = () => start(panelBinary, [
+    "--config", panelConfig,
+    "--query-config", path.join(output, "build-query.json"),
+    "--command-config", path.join(output, "broker.json"),
+    "--listen", `127.0.0.1:${panelPort}`,
+  ], { ARCHCERT_OBSERVATION_DATABASE_URL: database.reader_url }, "panel.log", base);
+  try {
+    daemon = await startDaemon();
+    panel = await startPanel();
+    const moduleRoot = path.join(root, "tools/glassmere-browser/node_modules/playwright");
+    assert.equal(require(path.join(moduleRoot, "package.json")).version, "1.56.1");
+    const { chromium } = require(moduleRoot);
+    const launch = { headless: true };
+    if (process.env.GLASSMERE_CHROME_EXECUTABLE) {
+      assert(path.isAbsolute(process.env.GLASSMERE_CHROME_EXECUTABLE));
+      launch.executablePath = fs.realpathSync(process.env.GLASSMERE_CHROME_EXECUTABLE);
+    } else { launch.channel = "chrome"; }
+    browser = await chromium.launch(launch);
+    browserVersion = browser.version();
+    initial = inspect();
+    initialBuild = inspectBuild();
+    assert.equal(initial.commands_count, 0);
+    assert.equal(initialBuild.invocations, 0);
+    assert.equal(initialBuild.claimed_invocations, 0);
+    assert.equal(initialBuild.release_evidence, 0);
+    assert.equal(initialBuild.issued_certificates, 0);
+    const jobUrl = `${base}/projects/${project}/jobs/${job}`;
+    const formUrl = `${base}/projects/${project}/commands/new?operation=REQUEST_RELEASE_BUILD&target=JOB&entity=${job}`;
+    async function login(role) {
+      provision(["set-grant", "--principal", principal, "--role", role, "--project", project]);
+      const context = await browser.newContext();
+      context.on("page", page => {
+        page.on("dialog", async dialog => { dialogs.push(dialog.message()); await dialog.dismiss(); });
+        page.on("request", request => {
+          if (new URL(request.url()).origin !== base) externalRequests.push(request.url());
+        });
+      });
+      const page = await context.newPage();
+      await page.goto(base + "/login");
+      await page.getByLabel("Access credential").fill(credential);
+      await page.getByRole("button", { name: "Sign in to Glassmere" }).click();
+      await page.waitForURL(base + "/projects");
+      return { context, page };
+    }
+    async function form(page) {
+      await page.goto(formUrl);
+      return await page.locator("form[data-command-form]").evaluate(form => Object.fromEntries(new FormData(form)));
+    }
+    const post = (context, fields, headers = { Origin: base }) => context.request.post(`${base}/projects/${project}/commands`, {
+      form: fields, headers, maxRedirects: 0,
+    });
+    async function admissionPage(page, url) {
+      assert.equal((await page.goto(url)).status(), 200);
+      assert.equal(await page.locator("[data-build-admission]").count(), 1);
+      assert(await page.getByRole("heading", { name: "Build workflow admitted", exact: true }).isVisible());
+      assert((await page.locator("main").innerText()).includes(invocation));
+      assert.equal(await page.locator("[data-readiness]").count(), 0);
+      assert.equal(await page.locator("[data-check-url]").count(), 0);
+      assert(!(await page.locator("main").innerText()).includes("RELEASE_ALLOWED"));
+      assert.equal(await page.getByRole("link", { name: "Inspect current release readiness", exact: true }).getAttribute("href"),
+        `/projects/${project}/readiness/${invocation}`);
+      const html = await page.content();
+      for (const secret of secrets) assert(!html.includes(secret), "Private credential leaked into HTML");
+    }
+
+    for (const role of ["VIEWER", "REVIEWER"]) {
+      await check(`${role.toLowerCase()}-read-only-and-build-denial`, async () => {
+        const { context, page } = await login(role);
+        try {
+          assert.equal((await page.goto(jobUrl)).status(), 200);
+          assert.equal(await page.getByRole("link", { name: "Request release build", exact: true }).count(), 0);
+          const csrf = await page.locator('form[action="/logout"] input[name="csrf"]').inputValue();
+          const fields = {
+            csrf, idempotency: role.toLowerCase() + "-denied",
+            operation: "REQUEST_RELEASE_BUILD", target: "JOB", entity: job,
+            repository, authority_context: fixture.authority_context,
+          };
+          assert.equal((await context.request.get(formUrl)).status(), 403);
+          assert.equal((await post(context, fields)).status(), 403);
+          assert.equal(inspect().commands_count, 0);
+        } finally { await context.close(); }
+      });
+    }
+
+    const operator = await login("OPERATOR");
+    let firstReceipt;
+    try {
+      await check("operator-double-click-and-http-retries-retain-one-request", async () => {
+        await operator.page.goto(jobUrl);
+        await operator.page.getByRole("link", { name: "Request release build", exact: true }).click();
+        const fields = await operator.page.locator("form[data-command-form]").evaluate(form => Object.fromEntries(new FormData(form)));
+        assert.deepEqual(Object.keys(fields).sort(), [
+          "authority_context", "csrf", "entity", "idempotency", "operation", "repository", "target",
+        ]);
+        assert.equal(fields.entity, job);
+        await Promise.all([
+          operator.page.waitForURL(/\/commands\/[0-9a-f-]{36}\?/),
+          operator.page.locator("form[data-command-form] button[type=submit]").evaluate(button => { button.click(); button.click(); }),
+        ]);
+        firstReceipt = operator.page.url();
+        for (let index = 0; index < 2; index++) {
+          const retry = await post(operator.context, fields);
+          assert.equal(retry.status(), 303);
+          assert.equal(new URL(retry.headers().location, base).href, firstReceipt);
+        }
+        const counts = inspect();
+        assert.equal(counts.commands_count, 1);
+        assert.equal(counts.keys, 1);
+        assert.equal(inspectBuild().invocations, 0);
+      });
+      await check("different-tab-key-coalesces-before-one-verified-admission", async () => {
+        const second = await operator.context.newPage();
+        try {
+          const fields = await form(second);
+          const response = await post(operator.context, fields);
+          assert.equal(response.status(), 303);
+          assert.equal(new URL(response.headers().location, base).href, firstReceipt);
+          assert.equal(inspect().commands_count, 1);
+          assert.equal(inspect().keys, 2);
+          admitted(await dispatch());
+          await admissionPage(second, firstReceipt);
+          await admissionPage(operator.page, firstReceipt);
+          await operator.page.getByRole("link", { name: "Refresh receipt", exact: true }).click();
+          assert.equal(inspect().commands_count, 1);
+          assert.equal(inspect().keys, 2);
+          assert.equal(inspectBuild().invocations, 1);
+        } finally { await second.close(); }
+      });
+      await check("csrf-object-authority-field-and-backend-credential-denials", async () => {
+        const fields = await form(operator.page);
+        assert.equal((await post(operator.context, fields, { Origin: "https://attacker.invalid" })).status(), 403);
+        assert.equal((await post(operator.context, { ...fields, csrf: "wrong-csrf" })).status(), 403);
+        for (const name of ["source", "certificate", "recipe", "image", "limits", "signing_key", "actor", "role", "shell", "invocation"]) {
+          assert.equal((await post(operator.context, { ...fields, [name]: "forged-authority" })).status(), 400, name);
+        }
+        assert.equal((await post(operator.context, { ...fields, entity: crypto.randomUUID() })).status(), 404);
+        assert.equal((await post(operator.context, { ...fields, target: "SOURCE" })).status(), 400);
+        assert.equal((await post(operator.context, { ...fields, authority_context: "e".repeat(64) })).status(), 404);
+        const backend = path.join(output, "build-credentials.json");
+        const unavailable = path.join(output, "build-credentials-unavailable.json");
+        fs.renameSync(backend, unavailable);
+        try { assert.equal((await post(operator.context, fields)).status(), 503); }
+        finally { fs.renameSync(unavailable, backend); }
+        assert.equal(inspect().commands_count, 1);
+        assert.equal(inspect().keys, 2);
+      });
+    } finally { await operator.context.close(); }
+
+    await check("administrator-coalescing-denied-signing-and-revoked-role-session", async () => {
+      const administrator = await login("ADMINISTRATOR");
+      try {
+        const fields = await form(administrator.page);
+        const response = await post(administrator.context, fields);
+        assert.equal(response.status(), 303);
+        assert.equal(new URL(response.headers().location, base).href, firstReceipt);
+        await admissionPage(administrator.page, firstReceipt);
+        assert.deepEqual(await dispatch(), { status: "IDLE" });
+        for (const url of ["/sign-certificate", "/sign-release-permit", "/admin/users", "/review-disposition"]) {
+          assert.equal((await administrator.context.request.post(base + url, { headers: { Origin: base } })).status(), 403);
+        }
+        provision(["set-grant", "--principal", principal, "--role", "VIEWER", "--project", project]);
+        provision(["set-grant", "--principal", principal, "--role", "ADMINISTRATOR", "--project", project]);
+        assert.equal((await administrator.context.request.get(formUrl)).status(), 401);
+        assert.equal((await post(administrator.context, fields)).status(), 401);
+        assert.equal(inspect().keys, 3);
+      } finally { await administrator.context.close(); }
+    });
+
+    await check("panel-and-backend-restart-retain-admission-and-invalidate-old-session", async () => {
+      const previous = await login("OPERATOR");
+      const staleFields = await form(previous.page);
+      assert.equal((await previous.context.request.get(formUrl)).status(), 200);
+      await stop(panel);
+      await stop(daemon);
+      daemon = await startDaemon();
+      panel = await startPanel();
+      try {
+        assert.equal((await previous.context.request.get(formUrl)).status(), 401);
+        assert.equal((await post(previous.context, staleFields)).status(), 401);
+      } finally { await previous.context.close(); }
+      const restored = await login("OPERATOR");
+      try {
+        const fields = await form(restored.page);
+        const response = await post(restored.context, fields);
+        assert.equal(response.status(), 303);
+        assert.equal(new URL(response.headers().location, base).href, firstReceipt);
+        await admissionPage(restored.page, firstReceipt);
+        assert.deepEqual(await dispatch(), { status: "IDLE" });
+      } finally { await restored.context.close(); }
+    });
+    await check("exact-journal-and-domain-counts-with-unchanged-historical-source", async () => {
+      final = inspect();
+      finalBuild = inspectBuild();
+      assert.equal(final.commands_count, 1);
+      assert.equal(final.keys, 4);
+      assert.equal(final.command_audit.CommandRequested, 1);
+      assert.equal(final.command_audit.CommandApplied, 1);
+      assert.equal(final.jobs, initial.jobs);
+      assert.equal(final.attempts, initial.attempts);
+      assert.equal(final.certificates, initial.certificates);
+      assert.equal(final.certificates, 1); // Explicit imported historical metadata.
+      assert.equal(final.release_audits, 1);
+      assert.equal(finalBuild.invocations, 1);
+      assert.equal(finalBuild.claimed_invocations, 0);
+      assert.equal(finalBuild.release_evidence, 0);
+      assert.equal(finalBuild.issued_certificates, 0);
+      for (const name of ["retained_source", "certificate_artifact_sha256", "imported_job_sha256", "original_release_record_sha256"]) {
+        assert.deepEqual(finalBuild[name], initialBuild[name], name);
+      }
+      assert.deepEqual(dialogs, []);
+      assert.deepEqual(externalRequests, []);
+    });
+  } finally {
+    try {
+      privateWrite(path.join(output, "results.json"), {
+        head: sourceHead,
+        tracked_diff_sha256: digest(sourceDiff),
+        exact_committed_source: sourceDiff.length === 0 && scriptTracked,
+        script_sha256: digest(fs.readFileSync(__filename)),
+        binaries: Object.fromEntries(Object.entries({
+          panel: panelBinary,
+          daemon: daemonBinary,
+          controller: controllerBinary,
+          fixture: fixtureBinary,
+        }).map(([name, binaryPath]) => [name, digest(fs.readFileSync(binaryPath))])),
+        results,
+        browser_version: browserVersion,
+        playwright: "1.56.1",
+        dialogs,
+        external_requests: externalRequests,
+        initial,
+        final,
+        initial_build: initialBuild,
+        final_build: finalBuild,
+        subject: expectedSubject,
+        scope: "Historical development source/certificate; no new execution, claims, signatures or independent certification",
+      });
+    } finally {
+      try {
+        if (browser) await browser.close();
+      } finally {
+        for (const child of [...children]) await stop(child);
+      }
+    }
+  }
+}
+
+main().catch(error => { console.error(redact(error.message)); process.exitCode = 1; });

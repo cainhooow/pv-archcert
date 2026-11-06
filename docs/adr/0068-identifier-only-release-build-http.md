@@ -1,6 +1,6 @@
 # ADR 0068: Identifier-only release-build requests over scoped HTTP
 
-Status: Accepted HTTP mediation; browser build requests remain disabled.
+Status: Accepted HTTP mediation; ADR 0069 separately extends browser mediation.
 Date: November 5, 2026. Extends ADRs 0058, 0065, 0066 and 0067.
 
 ## Context

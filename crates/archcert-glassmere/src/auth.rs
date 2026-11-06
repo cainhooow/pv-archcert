@@ -43,6 +43,7 @@ impl Role {
             && matches!(
                 operation,
                 ControlOperation::RequestCertification
+                    | ControlOperation::RequestReleaseBuild
                     | ControlOperation::RequestReleaseReadinessEvaluation
                     | ControlOperation::CancelEligibleJob
                     | ControlOperation::RetryEligibleJob

@@ -81,10 +81,10 @@ struct Target {
 fn label(operation: ControlOperation) -> &'static str {
     match operation {
         ControlOperation::RequestCertification => "Request certification",
+        ControlOperation::RequestReleaseBuild => "Request release build",
         ControlOperation::RequestReleaseReadinessEvaluation => "Request readiness observation",
         ControlOperation::CancelEligibleJob => "Request eligible cancellation",
         ControlOperation::RetryEligibleJob => "Request infrastructure recovery",
-        _ => "Unsupported operation",
     }
 }
 
@@ -149,7 +149,9 @@ async fn target(
             ControlOperation::RequestCertification,
             TargetKind::Source | TargetKind::Session
         ) | (
-            ControlOperation::CancelEligibleJob | ControlOperation::RetryEligibleJob,
+            ControlOperation::RequestReleaseBuild
+                | ControlOperation::CancelEligibleJob
+                | ControlOperation::RetryEligibleJob,
             TargetKind::Job
         )
     ) {
@@ -251,6 +253,8 @@ fn form_body(
         return body;
     }
     if (request.operation == ControlOperation::CancelEligibleJob && target.state != "QUEUED")
+        || (request.operation == ControlOperation::RequestReleaseBuild
+            && target.state != "COMPLETED")
         || (request.operation == ControlOperation::RetryEligibleJob
             && (target.state != "RUNNING" || target.attempts.is_empty()))
     {
@@ -283,6 +287,8 @@ fn form_body(
         body.push_str("<p>The authority may cancel eligible queued work only. This request cannot stop a running target or discard evidence.</p>");
     } else if request.operation == ControlOperation::RequestReleaseReadinessEvaluation {
         body.push_str("<p>This records a fresh question about the exact release. Its receipt is a historical observation, including when it records RELEASE_ALLOWED. Current use still requires the live readiness query. This form requests no build, signing or deployment.</p>");
+    } else if request.operation == ControlOperation::RequestReleaseBuild {
+        body.push_str("<p>This requests build workflow admission from the selected source certification. The authority verifies the original certificate and selects the fixed build recipe. Admission does not mean builds succeeded, reproducibility was proven or a Release Permit was issued.</p>");
     } else {
         body.push_str("<p>This requests the existing exact-source workflow. Mandatory validation and review remain required. No certificate is issued by this form.</p>");
     }
@@ -372,6 +378,11 @@ async fn submit(
             return Err(JobStoreError::Precondition);
         }
         let action = match request.operation {
+            ControlOperation::RequestReleaseBuild if request.attempt.is_none() => {
+                RequestedJobAction::RequestReleaseBuild {
+                    job: target.job.ok_or(JobStoreError::Invalid)?,
+                }
+            }
             ControlOperation::RequestReleaseReadinessEvaluation if request.attempt.is_none() => {
                 RequestedJobAction::RequestReleaseReadinessEvaluation {
                     invocation: target.invocation.ok_or(JobStoreError::Invalid)?,
@@ -553,6 +564,17 @@ fn receipt_body(receipt: &CommandReceiptObservation) -> String {
 
     match receipt.outcome.as_ref() {
         Some(ControlCommandOutcome::Applied { effect }) => match effect.as_ref() {
+            CommandEffect::ReleaseBuildRequested { invocation }
+                if receipt.operation == ControlOperation::RequestReleaseBuild =>
+            {
+                let _ = write!(
+                    body,
+                    "<section data-build-admission><h3>Build workflow admitted</h3><p>Invocation: <span class=mono>{}</span></p><p>This receipt establishes admission only. Successful builds, reproducibility and Release Permit issuance remain separate. Check current readiness before making a release decision.</p><p><a href=/projects/{}/readiness/{}>Inspect current release readiness</a></p></section>",
+                    invocation.0.as_str(),
+                    receipt.project,
+                    invocation.0.as_str(),
+                );
+            }
             CommandEffect::ReadinessEvaluated { observation }
                 if receipt.operation == ControlOperation::RequestReleaseReadinessEvaluation =>
             {
@@ -721,6 +743,7 @@ pub(super) fn links(
             && let Some(job) = snapshot.jobs.iter().find(|job| job.id == selected)
         {
             let operation = match job.state.as_str() {
+                "COMPLETED" => Some(ControlOperation::RequestReleaseBuild),
                 "QUEUED" => Some(ControlOperation::CancelEligibleJob),
                 "RUNNING" => Some(ControlOperation::RetryEligibleJob),
                 _ => None,

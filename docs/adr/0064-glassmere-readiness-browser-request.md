@@ -1,6 +1,7 @@
 # ADR 0064: Browser readiness questions and historical receipts
 
 Status: Accepted bounded integration; full M9 qualification remains open.
+ADR 0069 subsequently extends the browser-build permission row; readiness semantics remain unchanged.
 Date: November 5, 2026. Extends ADRs 0059 and 0061–0063.
 
 ## Context

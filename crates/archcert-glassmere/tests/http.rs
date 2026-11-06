@@ -3,6 +3,9 @@
 #[path = "http/readiness.rs"]
 mod readiness;
 
+#[path = "http/build.rs"]
+mod build;
+
 use archcert_application::glassmere::commands::*;
 use archcert_application::{glassmere::*, jobs::JobStoreError};
 use archcert_domain::{ProjectId, source::digest_bytes};
@@ -36,6 +39,7 @@ const WORKFLOW_SESSION: &str = "10000000-0000-4000-8000-000000000002";
 const WORKFLOW_RUNNING: &str = "10000000-0000-4000-8000-000000000003";
 const WORKFLOW_ATTEMPT: &str = "10000000-0000-4000-8000-000000000004";
 const WORKFLOW_RECEIPT: &str = "10000000-0000-4000-8000-000000000005";
+const WORKFLOW_COMPLETED: &str = "10000000-0000-4000-8000-000000000006";
 const WORKFLOW_INVOCATION: &str =
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -208,6 +212,12 @@ impl GlassmereQuery for QueryFixture {
                 id: DEEP_JOB.into(),
                 kind: "CERTIFICATION".into(),
                 state: "QUEUED".into(),
+                fields: vec![repository.clone()],
+            });
+            snapshot.jobs.push(EntityObservation {
+                id: WORKFLOW_COMPLETED.into(),
+                kind: "CERTIFICATION".into(),
+                state: "COMPLETED".into(),
                 fields: vec![repository.clone()],
             });
             snapshot.jobs.push(EntityObservation {
@@ -508,6 +518,7 @@ impl GlassmereCommandBroker for RecordingBroker {
     ) -> Result<CommandReceiptObservation, JobStoreError> {
         self.receipt_reads.fetch_add(1, Ordering::Relaxed);
         let readiness = selection.operation == ControlOperation::RequestReleaseReadinessEvaluation;
+        let build = selection.operation == ControlOperation::RequestReleaseBuild;
         Ok(CommandReceiptObservation {
             id: selection.id,
             project: selection.project,
@@ -515,13 +526,21 @@ impl GlassmereCommandBroker for RecordingBroker {
             operation: selection.operation,
             authority_context: selection.authority_context.clone(),
             request_sha256: digest_bytes(b"recorded fixture request"),
-            state: if readiness {
+            state: if readiness || build {
                 ControlCommandState::Applied
             } else {
                 ControlCommandState::Requested
             },
             created_at: 1_700_000_000,
-            outcome: if readiness {
+            outcome: if build {
+                Some(ControlCommandOutcome::Applied {
+                    effect: Box::new(CommandEffect::ReleaseBuildRequested {
+                        invocation: archcert_domain::release::BuildInvocationIdentity(
+                            digest_bytes(b"metadata build invocation"),
+                        ),
+                    }),
+                })
+            } else if readiness {
                 Some(ControlCommandOutcome::Applied {
                     effect: Box::new(CommandEffect::ReadinessEvaluated {
                         observation: Box::new(workflow_readiness(selection.project, true)?),
@@ -560,6 +579,7 @@ async fn csrf(fixture: &Fixture, cookie: &str) -> R<String> {
 fn command_form(operation: ControlOperation, csrf: &str) -> String {
     let (kind, entity, attempt) = match operation {
         ControlOperation::RequestCertification => ("SOURCE", WORKFLOW_SOURCE, String::new()),
+        ControlOperation::RequestReleaseBuild => ("JOB", WORKFLOW_COMPLETED, String::new()),
         ControlOperation::RequestReleaseReadinessEvaluation => {
             ("RELEASE", WORKFLOW_INVOCATION, String::new())
         }
@@ -569,7 +589,6 @@ fn command_form(operation: ControlOperation, csrf: &str) -> String {
             WORKFLOW_RUNNING,
             format!("&attempt={WORKFLOW_ATTEMPT}"),
         ),
-        _ => ("JOB", DEEP_JOB, String::new()),
     };
 
     format!(
@@ -596,6 +615,7 @@ async fn command_permission_matrix_is_enforced_for_every_role_and_supported_oper
 
         for operation in [
             ControlOperation::RequestCertification,
+            ControlOperation::RequestReleaseBuild,
             ControlOperation::RequestReleaseReadinessEvaluation,
             ControlOperation::CancelEligibleJob,
             ControlOperation::RetryEligibleJob,
@@ -621,7 +641,7 @@ async fn command_permission_matrix_is_enforced_for_every_role_and_supported_oper
             assert_eq!(
                 submissions.len(),
                 if matches!(role, Role::Operator | Role::Administrator) {
-                    4
+                    5
                 } else {
                     0
                 }
@@ -632,24 +652,6 @@ async fn command_permission_matrix_is_enforced_for_every_role_and_supported_oper
                 assert_eq!(command.repository.as_str(), "workflow/fixture");
                 assert_eq!(key, "retained-user-action");
             }
-        }
-
-        {
-            let operation = ControlOperation::RequestReleaseBuild;
-            assert_eq!(
-                fixture
-                    .request(
-                        "POST",
-                        &path,
-                        Some(&cookie),
-                        Some(ORIGIN),
-                        command_form(operation, &csrf),
-                    )
-                    .await?
-                    .status(),
-                StatusCode::FORBIDDEN,
-                "{role:?} {operation:?}"
-            );
         }
 
         for path in [

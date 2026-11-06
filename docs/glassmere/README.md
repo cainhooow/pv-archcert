@@ -75,7 +75,7 @@ Revoking or changing a role/project grant invalidates the previous session.
 | Role | Current permission |
 | --- | --- |
 | Viewer | Read explicitly assigned projects and original registered evidence |
-| Operator | Same read scope; opt-in certification, queued cancellation, infrastructure recovery and historical readiness requests require separate backend grants |
+| Operator | Same read scope; opt-in certification, build admission, queued cancellation, infrastructure recovery and historical readiness requests require separate backend grants |
 | Reviewer | Same read scope; no new human disposition or waiver authority |
 | Administrator | Same project scope plus bounded panel audit inspection; same separately granted requests as Operator |
 
@@ -84,10 +84,12 @@ signing, runtime, policy or release authority. All unsupported mutation requests
 are denied. Login/logout use exact Origin validation; logout additionally checks
 a session-bound CSRF value. Commands additionally check that CSRF value,
 current role and project/object scope. No GET mutates authority state. Disposition,
-user/configuration edits and browser release-build commands remain unsupported. The
-separate opt-in daemon supports identifier-only build requests under
-[ADR 0068](../adr/0068-identifier-only-release-build-http.md). See
-the complete [permission matrix and readiness decision](../adr/0064-glassmere-readiness-browser-request.md).
+user/configuration edits remain unsupported. Identifier-only build requests use
+the same independent daemon mediation under [ADR 0068](../adr/0068-identifier-only-release-build-http.md).
+The current [permission matrix and build decision](../adr/0069-glassmere-build-browser-request.md)
+extends the [historical-readiness boundary](../adr/0064-glassmere-readiness-browser-request.md).
+Build APPLIED means admission only; it establishes no successful build, reproducibility,
+Release Permit or current readiness.
 
 Panel audit is a private append-only JSONL sink, bounded to 16 MiB. An operator must
 archive/rotate it during a controlled service restart before that ceiling. Ordinary
