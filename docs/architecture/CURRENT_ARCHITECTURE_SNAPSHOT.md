@@ -39,7 +39,16 @@ request resolution. A distinct build context binds the supported recipe version,
 environment and policy/key identities; existing operation contexts keep their
 original bytes. Current independent grants and owned certificate/source bindings
 precede passive exact-source loading and journal acceptance. This requests work
-only; controller dispatch and public build transport remain unsupported.
+only; ADR 0067 connects private dispatch, while public build transport remains
+unsupported.
+
+ADR 0067 adds the identifier-only native request-build entrypoint and independently
+verified command dispatch through the sealed atomic M6 admission port. Explicit
+schema-3 build receipts mean workflow admission; they establish no execution,
+reproducibility, permit or current readiness. Known no-effect verification failures
+retain exact rejection receipts and may receive a new explicit key. Commit
+uncertainty remains recoverable under the original immutable request. Existing
+job/readiness receipts and every M6 execution/signature contract retain their meaning.
 
 ADRs 0041–0044 describe the implemented knowledge, semantic review and durable
 lifecycle controls. They were historically mislabeled M6/Ironcrest. The retained

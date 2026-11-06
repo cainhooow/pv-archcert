@@ -1,7 +1,7 @@
 # Glassmere private panel threat model
 
 Scope: ADR 0051, bounded read-only operational visibility and browser sessions;
-ADRs 0053–0066 additionally bound the authenticated workflow/observation commands and browser broker.
+ADRs 0053–0067 additionally bound the authenticated workflow/observation commands and browser broker.
 Authority records and verifier semantics remain those of M0–M8. The panel observes
 authority; it does not become authority. This document declares no qualification.
 
@@ -33,14 +33,22 @@ capability binds independently verified original certificate bytes and frozen M6
 inputs to one command generation. Current grants/object scope and the original live
 fence are rechecked; M6 admission and both audits/receipt commit atomically. No
 execution claim, evidence role or signing capability is granted. Public build
-request selection, dispatcher and browser integration remain disabled.
+request selection and browser integration remain disabled.
 
 ADR 0066 adds explicit private build-authority selection and identifier-only native
 request resolution. Build contexts bind that fixed selection separately; existing
 operation contexts retain their bytes. Current independent grants and exact owned
 certificate/source metadata are checked before passive accepted-source loading.
-REQUESTED grants no verified admission, execution or signing. Controller dispatch
-and public HTTP/browser build requests remain disabled.
+REQUESTED grants no verified admission, execution or signing. ADR 0067 connects
+private dispatch; public HTTP/browser build requests remain disabled.
+
+ADR 0067 composes native build requests with explicit operation context, selected
+public M6 verification and the sealed atomic admission executor. Schema-3 APPLIED
+means workflow admission only, including identical existing admission. Verification
+failure before mutation is a known no-effect rejection; commit uncertainty never
+becomes known rejection. Command recovery grants no M6 execution claim. The native
+request accepts identifiers and a separate private credential file; it receives no
+runtime/signing selector and introduces no public build request action.
 
 | Threat / asset | Attacker capability | Control | Remaining limitation |
 | --- | --- | --- | --- |

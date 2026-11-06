@@ -1,5 +1,9 @@
 //! Trusted operational requests and polling, without target execution or signing keys.
 
+mod release_build;
+
+pub(super) use release_build::{BuildArgs, request_build};
+
 use anyhow::Result;
 use archcert_application::{
     glassmere::commands::*,
@@ -148,7 +152,7 @@ pub(super) async fn dispatch(state: &ControlPlane, args: DispatchArgs) -> Result
     let selection = state
         .configuration
         .grant_for(&scope.actor, scope.project, &scope.repository)
-        .and_then(|grant| grant.command_context());
+        .and_then(|grant| grant.command_context_for(record.command.action.operation()));
     let context = match selection {
         Ok(context) if context == record.command.authority_context => Some(context),
         Ok(_)
@@ -227,15 +231,7 @@ pub(super) async fn dispatch(state: &ControlPlane, args: DispatchArgs) -> Result
                 evaluator.evaluate(&assignment, &context).await?;
             }
             ResolvedControlAction::RequestReleaseBuild { .. } => {
-                state
-                    .repository
-                    .finish(
-                        &assignment.lease,
-                        &ControlCommandOutcome::Rejected {
-                            reason: CommandFailure::UnsupportedAuthorityContext,
-                        },
-                    )
-                    .await?;
+                release_build::dispatch_build(state, &assignment, &context, &args).await?;
             }
         }
     } else {

@@ -119,7 +119,7 @@ pub struct ControlCommandContextResponse {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControlCommandResponse {
-    /// Explicit public grammar version.
+    /// Explicit public grammar: job receipts 1, historical readiness 2, build admission 3.
     pub schema: u32,
     /// Durable request identity, never a certificate ID.
     pub command_id: ControlCommandId,
@@ -155,15 +155,20 @@ pub enum ReadinessReceiptFreshness {
 
 impl From<ControlCommandRecord> for ControlCommandResponse {
     fn from(record: ControlCommandRecord) -> Self {
-        let readiness = record.command.action.operation()
-            == ControlOperation::RequestReleaseReadinessEvaluation;
+        let operation = record.command.action.operation();
+        let readiness = operation == ControlOperation::RequestReleaseReadinessEvaluation;
+        let schema = match operation {
+            ControlOperation::RequestReleaseBuild => 3,
+            ControlOperation::RequestReleaseReadinessEvaluation => 2,
+            _ => 1,
+        };
 
         Self {
-            schema: if readiness { 2 } else { 1 },
+            schema,
             command_id: record.id,
             project: record.command.scope.project,
             repository: record.command.scope.repository,
-            operation: record.command.action.operation(),
+            operation,
             authority_context: record.command.authority_context,
             request_sha256: record.request_sha256,
             state: record.state,

@@ -222,6 +222,145 @@ fn public_receipt_omits_frozen_recipe_actor_intent_and_dispatch_capabilities() -
 }
 
 #[test]
+fn native_build_receipts_version_admission_without_exposing_private_inputs() -> Result {
+    use archcert_application::release::*;
+    use archcert_domain::release::CertifiedSourceIdentity;
+
+    let scope = CommandScope {
+        project: ProjectId::new(),
+        repository: RepositoryId::parse("fixture/build-receipt")?,
+        actor: GitActorId::parse(ControlCommandId::new().to_string())?,
+    };
+    let source = SourceSnapshot::seal(
+        scope.project,
+        scope.repository.clone(),
+        GitObjectId::parse("a".repeat(40))?,
+        GitObjectId::parse("b".repeat(40))?,
+        vec![],
+        1,
+        1_700_000_000,
+    )?;
+    let recipe = RustReleaseRecipe::new(
+        BuildEnvironment {
+            image: format!("private-authority/rust@sha256:{}", "a".repeat(64)),
+            dependency_bundle_sha256: digest_bytes(b"private dependencies"),
+            toolchain_sha256: digest_bytes(b"private toolchain"),
+        },
+        "private-bin-canary",
+    )?;
+    let input = BuildInputManifest {
+        schema: 1,
+        kind: "ARCHCERT_BUILD_INPUT".into(),
+        certified_source: CertifiedSourceIdentity {
+            project: scope.project,
+            repository: scope.repository.clone(),
+            source: source.identity().clone(),
+            certificate_sha256: digest_bytes(b"certificate payload"),
+        },
+        recipe: recipe.description().clone(),
+        recipe_identity: recipe.identity()?,
+        environment_identity: recipe.environment_identity()?,
+        source_policy_sha256: digest_bytes(b"approved source policy"),
+        source_authority_key_sha256: digest_bytes(b"source key"),
+        release_authority_key_sha256: digest_bytes(b"release key"),
+        release_policy: RELEASE_POLICY.into(),
+        release_policy_sha256: release_policy_digest(),
+    };
+    let invocation = input.identity()?;
+    let command = ResolvedControlCommand {
+        schema: 1,
+        scope: scope.clone(),
+        authority_context: digest_bytes(b"explicit build selection"),
+        action: ResolvedControlAction::RequestReleaseBuild {
+            admission: Box::new(ReleaseAdmission {
+                input_reference: release_reference(&release_bytes(&input)?),
+                input,
+                submission: SourceSubmissionId::new(),
+                actor: scope.actor,
+            }),
+            source_certificate: archcert_application::jobs::ArtifactReference {
+                sha256: digest_bytes(b"original registered certificate bytes"),
+                size: 37,
+                schema: 1,
+                producer: "PRIVATE_CERTIFICATE_CANARY".into(),
+            },
+        },
+    };
+    command.validate()?;
+    let outcome = ControlCommandOutcome::Applied {
+        effect: Box::new(CommandEffect::ReleaseBuildRequested {
+            invocation: invocation.clone(),
+        }),
+    };
+    command.validate_outcome(&outcome)?;
+    let record = ControlCommandRecord {
+        id: ControlCommandId::new(),
+        request_sha256: command.digest()?,
+        intent_sha256: digest_bytes(b"private intent"),
+        command,
+        state: ControlCommandState::Applied,
+        created_at: 1_700_000_000,
+        dispatches: 1,
+        outcome: Some(outcome),
+    };
+
+    for state in [
+        ControlCommandState::Requested,
+        ControlCommandState::Rejected,
+        ControlCommandState::Applied,
+    ] {
+        let mut staged = record.clone();
+        staged.state = state;
+        staged.outcome = match state {
+            ControlCommandState::Requested => None,
+            ControlCommandState::Rejected => Some(ControlCommandOutcome::Rejected {
+                reason: CommandFailure::IdentityMismatch,
+            }),
+            _ => record.outcome.clone(),
+        };
+        let response = serde_json::to_value(ControlCommandResponse::from(staged))?;
+        assert_eq!(response["schema"], 3);
+        assert!(response.get("observation_freshness").is_none());
+    }
+
+    let value = serde_json::to_value(ControlCommandResponse::from(record))?;
+
+    assert_eq!(value["schema"], 3);
+    assert_eq!(value["state"], "APPLIED");
+    assert_eq!(value["operation"], "REQUEST_RELEASE_BUILD");
+    assert_eq!(
+        value["outcome"]["effect"]["kind"],
+        "RELEASE_BUILD_REQUESTED"
+    );
+    assert_eq!(
+        value["outcome"]["effect"]["invocation"],
+        invocation.0.as_str()
+    );
+    assert!(value.get("observation_freshness").is_none());
+    let encoded = serde_json::to_string(&value)?;
+    for excluded in [
+        "private-authority",
+        "private-bin-canary",
+        "PRIVATE_CERTIFICATE_CANARY",
+        "inputs",
+        "admission",
+        "source_certificate",
+        "actor",
+        "intent_sha256",
+        "dispatches",
+        "CERTIFIED",
+        "RELEASE_ALLOWED",
+    ] {
+        assert!(
+            !encoded.contains(excluded),
+            "private field or authority claim leaked: {excluded}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn readiness_receipts_have_an_explicit_versioned_historical_boundary() -> Result {
     let command = ResolvedControlCommand {
         schema: 1,

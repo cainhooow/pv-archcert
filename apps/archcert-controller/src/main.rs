@@ -58,6 +58,8 @@ enum Command {
     Dispatch(commands::DispatchArgs),
     /// Request a historical readiness observation using a separate scoped credential.
     RequestReadiness(commands::ReadinessArgs),
+    /// Request fixed M6 workflow admission using an owned completed certification.
+    RequestBuild(commands::BuildArgs),
     /// Checks control-plane/storage readiness without execution or signing.
     Doctor,
     /// Inspects or removes old unlocked development artifact stages, never final objects.
@@ -145,6 +147,7 @@ async fn main() -> Result<()> {
         }
         Command::Dispatch(args) => commands::dispatch(&state, args).await?,
         Command::RequestReadiness(args) => commands::request_readiness(&state, args).await?,
+        Command::RequestBuild(args) => commands::request_build(&state, args).await?,
         Command::Release(args) => release::run(&state, *args).await?,
         Command::ReleaseShow {
             project,
@@ -761,6 +764,51 @@ async fn resume(state: &ControlPlane, id: JobId, args: &RunArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_build_request_accepts_identifiers_and_rejects_authority_selectors() -> Result<()> {
+        let arguments = [
+            "archcert-controller",
+            "--config",
+            "/authority/selection.json",
+            "request-build",
+            "--project",
+            "00000000-0000-4000-8000-000000000004",
+            "--repository",
+            "fixture/source",
+            "--job",
+            "00000000-0000-4000-8000-000000000005",
+            "--authority-context",
+            &"a".repeat(64),
+            "--idempotency-key",
+            "exact-user-action",
+            "--credentials",
+            "/authority/commands.json",
+            "--token-file",
+            "/authority/private-token",
+        ];
+
+        let parsed = Args::try_parse_from(arguments)?;
+        assert!(matches!(parsed.command, Command::RequestBuild(_)));
+        for forbidden in [
+            "--token",
+            "--actor",
+            "--recipe",
+            "--image",
+            "--signing-key",
+            "--shell",
+            "--docker",
+        ] {
+            let mut forged = arguments.to_vec();
+            forged.extend([forbidden, "forged-authority"]);
+            assert!(Args::try_parse_from(forged).is_err());
+        }
+        let missing_token_file = &arguments[..arguments.len() - 2];
+        assert!(Args::try_parse_from(missing_token_file).is_err());
+
+        Ok(())
+    }
+
     #[test]
     fn signer_errors_and_signature_rejection_have_distinct_audit_categories() {
         assert_eq!(

@@ -324,6 +324,12 @@ loopback authority authentication and explicit cleanup confirmation for lost run
 workers. Production IAM/TLS, remote workers, encrypted storage/KMS and deployment
 qualification remain separate work. Offline verification still needs no database.
 
+The native Glassmere build-dispatch regressions also create isolated SELECT-only
+login roles. Use a disposable development PostgreSQL administrator with schema
+and role-provisioning rights for `scripts/test-ravenport`. These tests use retained
+public conformance signatures and synthetic source/job metadata; they establish
+no source acquisition, target execution or new certificate/permit issuance.
+
 ## Glassmere operational visibility (M9 in progress)
 
 Glassmere observes existing authority; it does not become authority. The private
@@ -333,3 +339,8 @@ panel design and its readiness/query/session boundaries are recorded in
 authenticated read-only project, evidence, release-readiness and forensic views;
 see [Glassmere operations and limitations](docs/glassmere/README.md). M9 is not closed.
 M10, M11 and Genesis / Firstwarden remain NOT STARTED.
+
+The private controller's identifier-only `request-build` and verified dispatcher
+are specified in [ADR 0067](docs/adr/0067-native-release-build-command-dispatch.md).
+Schema-3 APPLIED receipts mean workflow admission only. HTTP/browser build requests
+remain unsupported while their separate integration is pending.

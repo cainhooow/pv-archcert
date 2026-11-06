@@ -1,6 +1,9 @@
 #[path = "tests/readiness.rs"]
 mod readiness;
 
+#[path = "tests/build_dispatch.rs"]
+mod build_dispatch;
+
 use super::*;
 use archcert_application::{glassmere::commands::*, jobs::*};
 use archcert_control_plane::{AuthorityGrant, ControlPlane, ControlPlaneConfiguration};
