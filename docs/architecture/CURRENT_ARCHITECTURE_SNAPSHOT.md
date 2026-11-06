@@ -31,16 +31,15 @@ ADR 0065 adds private application/storage mediation of verified release-build
 admission. The existing public verifier checks the original registered certificate
 against frozen M6 recipe/policy/key identities; a sealed command-generation
 capability and current independent grants gate atomic M6 admission/audits/receipt.
-No build claim, runtime, evidence publication or signing is added. Public build
-request selection and transport remain unsupported pending separate qualification.
+No build claim, runtime, evidence publication or signing is added. ADR 0068 extends
+this boundary with separately authenticated identifier-only HTTP requests.
 
 ADR 0066 adds private fixed build-authority selection and native identifier-only
 request resolution. A distinct build context binds the supported recipe version,
 environment and policy/key identities; existing operation contexts keep their
 original bytes. Current independent grants and owned certificate/source bindings
 precede passive exact-source loading and journal acceptance. This requests work
-only; ADR 0067 connects private dispatch, while public build transport remains
-unsupported.
+only; ADR 0067 connects private dispatch and ADR 0068 connects scoped HTTP transport.
 
 ADR 0067 adds the identifier-only native request-build entrypoint and independently
 verified command dispatch through the sealed atomic M6 admission port. Explicit
@@ -49,6 +48,13 @@ reproducibility, permit or current readiness. Known no-effect verification failu
 retain exact rejection receipts and may receive a new explicit key. Commit
 uncertainty remains recoverable under the original immutable request. Existing
 job/readiness receipts and every M6 execution/signature contract retain their meaning.
+
+ADR 0068 adds the closed schema-3 HTTP build action containing only an owned
+certification job ID. Independent credentials, exact operation-specific context,
+current grants and passive complete-source binding still gate request acceptance.
+Verification and atomic admission remain in the separate controller. Existing
+request bounds are unchanged. Browser build requests remain disabled; M9 remains
+in progress and later milestones remain not started.
 
 ADRs 0041–0044 describe the implemented knowledge, semantic review and durable
 lifecycle controls. They were historically mislabeled M6/Ironcrest. The retained

@@ -63,6 +63,7 @@ fn command_requests_cannot_carry_authority_overrides_or_direct_effects() -> Resu
         "SIGN_RELEASE_PERMIT",
         "EXECUTE_DOCKER",
         "REVIEW_DISPOSITION",
+        // Changing only a certification action's tag cannot create a build request.
         "REQUEST_RELEASE_BUILD",
     ] {
         let mut forged = original.clone();
@@ -129,6 +130,61 @@ fn readiness_requests_require_schema_two_and_accept_only_an_invocation() -> Resu
         assert_ne!(parsed.schema, parsed.action.schema());
     }
     value["action"]["invocation"] = serde_json::json!("f".repeat(63));
+    assert!(serde_json::from_value::<CreateControlCommandRequest>(value).is_err());
+
+    Ok(())
+}
+
+#[test]
+fn build_requests_require_schema_three_and_accept_only_an_owned_job_identifier() -> Result {
+    let mut value = request();
+    value["schema"] = serde_json::json!(3);
+    value["action"] = serde_json::json!({
+        "kind": "REQUEST_RELEASE_BUILD",
+        "job": archcert_domain::jobs::JobId::new(),
+    });
+    let parsed: CreateControlCommandRequest = serde_json::from_value(value.clone())?;
+    assert_eq!(parsed.schema, parsed.action.schema());
+    assert_eq!(
+        parsed.action.operation(),
+        ControlOperation::RequestReleaseBuild
+    );
+
+    for field in [
+        "source",
+        "certificate",
+        "artifact",
+        "permit",
+        "recipe",
+        "policy",
+        "image",
+        "limits",
+        "signing_key",
+        "actor",
+        "shell",
+        "verified",
+        "invocation",
+    ] {
+        for nested in [false, true] {
+            let mut forged = value.clone();
+            let object = if nested {
+                &mut forged["action"]
+            } else {
+                &mut forged
+            };
+            object[field] = serde_json::json!("forged authority");
+            assert!(serde_json::from_value::<CreateControlCommandRequest>(forged).is_err());
+        }
+    }
+
+    for schema in [0, 1, 2, 4] {
+        let mut wrong = value.clone();
+        wrong["schema"] = serde_json::json!(schema);
+        let parsed: CreateControlCommandRequest = serde_json::from_value(wrong)?;
+        assert_ne!(parsed.schema, parsed.action.schema());
+    }
+
+    value["action"]["job"] = serde_json::json!("not-a-job");
     assert!(serde_json::from_value::<CreateControlCommandRequest>(value).is_err());
 
     Ok(())

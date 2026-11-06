@@ -342,8 +342,10 @@ M10, M11 and Genesis / Firstwarden remain NOT STARTED.
 
 The private controller's identifier-only `request-build` and verified dispatcher
 are specified in [ADR 0067](docs/adr/0067-native-release-build-command-dispatch.md).
-Schema-3 APPLIED receipts mean workflow admission only. HTTP/browser build requests
-remain unsupported while their separate integration is pending.
+Schema-3 APPLIED receipts mean workflow admission only. The optional separately
+authenticated HTTP command API accepts identifier-only build requests under
+[ADR 0068](docs/adr/0068-identifier-only-release-build-http.md). Browser build
+requests remain unsupported while their separate integration is pending.
 
 `scripts/test-glassmere-build` additionally re-ingests a complete explicitly selected
 historical source pack through the existing bounded Rust decoder and matches its
@@ -364,3 +366,6 @@ keys and the exact historical recipe. Retain preparation commands and input dige
 under `target/`. Local pack import establishes no fresh SSH authentication. Its
 separate source evidence records validated pack identity, bytes, traversal counts,
 limits and duration without pretending that a network receive occurred.
+Set `ARCHCERT_TEST_BUILD_TRANSPORT=http` to exercise actual loopback daemon
+submission and receipt lookup with the same native dispatcher and crash assertions.
+Build `archcertd` first; the default transport remains the private native CLI.

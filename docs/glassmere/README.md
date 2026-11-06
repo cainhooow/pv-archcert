@@ -84,7 +84,9 @@ signing, runtime, policy or release authority. All unsupported mutation requests
 are denied. Login/logout use exact Origin validation; logout additionally checks
 a session-bound CSRF value. Commands additionally check that CSRF value,
 current role and project/object scope. No GET mutates authority state. Disposition,
-user/configuration edits and release-build commands remain unsupported. See
+user/configuration edits and browser release-build commands remain unsupported. The
+separate opt-in daemon supports identifier-only build requests under
+[ADR 0068](../adr/0068-identifier-only-release-build-http.md). See
 the complete [permission matrix and readiness decision](../adr/0064-glassmere-readiness-browser-request.md).
 
 Panel audit is a private append-only JSONL sink, bounded to 16 MiB. An operator must

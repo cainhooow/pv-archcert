@@ -7,10 +7,14 @@ import os
 from pathlib import Path
 import secrets
 import signal
+import socket
 import stat
 import subprocess
 import time
 import uuid
+import urllib.error
+import urllib.parse
+import urllib.request
 
 
 REPOSITORY = Path(__file__).resolve().parent.parent
@@ -62,6 +66,11 @@ class Qualification:
         self.environment["ARCHCERT_TEST_DATABASE_URL"] = os.environ["ARCHCERT_TEST_DATABASE_URL"]
         self.checks = []
         self.ordinal = 0
+        self.transport = os.environ.get("ARCHCERT_TEST_BUILD_TRANSPORT", "native")
+        if self.transport not in ("native", "http"):
+            raise RuntimeError("Select native or http build-request qualification")
+        self.daemon = None
+        self.daemon_sha256 = None
         self.head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPOSITORY, text=True).strip()
         self.diff = subprocess.check_output(["git", "diff", "HEAD"], cwd=REPOSITORY)
         self.untracked = subprocess.check_output(
@@ -94,6 +103,9 @@ class Qualification:
         return json.loads(text) if text.lstrip().startswith("{") else None
 
     def request(self, name, key, extra=None, denied=False):
+        if self.transport == "http":
+            return self.http_request(name, key, extra or {}, denied)
+
         arguments = self.base + [
             "request-build",
             "--project", self.subject["project"],
@@ -113,6 +125,116 @@ class Qualification:
             assert result["repository"] == self.subject["repository"]
             assert result["operation"] == "REQUEST_RELEASE_BUILD"
         return result
+
+    def start_daemon(self):
+        binary = Path(os.environ.get(
+            "ARCHCERT_TEST_DAEMON_BINARY", REPOSITORY / "target/debug/archcertd",
+        )).resolve(strict=True)
+        self.daemon_sha256 = sha256(binary.read_bytes())
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        self.endpoint = "http://127.0.0.1:" + str(port)
+        with (self.output / "daemon.log").open("ab") as stream:
+            self.daemon = subprocess.Popen(
+                [
+                    str(binary), "--config", str(self.output / "build-authority.json"),
+                    "--command-credentials", str(self.output / "build-credentials.json"),
+                    "--listen", "127.0.0.1:" + str(port),
+                ],
+                env=self.environment,
+                cwd=REPOSITORY,
+                stdout=stream,
+                stderr=subprocess.STDOUT,
+            )
+        deadline = time.monotonic() + 20
+        while True:
+            if self.daemon.poll() is not None or time.monotonic() >= deadline:
+                raise RuntimeError("Private daemon did not become ready; inspect its private log")
+            try:
+                with urllib.request.urlopen(self.endpoint + "/readyz", timeout=1) as response:
+                    assert response.status == 200
+                    break
+            except OSError:
+                time.sleep(0.1)
+
+    def stop_daemon(self):
+        if self.daemon is not None and self.daemon.poll() is None:
+            self.daemon.terminate()
+            try:
+                self.daemon.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.daemon.kill()
+                self.daemon.wait(timeout=10)
+
+    def http_request(self, name, key, extra, denied):
+        body = {
+            "schema": 3,
+            "project": extra.get("--project", self.subject["project"]),
+            "repository": extra.get("--repository", self.subject["repository"]),
+            "authority_context": extra.get("--authority-context", self.subject["authority_context"]),
+            "action": {
+                "kind": "REQUEST_RELEASE_BUILD",
+                "job": extra.get("--job", self.subject["job"]),
+            },
+        }
+        token = Path(extra.get("--token-file", self.output / "command-token")).read_text()
+        request = urllib.request.Request(
+            self.endpoint + "/api/v2/commands",
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Authorization": "Bearer " + token,
+                "Idempotency-Key": key,
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            response = urllib.request.urlopen(request, timeout=20)
+        except urllib.error.HTTPError as error:
+            response = error
+        with response:
+            assert response.headers["Cache-Control"] == "no-store"
+            assert response.headers["X-Content-Type-Options"] == "nosniff"
+            payload = response.read(128 * 1024 + 1)
+            assert len(payload) <= 128 * 1024
+            status = response.status
+        self.ordinal += 1
+        private_json(self.output / f"{self.ordinal:02d}-{name}.http.json", {
+            "status": status,
+            "response": payload.decode("utf-8") if denied else json.loads(payload),
+        })
+        if denied:
+            precondition = "--job" in extra or "--authority-context" in extra
+            assert status == (404 if precondition else 401)
+            assert payload == (
+                b"state or ownership precondition failed" if precondition else b"not authorized"
+            )
+            return None
+        assert status == 202
+        receipt = json.loads(payload)
+        assert receipt["schema"] == 3
+        assert receipt["project"] == self.subject["project"]
+        assert receipt["repository"] == self.subject["repository"]
+        assert receipt["operation"] == "REQUEST_RELEASE_BUILD"
+
+        # Lookup uses the original context, scope and independently granted operation.
+        query = urllib.parse.urlencode({
+            "project": body["project"],
+            "repository": body["repository"],
+            "operation": "REQUEST_RELEASE_BUILD",
+            "authority_context": body["authority_context"],
+        })
+        lookup = urllib.request.Request(
+            self.endpoint + "/api/v2/commands/" + receipt["command_id"] + "?" + query,
+            headers={"Authorization": "Bearer " + token},
+        )
+        with urllib.request.urlopen(lookup, timeout=20) as response:
+            assert response.status == 200
+            assert response.headers["Cache-Control"] == "no-store"
+            assert json.loads(response.read(128 * 1024 + 1)) == receipt
+
+        return receipt
 
     def dispatch(self, name, environment=None):
         return self.run(
@@ -190,6 +312,27 @@ class Qualification:
         self.environment["ARCHCERT_DATABASE_URL"] = database["authority_url"]
         self.environment["ARCHCERT_OBSERVATION_DATABASE_URL"] = database["reader_url"]
         self.base = [str(self.controller), "--config", str(self.output / "build-authority.json")]
+        if self.transport == "http":
+            self.start_daemon()
+            context_query = urllib.parse.urlencode({
+                "project": self.subject["project"],
+                "repository": self.subject["repository"],
+                "operation": "REQUEST_RELEASE_BUILD",
+            })
+            request = urllib.request.Request(
+                self.endpoint + "/api/v2/command-context?" + context_query,
+                headers={"Authorization": "Bearer " + token},
+            )
+            with urllib.request.urlopen(request, timeout=20) as response:
+                context = json.loads(response.read(128 * 1024 + 1))
+            assert context == {
+                "schema": 1,
+                "project": self.subject["project"],
+                "repository": self.subject["repository"],
+                "operation": "REQUEST_RELEASE_BUILD",
+                "authority_context": self.subject["authority_context"],
+                "requires_reviewed_session": False,
+            }
         initial = self.run("inspect-initial", [self.fixture, "--inspect-build", self.output])
         assert initial["invocations"] == 0
         assert initial["claimed_invocations"] == 0
@@ -208,14 +351,15 @@ class Qualification:
             os.chmod(wrong_token, 0o600)
             stream.write(secrets.token_hex(32))
         self.request("wrong-token", "wrong-token", {"--token-file": wrong_token}, denied=True)
-        os.chmod(token_path, 0o644)
-        try:
-            self.request("non-private-token", "non-private-token", denied=True)
-        finally:
-            os.chmod(token_path, 0o600)
+        if self.transport == "native":
+            os.chmod(token_path, 0o644)
+            try:
+                self.request("non-private-token", "non-private-token", denied=True)
+            finally:
+                os.chmod(token_path, 0o600)
         after_denials = self.run("inspect-denials", [self.fixture, "--inspect", self.output])
         assert after_denials["commands_count"] == 0
-        self.record("scope, object, authority context, credential and private-file denials create no request")
+        self.record("scope, object, authority context and credential denials create no request")
 
         first = self.request("request", "original-build")
         assert first["state"] == "REQUESTED"
@@ -237,6 +381,9 @@ class Qualification:
         fresh = self.request("fresh-explicit-action", "fresh-build")
         assert fresh["command_id"] != first["command_id"]
         self.kill_dispatcher("published")
+        if self.transport == "http":
+            self.stop_daemon()
+            self.start_daemon()
         published = self.request("recover-published", "fresh-build")
         self.applied(published)
         assert fresh["command_id"] == published["command_id"]
@@ -269,10 +416,12 @@ class Qualification:
     def retain(self, status):
         private_json(self.output / "results.json", {
             "head": self.head,
+            "transport": self.transport,
             "tracked_diff_sha256": sha256(self.diff),
             "untracked_paths": self.untracked,
             "exact_committed_source": not self.diff and "scripts/test-glassmere-build" not in self.untracked,
             "controller_sha256": sha256(self.controller.read_bytes()),
+            "daemon_sha256": self.daemon_sha256,
             "fixture_sha256": sha256(self.fixture.read_bytes()),
             "script_sha256": sha256(Path(__file__).read_bytes()),
             "status": status,
@@ -291,3 +440,5 @@ if __name__ == "__main__":
         raise
     else:
         qualification.retain("PASS")
+    finally:
+        qualification.stop_daemon()

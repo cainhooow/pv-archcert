@@ -85,6 +85,7 @@ fn authorize(
     if !matches!(
         query.operation,
         ControlOperation::RequestCertification
+            | ControlOperation::RequestReleaseBuild
             | ControlOperation::RequestReleaseReadinessEvaluation
             | ControlOperation::CancelEligibleJob
             | ControlOperation::RetryEligibleJob
@@ -155,7 +156,11 @@ async fn context(
             operation: authorization.operation(),
             authority_context,
             requires_reviewed_session: grant.ironcrest
-                && authorization.operation() != ControlOperation::RequestReleaseReadinessEvaluation,
+                && !matches!(
+                    authorization.operation(),
+                    ControlOperation::RequestReleaseReadinessEvaluation
+                        | ControlOperation::RequestReleaseBuild
+                ),
         })
     })
     .await;
@@ -186,6 +191,12 @@ async fn submit(
         let key = IdempotencyKey::parse(single_header(&headers, "idempotency-key")?.into())?;
 
         let record = match request.action {
+            ControlActionRequest::RequestReleaseBuild { job } => {
+                state
+                    .control
+                    .request_release_build(&authorization, job, &key)
+                    .await?
+            }
             ControlActionRequest::RequestReleaseReadinessEvaluation { invocation } => {
                 state
                     .control

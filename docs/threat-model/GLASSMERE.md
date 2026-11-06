@@ -1,7 +1,7 @@
 # Glassmere private panel threat model
 
 Scope: ADR 0051, bounded read-only operational visibility and browser sessions;
-ADRs 0053–0067 additionally bound the authenticated workflow/observation commands and browser broker.
+ADRs 0053–0068 additionally bound the authenticated workflow/observation commands and browser broker.
 Authority records and verifier semantics remain those of M0–M8. The panel observes
 authority; it does not become authority. This document declares no qualification.
 
@@ -40,7 +40,7 @@ request resolution. Build contexts bind that fixed selection separately; existin
 operation contexts retain their bytes. Current independent grants and exact owned
 certificate/source metadata are checked before passive accepted-source loading.
 REQUESTED grants no verified admission, execution or signing. ADR 0067 connects
-private dispatch; public HTTP/browser build requests remain disabled.
+private dispatch; ADR 0068 connects scoped identifier-only HTTP submission.
 
 ADR 0067 composes native build requests with explicit operation context, selected
 public M6 verification and the sealed atomic admission executor. Schema-3 APPLIED
@@ -48,7 +48,11 @@ means workflow admission only, including identical existing admission. Verificat
 failure before mutation is a known no-effect rejection; commit uncertainty never
 becomes known rejection. Command recovery grants no M6 execution claim. The native
 request accepts identifiers and a separate private credential file; it receives no
-runtime/signing selector and introduces no public build request action.
+runtime/signing selector. ADR 0068 adds one schema-3 HTTP action accepting only the
+owned completed certification job ID. It uses the same independently granted build
+context and native request port; posted authority fields fail strict decoding.
+No inline verification, build execution, evidence publication or signing occurs.
+Browser build submission remains disabled pending its separate mediation.
 
 | Threat / asset | Attacker capability | Control | Remaining limitation |
 | --- | --- | --- | --- |
@@ -58,7 +62,7 @@ runtime/signing selector and introduces no public build request action.
 | CSRF / session and commands | Cross-origin form/fetch | Exact configured Origin; session-bound CSRF for logout and workflow/observation commands; Strict cookie; no mutating GET/CORS | A compromised same-origin script can submit authorized operations |
 | Stale green / human decisions | Delay/fail updates, restore old tab | Backend exact-identity readiness, content revision; no-store; initial historical label; freshness invalidation | No browser can provide an atomic authorization lease for a later deployment |
 | Inconsistent reads / bindings | Race durable updates | REPEATABLE READ READ ONLY aggregate; immutable exact-object hash checks; no latest-row heuristic | Database operational integrity remains trusted |
-| Authorization bypass / authority | Forge direct HTTP requests | Server-side principal/role/project/object checks before broker calls; recheck after passive lookup; independent backend grants; unsupported mutations denied | Release-build commands remain disabled; no human waiver workflow exists |
+| Authorization bypass / authority | Forge direct HTTP requests | Server-side principal/role/project/object checks before broker calls; recheck after passive lookup; independent backend grants; unsupported mutations denied | Browser release-build requests remain disabled; no human waiver workflow exists |
 | Admin abuse / project truth | Obtain panel Administrator role | Project restrictions still apply; no authority policy/user editor, signer, state setter or audit delete | External provisioning administrator remains trusted |
 | Credential leakage / secrets | Supply diagnostic/provider/log content | Explicit query fields; no raw DB errors, pins, command environments, connection strings or arbitrary logs | Evidence may itself contain source secrets; access is private and downloads are explicit |
 | Arbitrary workflow / runtime | Supply argv or cleanup request | No shell/exec/upload endpoint; no Docker socket, runtime adapter or source/provider credential | A compromised same-UID process may reach separately provisioned host resources |

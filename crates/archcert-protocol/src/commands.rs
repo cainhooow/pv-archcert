@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateControlCommandRequest {
-    /// Explicit transport version: one for job actions, two for readiness questions.
+    /// Explicit version: job actions 1, readiness questions 2, build requests 3.
     pub schema: u32,
     /// Exact authenticated project scope.
     pub project: ProjectId,
@@ -32,6 +32,11 @@ pub struct CreateControlCommandRequest {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 pub enum ControlActionRequest {
+    /// Request a workflow from one exact owned completed source certification.
+    RequestReleaseBuild {
+        /// Owned certification job; authority resolves all certificate/recipe inputs.
+        job: JobId,
+    },
     /// Ask a fresh historical question about one exact owned admitted release.
     RequestReleaseReadinessEvaluation {
         /// Immutable invocation, never posted verification facts or build inputs.
@@ -60,9 +65,10 @@ pub enum ControlActionRequest {
 
 impl ControlActionRequest {
     /// Explicit request grammar. Existing job operations retain schema 1;
-    /// readiness requires schema 2 and its versioned historical receipt contract.
+    /// readiness requires schema 2; build admission requires schema 3.
     pub fn schema(&self) -> u32 {
         match self {
+            Self::RequestReleaseBuild { .. } => 3,
             Self::RequestReleaseReadinessEvaluation { .. } => 2,
             Self::RequestCertification { .. }
             | Self::CancelEligibleJob { .. }
@@ -73,6 +79,7 @@ impl ControlActionRequest {
     /// Application permission class; the transport DTO never enters application ports.
     pub fn operation(&self) -> ControlOperation {
         match self {
+            Self::RequestReleaseBuild { .. } => ControlOperation::RequestReleaseBuild,
             Self::RequestReleaseReadinessEvaluation { .. } => {
                 ControlOperation::RequestReleaseReadinessEvaluation
             }

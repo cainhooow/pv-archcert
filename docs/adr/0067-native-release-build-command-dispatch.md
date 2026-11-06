@@ -1,6 +1,6 @@
 # ADR 0067: Private verified build-command dispatch and admission receipts
 
-Status: Accepted native integration design; public build submission remains absent.
+Status: Accepted native integration design; ADR 0068 separately extends HTTP submission.
 Date: November 5, 2026. Extends ADRs 0048, 0056, 0062, 0065 and 0066.
 
 ## Context
