@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""Qualify private build admission with complete retained historical source."""
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import secrets
+import signal
+import stat
+import subprocess
+import time
+import uuid
+
+
+REPOSITORY = Path(__file__).resolve().parent.parent
+
+
+def private_json(path, value):
+    with path.open("x", encoding="utf-8") as stream:
+        os.chmod(path, 0o600)
+        json.dump(value, stream, indent=2)
+        stream.write("\n")
+
+
+def read_private(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+        metadata = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+            or metadata.st_size > 256 * 1024
+        ):
+            raise RuntimeError("Expected a bounded owned mode-0600 selection file")
+        return json.load(stream)
+
+
+def sha256(value):
+    return hashlib.sha256(value).hexdigest()
+
+
+class Qualification:
+    def __init__(self):
+        self.output = Path(os.environ.get("GLASSMERE_BUILD_OUTPUT", "target/glassmere-build")).absolute()
+        if not self.output.parent.resolve().is_relative_to(REPOSITORY / "target"):
+            raise RuntimeError("Qualification output must be under this repository's target/")
+        self.output.mkdir(mode=0o700)
+        self.output = self.output.resolve(strict=True)
+        self.fixture = Path(os.environ.get(
+            "ARCHCERT_TEST_COMMAND_FIXTURE_BINARY",
+            REPOSITORY / "target/debug/examples/glassmere-command-fixture",
+        )).resolve(strict=True)
+        self.controller = Path(os.environ.get(
+            "ARCHCERT_TEST_CONTROLLER_BINARY", REPOSITORY / "target/debug/archcert-controller",
+        )).resolve(strict=True)
+        self.environment = {
+            name: os.environ[name] for name in ("PATH", "HOME", "LANG", "TMPDIR") if name in os.environ
+        }
+        self.environment["ARCHCERT_TEST_DATABASE_URL"] = os.environ["ARCHCERT_TEST_DATABASE_URL"]
+        self.checks = []
+        self.ordinal = 0
+        self.head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPOSITORY, text=True).strip()
+        self.diff = subprocess.check_output(["git", "diff", "HEAD"], cwd=REPOSITORY)
+        self.untracked = subprocess.check_output(
+            ["git", "ls-files", "--others", "--exclude-standard"], cwd=REPOSITORY, text=True
+        ).splitlines()
+
+    def record(self, name):
+        self.checks.append({"name": name, "status": "PASS"})
+        print("PASS: " + name, flush=True)
+
+    def run(self, name, arguments, denied=False, environment=None):
+        self.ordinal += 1
+        prefix = self.output / f"{self.ordinal:02d}-{name}"
+        with prefix.with_suffix(".stdout").open("xb") as out:
+            with prefix.with_suffix(".stderr").open("xb") as err:
+                result = subprocess.run(
+                    [str(argument) for argument in arguments],
+                    env=environment or self.environment,
+                    cwd=REPOSITORY,
+                    stdout=out,
+                    stderr=err,
+                    timeout=45,
+                    check=False,
+                )
+        if (result.returncode == 0) == denied:
+            raise RuntimeError(name + ": unexpected exit status; inspect private retained logs")
+        if denied:
+            return None
+        text = prefix.with_suffix(".stdout").read_text()
+        return json.loads(text) if text.lstrip().startswith("{") else None
+
+    def request(self, name, key, extra=None, denied=False):
+        arguments = self.base + [
+            "request-build",
+            "--project", self.subject["project"],
+            "--repository", self.subject["repository"],
+            "--job", self.subject["job"],
+            "--authority-context", self.subject["authority_context"],
+            "--idempotency-key", key,
+            "--credentials", self.output / "build-credentials.json",
+            "--token-file", self.output / "command-token",
+        ]
+        for option, value in (extra or {}).items():
+            arguments[arguments.index(option) + 1] = value
+        result = self.run(name, arguments, denied=denied)
+        if not denied:
+            assert result["schema"] == 3
+            assert result["project"] == self.subject["project"]
+            assert result["repository"] == self.subject["repository"]
+            assert result["operation"] == "REQUEST_RELEASE_BUILD"
+        return result
+
+    def dispatch(self, name, environment=None):
+        return self.run(
+            name,
+            self.base + ["dispatch-command", "--observation-config", self.output / "build-query.json"],
+            environment=environment,
+        )
+
+    def applied(self, receipt):
+        assert receipt["schema"] == 3
+        assert receipt["state"] == "APPLIED"
+        assert receipt["outcome"] == {
+            "state": "APPLIED",
+            "effect": {"kind": "RELEASE_BUILD_REQUESTED", "invocation": self.subject["invocation"]},
+        }
+
+    def kill_dispatcher(self, stage):
+        prefix = self.output / ("sigkill-" + stage)
+        with prefix.with_suffix(".stdout").open("xb") as out:
+            with prefix.with_suffix(".stderr").open("xb") as err:
+                process = subprocess.Popen(
+                    self.base + [
+                        "dispatch-command", "--lease-seconds", "5",
+                        "--observation-config", str(self.output / "build-query.json"),
+                        "--stop-after", stage, "--hold-checkpoint",
+                    ],
+                    cwd=REPOSITORY, env=self.environment, stdout=out, stderr=err,
+                )
+                try:
+                    deadline = time.monotonic() + 30
+                    marker = "Controlled Glassmere command interruption after " + stage
+                    while marker not in prefix.with_suffix(".stderr").read_text():
+                        if process.poll() is not None or time.monotonic() >= deadline:
+                            raise RuntimeError("Dispatcher did not reach its selected checkpoint")
+                        time.sleep(0.1)
+                    process.kill()
+                    assert process.wait(timeout=10) == -signal.SIGKILL
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=10)
+
+    def execute(self):
+        selection = read_private(Path(os.environ["ARCHCERT_TEST_BUILD_IMPORT"]))
+        assert set(selection) == {"project", "invocation", "query_config", "source_pack"}
+        assert str(uuid.UUID(selection["project"])) == selection["project"]
+        private_json(self.output / "seed.json", {
+            "reader_password": secrets.token_hex(32),
+            "principals": {
+                name: {"legacy": sha256(secrets.token_bytes(32)), "command": sha256(secrets.token_bytes(32))}
+                for name in ("administrator", "operator")
+            },
+        })
+        self.run("fixture", [self.fixture, self.output])
+        token = secrets.token_hex(32)
+        token_path = self.output / "command-token"
+        with token_path.open("x", encoding="ascii") as stream:
+            os.chmod(token_path, 0o600)
+            stream.write(token)
+        private_json(self.output / "build-import.json", dict(
+            selection,
+            legacy_token_sha256=sha256(secrets.token_bytes(32)),
+            command_token_sha256=sha256(token.encode("ascii")),
+        ))
+        self.run("import", [self.fixture, "--import-build-source", self.output])
+        self.subject = read_private(self.output / "build-fixture.json")
+        evidence = self.subject["source_evidence"]
+        assert evidence["identity"] == self.subject["source"]
+        assert evidence["unresolved"] == []
+        assert evidence["entry_count"] > 0
+        assert evidence["total_bytes"] <= evidence["limits"]["max_total_bytes"]
+        self.record("bounded passive pack ingestion reproduces the exact retained certificate source")
+
+        database = read_private(self.output / "database.json")
+        self.environment["ARCHCERT_DATABASE_URL"] = database["authority_url"]
+        self.environment["ARCHCERT_OBSERVATION_DATABASE_URL"] = database["reader_url"]
+        self.base = [str(self.controller), "--config", str(self.output / "build-authority.json")]
+        initial = self.run("inspect-initial", [self.fixture, "--inspect-build", self.output])
+        assert initial["invocations"] == 0
+        assert initial["claimed_invocations"] == 0
+        assert initial["release_evidence"] == 0
+        assert initial["issued_certificates"] == 0
+
+        for name, extra in [
+            ("wrong-project", {"--project": str(uuid.uuid4())}),
+            ("wrong-object", {"--job": str(uuid.uuid4())}),
+            ("wrong-context", {"--authority-context": "e" * 64}),
+            ("wrong-repository", {"--repository": "qualification/not-authorized"}),
+        ]:
+            self.request(name, name, extra, denied=True)
+        wrong_token = self.output / "wrong-token"
+        with wrong_token.open("x", encoding="ascii") as stream:
+            os.chmod(wrong_token, 0o600)
+            stream.write(secrets.token_hex(32))
+        self.request("wrong-token", "wrong-token", {"--token-file": wrong_token}, denied=True)
+        os.chmod(token_path, 0o644)
+        try:
+            self.request("non-private-token", "non-private-token", denied=True)
+        finally:
+            os.chmod(token_path, 0o600)
+        after_denials = self.run("inspect-denials", [self.fixture, "--inspect", self.output])
+        assert after_denials["commands_count"] == 0
+        self.record("scope, object, authority context, credential and private-file denials create no request")
+
+        first = self.request("request", "original-build")
+        assert first["state"] == "REQUESTED"
+        assert self.request("http-retry", "original-build") == first
+        assert self.request("different-key", "duplicate-build") == first
+        self.kill_dispatcher("claimed")
+        time.sleep(6)
+        missing = dict(self.environment)
+        del missing["ARCHCERT_OBSERVATION_DATABASE_URL"]
+        rejected = self.dispatch("recover-missing-observer", environment=missing)
+        assert rejected["command_id"] == first["command_id"]
+        assert rejected["state"] == "REJECTED"
+        assert rejected["outcome"] == {"state": "REJECTED", "reason": "INFRASTRUCTURE_UNAVAILABLE"}
+        assert self.request("retained-rejection", "original-build") == rejected
+        no_effect = self.run("inspect-no-effect", [self.fixture, "--inspect-build", self.output])
+        assert no_effect == initial
+        self.record("actual SIGKILL after claim recovers to an immutable no-effect verification rejection")
+
+        fresh = self.request("fresh-explicit-action", "fresh-build")
+        assert fresh["command_id"] != first["command_id"]
+        self.kill_dispatcher("published")
+        published = self.request("recover-published", "fresh-build")
+        self.applied(published)
+        assert fresh["command_id"] == published["command_id"]
+        assert self.request("refresh", "fresh-build") == published
+        assert self.request("new-tab", "another-build-key") == published
+        assert self.dispatch("restart-idle") == {"status": "IDLE"}
+        self.record("actual SIGKILL after atomic publication retains one verified schema-3 admission")
+
+        final = self.run("inspect-build-final", [self.fixture, "--inspect-build", self.output])
+        assert final["invocations"] == 1
+        assert final["claimed_invocations"] == 0
+        assert final["release_evidence"] == 0
+        assert final["issued_certificates"] == 0
+        for name in (
+            "imported_job_sha256", "original_release_record_sha256",
+            "retained_source", "certificate_artifact_sha256",
+        ):
+            assert final[name] == initial[name]
+        counts = self.run("inspect-final", [self.fixture, "--inspect", self.output])
+        assert counts["commands_count"] == 2
+        assert counts["keys"] == 4
+        assert counts["jobs"] == 5
+        assert counts["attempts"] == 2
+        assert counts["certificates"] == 1  # Imported historical metadata, not issuance.
+        assert counts["release_audits"] == 1
+        assert counts["command_audit"]["CommandApplied"] == 1
+        assert counts["command_audit"]["CommandRejected"] == 1
+        self.record("exact admission counts preserve historical authority state with no execution or signatures")
+
+    def retain(self, status):
+        private_json(self.output / "results.json", {
+            "head": self.head,
+            "tracked_diff_sha256": sha256(self.diff),
+            "untracked_paths": self.untracked,
+            "exact_committed_source": not self.diff and "scripts/test-glassmere-build" not in self.untracked,
+            "controller_sha256": sha256(self.controller.read_bytes()),
+            "fixture_sha256": sha256(self.fixture.read_bytes()),
+            "script_sha256": sha256(Path(__file__).read_bytes()),
+            "status": status,
+            "checks": self.checks,
+            "scope": "Historical source/certificate development fixture; no new builds, issuance or native qualification",
+        })
+
+
+if __name__ == "__main__":
+    os.umask(0o077)
+    qualification = Qualification()
+    try:
+        qualification.execute()
+    except BaseException:
+        qualification.retain("FAILED")
+        raise
+    else:
+        qualification.retain("PASS")

@@ -4,6 +4,9 @@
 #[path = "glassmere-command-fixture/readiness.rs"]
 mod readiness;
 
+#[path = "glassmere-command-fixture/build.rs"]
+mod build;
+
 use archcert_application::jobs::*;
 use archcert_control_plane::{
     ControlPlane, ControlPlaneConfiguration, commands::CommandCredentials,
@@ -189,6 +192,14 @@ async fn main() -> Result {
 
     if args.len() == 3 && args[1] == "--import-readiness" {
         return readiness::import_readiness(&Path::new(&args[2]).canonicalize()?).await;
+    }
+
+    if args.len() == 3 && args[1] == "--import-build-source" {
+        return build::import(&Path::new(&args[2]).canonicalize()?).await;
+    }
+
+    if args.len() == 3 && args[1] == "--inspect-build" {
+        return build::inspect(&Path::new(&args[2]).canonicalize()?).await;
     }
 
     if args.len() != 2 {

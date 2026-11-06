@@ -60,6 +60,17 @@ execution qualification or independent certification. Full request-to-dispatch
 qualification must additionally use complete acquired source matching a retained
 certificate; it remains required before M9 closure.
 
+`scripts/test-glassmere-build` supplies this additional development composition:
+explicit historical public selection, complete bounded local pack ingestion, exact
+snapshot matching, passive retained-source reload, native request, public verifier
+and atomic admission. Its importer copies only the original certificate bytes and
+explicitly labeled completed-job metadata into a fresh isolated namespace. It does
+not copy M6 claims, build evidence or release permits. A distinct import audit event
+prevents describing the metadata as newly issued certification. Local import records
+no SSH/device authentication or received refs; actual validated pack/source evidence
+is retained separately. Original authority rows and artifacts remain untouched.
+SIGKILL and replay assertions require one admission and no claims or new signatures.
+
 Assert one admission/audit/receipt, unchanged immutable source/certificate bytes,
 zero new execution claims, no evidence roles and no signatures. Resume after a
 crash through the original command identity and fences. Existing non-expiring M6

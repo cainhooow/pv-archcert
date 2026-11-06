@@ -344,3 +344,23 @@ The private controller's identifier-only `request-build` and verified dispatcher
 are specified in [ADR 0067](docs/adr/0067-native-release-build-command-dispatch.md).
 Schema-3 APPLIED receipts mean workflow admission only. HTTP/browser build requests
 remain unsupported while their separate integration is pending.
+
+`scripts/test-glassmere-build` additionally re-ingests a complete explicitly selected
+historical source pack through the existing bounded Rust decoder and matches its
+exact commit, tree and independent snapshot digest to the retained M6 certificate.
+Its native request/dispatch qualification uses a fresh isolated PostgreSQL schema,
+SELECT-only verifier credential and private artifact/source roots. Imported completed
+certification metadata is explicitly audited as development fixture data. The actual
+dispatcher independently verifies the original signed envelope before admission.
+This test runs no build, signs nothing and does not qualify the current source.
+
+Build `archcert-controller` and the `archcert-control-plane` example
+`glassmere-command-fixture` first. Set `ARCHCERT_TEST_DATABASE_URL` to the disposable
+development administrator URL, `ARCHCERT_TEST_BUILD_IMPORT` to an owned mode-0600
+JSON selection containing `project`, `invocation`, `query_config` and `source_pack`,
+and `GLASSMERE_BUILD_OUTPUT` to a new directory below `target/`. The selected pack
+must also be an owned mode-0600 file; the query selection contains approved public
+keys and the exact historical recipe. Retain preparation commands and input digests
+under `target/`. Local pack import establishes no fresh SSH authentication. Its
+separate source evidence records validated pack identity, bytes, traversal counts,
+limits and duration without pretending that a network receive occurred.
