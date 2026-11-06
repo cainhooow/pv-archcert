@@ -83,6 +83,7 @@ async fn fixture(real: bool) -> Result<Fixture> {
         greywatch: false,
         semantic_request_bytes: None,
         ironcrest_baseline: None,
+        release_build: None,
     };
     let scope = CommandScope {
         project: grant.project,

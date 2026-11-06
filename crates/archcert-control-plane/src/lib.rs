@@ -65,6 +65,9 @@ pub struct AuthorityGrant {
     /// Authority-only accepted baseline. None explicitly requires full review.
     #[serde(default)]
     pub ironcrest_baseline: Option<SourceSubmissionId>,
+    /// Explicit fixed release-build selection; absence grants no build request capability.
+    #[serde(default)]
+    pub release_build: Option<commands::ReleaseBuildAuthority>,
 }
 
 /// Reads an existing private owned regular authority file without symlink following.
@@ -120,6 +123,10 @@ impl ControlPlaneConfiguration {
 
         for (index, g) in config.grants.iter().enumerate() {
             resolve_authority_plan(&g.profile, &g.image, &g.authority_toml)?;
+
+            if let Some(selection) = &g.release_build {
+                selection.recipe()?;
+            }
 
             if (g.ironcrest && !["python", "rust-workspace-v1"].contains(&g.profile.as_str()))
                 || (g.greywatch && !g.ironcrest)
@@ -413,6 +420,7 @@ mod tests {
                 greywatch: false,
                 semantic_request_bytes: None,
                 ironcrest_baseline: None,
+                release_build: None,
             }],
         };
 

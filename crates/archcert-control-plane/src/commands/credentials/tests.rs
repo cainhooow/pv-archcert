@@ -20,6 +20,7 @@ fn fixture() -> Result<(ControlPlaneConfiguration, serde_json::Value)> {
         greywatch: false,
         semantic_request_bytes: None,
         ironcrest_baseline: None,
+        release_build: None,
     };
     let credentials = serde_json::json!({
         "schema": 1,
@@ -301,6 +302,199 @@ fn private_reload_revokes_operations_and_rejects_public_or_symlinked_credentials
     assert!(CommandCredentials::load(&link, &authority).is_err());
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))?;
     assert!(CommandCredentials::load(&path, &authority).is_err());
+
+    Ok(())
+}
+
+fn release_selection() -> ReleaseBuildAuthority {
+    ReleaseBuildAuthority {
+        schema: 1,
+        recipe_version: "1.0.2".into(),
+        environment: archcert_application::release::BuildEnvironment {
+            image: format!("authority/rust@sha256:{}", "a".repeat(64)),
+            dependency_bundle_sha256: digest_bytes(b"public fixture dependencies"),
+            toolchain_sha256: digest_bytes(b"public fixture toolchain"),
+        },
+        binary: "fixture".into(),
+        source_policy_sha256: digest_bytes(b"public fixture source policy"),
+        source_authority_key_sha256: digest_bytes(b"public fixture source key"),
+        release_authority_key_sha256: digest_bytes(b"public fixture release key"),
+    }
+}
+
+#[test]
+fn build_selection_preserves_existing_contexts_and_requires_explicit_provisioning() -> Result {
+    let (mut authority, mut value) = fixture()?;
+    value["principals"][0]["operations"] =
+        serde_json::json!(["REQUEST_CERTIFICATION", "REQUEST_RELEASE_BUILD",]);
+    let credentials: CommandCredentials = serde_json::from_value(value)?;
+    let grant = &authority.grants[0];
+    let legacy = grant.command_context()?;
+    assert!(matches!(
+        credentials.authorize(
+            &authority,
+            COMMAND_TOKEN,
+            grant.project,
+            &grant.repository,
+            ControlOperation::RequestReleaseBuild,
+            None
+        ),
+        Err(JobStoreError::Precondition)
+    ));
+    credentials.authorize(
+        &authority,
+        COMMAND_TOKEN,
+        grant.project,
+        &grant.repository,
+        ControlOperation::RequestCertification,
+        Some(&legacy),
+    )?;
+
+    authority.grants[0].release_build = Some(release_selection());
+    let grant = &authority.grants[0];
+    assert_eq!(grant.command_context()?, legacy);
+    for operation in [
+        ControlOperation::RequestCertification,
+        ControlOperation::RequestReleaseReadinessEvaluation,
+        ControlOperation::CancelEligibleJob,
+        ControlOperation::RetryEligibleJob,
+    ] {
+        assert_eq!(grant.command_context_for(operation)?, legacy);
+    }
+    let build_context = grant.command_context_for(ControlOperation::RequestReleaseBuild)?;
+    assert_ne!(build_context, legacy);
+    credentials.authorize(
+        &authority,
+        COMMAND_TOKEN,
+        grant.project,
+        &grant.repository,
+        ControlOperation::RequestReleaseBuild,
+        Some(&build_context),
+    )?;
+    assert!(matches!(
+        credentials.authorize(
+            &authority,
+            COMMAND_TOKEN,
+            grant.project,
+            &grant.repository,
+            ControlOperation::RequestReleaseBuild,
+            Some(&legacy)
+        ),
+        Err(JobStoreError::Precondition)
+    ));
+
+    Ok(())
+}
+
+#[test]
+fn build_context_binds_each_selection_and_excludes_credentials() -> Result {
+    let (mut authority, _) = fixture()?;
+    authority.grants[0].release_build = Some(release_selection());
+    let original = &authority.grants[0];
+    let context = original.command_context_for(ControlOperation::RequestReleaseBuild)?;
+    let mut rotated = original.clone();
+    rotated.token_sha256 = digest_bytes(b"another public regression credential");
+    assert_eq!(
+        rotated.command_context_for(ControlOperation::RequestReleaseBuild)?,
+        context
+    );
+
+    for change in 0..7 {
+        let mut other = rotated.clone();
+        let selection = other.release_build.as_mut().ok_or("selection")?;
+        match change {
+            0 => selection.binary = "other".into(),
+            1 => selection.environment.image = format!("authority/rust@sha256:{}", "b".repeat(64)),
+            2 => {
+                selection.environment.dependency_bundle_sha256 = digest_bytes(b"other dependencies")
+            }
+            3 => selection.environment.toolchain_sha256 = digest_bytes(b"other toolchain"),
+            4 => selection.source_policy_sha256 = digest_bytes(b"other policy"),
+            5 => selection.source_authority_key_sha256 = digest_bytes(b"other source key"),
+            _ => selection.release_authority_key_sha256 = digest_bytes(b"other release key"),
+        }
+
+        assert_ne!(
+            other.command_context_for(ControlOperation::RequestReleaseBuild)?,
+            context
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn private_build_selection_rejects_unknown_schema_recipe_and_ambient_capabilities() -> Result {
+    let selection = release_selection();
+    selection.recipe()?;
+    for change in 0..4 {
+        let mut other = selection.clone();
+        match change {
+            0 => other.schema = 2,
+            1 => other.recipe_version = "1.0.1".into(),
+            2 => other.binary = "../target-chosen".into(),
+            _ => other.environment.image = "authority/rust:latest".into(),
+        }
+
+        assert!(other.recipe().is_err());
+    }
+    for field in ["argv", "private_key", "runtime_endpoint", "source_path"] {
+        let mut value = serde_json::to_value(&selection)?;
+        value[field] = serde_json::json!("target-selected");
+        assert!(serde_json::from_value::<ReleaseBuildAuthority>(value).is_err());
+    }
+
+    Ok(())
+}
+
+#[test]
+fn authority_file_load_preserves_absent_selection_and_rejects_invalid_present_selection() -> Result
+{
+    let (authority, _) = fixture()?;
+    let grant = &authority.grants[0];
+    let mut value = serde_json::json!({
+        "source_store": "/unused",
+        "artifact_root": "/unused",
+        "grants": [{
+            "project": grant.project,
+            "repository": grant.repository,
+            "actor": grant.actor,
+            "token_sha256": grant.token_sha256,
+            "profile": grant.profile,
+            "image": grant.image,
+            "authority_toml": grant.authority_toml,
+            "maximum_attempts": grant.maximum_attempts,
+        }],
+    });
+    let directory = tempfile::tempdir()?;
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
+    let path = directory.path().canonicalize()?.join("authority.json");
+    let write = |value: &serde_json::Value| -> Result {
+        std::fs::write(&path, serde_json::to_vec(value)?)?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        Ok(())
+    };
+    write(&value)?;
+    let legacy = ControlPlaneConfiguration::load(&path)?;
+    assert!(legacy.grants[0].release_build.is_none());
+    let expected = legacy.grants[0].command_context()?;
+
+    value["grants"][0]["release_build"] = serde_json::to_value(release_selection())?;
+    write(&value)?;
+    let loaded = ControlPlaneConfiguration::load(&path)?;
+    assert_eq!(loaded.grants[0].command_context()?, expected);
+    loaded.grants[0].command_context_for(ControlOperation::RequestReleaseBuild)?;
+
+    for field in ["schema", "recipe_version", "shell"] {
+        let mut invalid = value.clone();
+        invalid["grants"][0]["release_build"][field] = match field {
+            "schema" => serde_json::json!(99),
+            "recipe_version" => serde_json::json!("unsupported"),
+            _ => serde_json::json!("arbitrary execution"),
+        };
+        write(&invalid)?;
+        assert!(ControlPlaneConfiguration::load(&path).is_err());
+    }
 
     Ok(())
 }

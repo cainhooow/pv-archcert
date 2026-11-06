@@ -1,6 +1,9 @@
 //! Real PostgreSQL command authentication, object scope and durable acceptance.
 //! Metadata fixtures establish no target execution or certificate issuance.
 
+#[path = "commands/release_build.rs"]
+mod release_build;
+
 use archcert_application::release::*;
 use archcert_application::{glassmere::commands::*, jobs::*};
 use archcert_control_plane::{
@@ -247,6 +250,7 @@ async fn fixture(reviewed: bool) -> Result<Fixture> {
         greywatch: false,
         semantic_request_bytes: None,
         ironcrest_baseline: None,
+        release_build: None,
     };
     let submission = SourceSubmissionId::new();
     let source = SourceSnapshot::seal(
@@ -337,7 +341,7 @@ fn authorization(
         grant.project,
         &grant.repository,
         operation,
-        Some(&grant.command_context()?),
+        Some(&grant.command_context_for(operation)?),
     )?)
 }
 

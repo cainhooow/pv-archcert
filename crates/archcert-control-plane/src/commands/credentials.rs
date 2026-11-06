@@ -139,7 +139,7 @@ impl CommandCredentials {
             })
             .ok_or(JobStoreError::Unauthorized)?;
         let grant = authority.grant_for(&principal.scope.actor, project, repository)?;
-        let context = grant.command_context()?;
+        let context = grant.command_context_for(operation)?;
 
         if expected_context.is_some_and(|expected| expected != &context) {
             return Err(JobStoreError::Precondition);

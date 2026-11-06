@@ -34,6 +34,13 @@ capability and current independent grants gate atomic M6 admission/audits/receip
 No build claim, runtime, evidence publication or signing is added. Public build
 request selection and transport remain unsupported pending separate qualification.
 
+ADR 0066 adds private fixed build-authority selection and native identifier-only
+request resolution. A distinct build context binds the supported recipe version,
+environment and policy/key identities; existing operation contexts keep their
+original bytes. Current independent grants and owned certificate/source bindings
+precede passive exact-source loading and journal acceptance. This requests work
+only; controller dispatch and public build transport remain unsupported.
+
 ADRs 0041–0044 describe the implemented knowledge, semantic review and durable
 lifecycle controls. They were historically mislabeled M6/Ironcrest. The retained
 `ironcrest` code, persistence, profile, policy and manifest names refer to that

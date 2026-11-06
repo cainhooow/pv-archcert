@@ -404,6 +404,19 @@ impl PostgresJobRepository {
         Ok(())
     }
 
+    /// Check current independent grants before passive private request resolution.
+    /// Acceptance and atomic mutation must still reauthorize in their own transactions.
+    pub async fn check_control_operation(
+        &self,
+        scope: &CommandScope,
+        context: &Sha256Digest,
+        operation: ControlOperation,
+    ) -> Result<()> {
+        let mut tx = transaction(&self.pool).await?;
+        grant(&mut tx, scope, context, operation.name()).await?;
+        tx.commit().await.map_err(db)
+    }
+
     /// Explicit private authority provisioning, never called by the panel or a target.
     /// Existing repository grants alone enable no operational command.
     pub async fn grant_control_command(

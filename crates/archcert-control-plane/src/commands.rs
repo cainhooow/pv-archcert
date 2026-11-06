@@ -2,8 +2,10 @@
 //! No target execution, signing, review-provider invocation or browser roles.
 
 mod credentials;
+mod release_build;
 
 pub use credentials::{CommandAuthorization, CommandCredentials};
+pub use release_build::ReleaseBuildAuthority;
 
 use super::*;
 use archcert_application::{
@@ -83,6 +85,7 @@ impl ControlPlane {
         credentials: &CommandCredentials,
     ) -> Result<(), JobStoreError> {
         credentials.validate(&self.configuration)?;
+        let mut selections = Vec::new();
 
         for principal in credentials.principals() {
             if !self
@@ -97,20 +100,27 @@ impl ControlPlane {
                 return Err(JobStoreError::Unauthorized);
             }
 
-            let context = self
-                .configuration
-                .grant_for(
-                    &principal.scope.actor,
-                    principal.scope.project,
-                    &principal.scope.repository,
-                )?
-                .command_context()?;
+            let grant = self.configuration.grant_for(
+                &principal.scope.actor,
+                principal.scope.project,
+                &principal.scope.repository,
+            )?;
 
             for operation in &principal.operations {
-                self.repository
-                    .grant_control_operation(&principal.scope, &context, *operation)
-                    .await?;
+                selections.push((
+                    principal.scope.clone(),
+                    grant.command_context_for(*operation)?,
+                    *operation,
+                ));
             }
+        }
+
+        // Invalid scope or an unsupported selection must fail before provisioning
+        // any requested grant. Database availability remains independently required.
+        for (scope, context, operation) in selections {
+            self.repository
+                .grant_control_operation(&scope, &context, operation)
+                .await?;
         }
 
         Ok(())
@@ -127,7 +137,7 @@ impl ControlPlane {
             .configuration
             .grant_for(&scope.actor, scope.project, &scope.repository)?;
 
-        if grant.command_context()? != *authorization.context() {
+        if grant.command_context_for(operation)? != *authorization.context() {
             return Err(JobStoreError::Precondition);
         }
 
