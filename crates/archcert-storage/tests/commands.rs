@@ -3,6 +3,9 @@
 #[path = "commands/readiness.rs"]
 mod readiness;
 
+#[path = "commands/release_build.rs"]
+mod release_build;
+
 use archcert_application::{glassmere::commands::*, jobs::*};
 use archcert_domain::{
     GitObjectId, ProjectId,

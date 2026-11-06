@@ -1,6 +1,7 @@
 //! Private command coordination. No target execution, signing or policy selection.
 
 mod jobs;
+mod release_build;
 
 use super::{PostgresJobRepository, Result, db, decode, json, now, state, valid_lease};
 use archcert_application::{glassmere::commands::*, jobs::JobStoreError};

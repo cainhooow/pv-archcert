@@ -1,7 +1,7 @@
 # Glassmere private panel threat model
 
 Scope: ADR 0051, bounded read-only operational visibility and browser sessions;
-ADRs 0053–0064 additionally bound the authenticated workflow/observation commands and browser broker.
+ADRs 0053–0065 additionally bound the authenticated workflow/observation commands and browser broker.
 Authority records and verifier semantics remain those of M0–M8. The panel observes
 authority; it does not become authority. This document declares no qualification.
 
@@ -27,6 +27,13 @@ ADR 0064 adds the browser question through current role/scope/object/Origin/CSRF
 checks, reauthorization after passive lookup and strict separately authenticated
 schema-2 broker validation. Its historical receipt has no live-confirmation
 attributes; past ALLOWED cannot acquire a current label through receipt refresh.
+
+ADR 0065 adds private verified release-build admission only. A non-deserializable
+capability binds independently verified original certificate bytes and frozen M6
+inputs to one command generation. Current grants/object scope and the original live
+fence are rechecked; M6 admission and both audits/receipt commit atomically. No
+execution claim, evidence role or signing capability is granted. Public build
+request selection, dispatcher and browser integration remain disabled.
 
 | Threat / asset | Attacker capability | Control | Remaining limitation |
 | --- | --- | --- | --- |

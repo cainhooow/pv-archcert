@@ -27,6 +27,13 @@ ADR 0045. Local replay establishes no semantic correctness or complete source
 coverage. M9 Glassmere is IN PROGRESS under ADR 0051. M10, M11 and
 Genesis / Firstwarden are NOT STARTED.
 
+ADR 0065 adds private application/storage mediation of verified release-build
+admission. The existing public verifier checks the original registered certificate
+against frozen M6 recipe/policy/key identities; a sealed command-generation
+capability and current independent grants gate atomic M6 admission/audits/receipt.
+No build claim, runtime, evidence publication or signing is added. Public build
+request selection and transport remain unsupported pending separate qualification.
+
 ADRs 0041–0044 describe the implemented knowledge, semantic review and durable
 lifecycle controls. They were historically mislabeled M6/Ironcrest. The retained
 `ironcrest` code, persistence, profile, policy and manifest names refer to that

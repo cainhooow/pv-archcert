@@ -111,28 +111,39 @@ fn prerequisites(record: &ReleaseRecord, role: ReleaseRole) -> Result<()> {
     Ok(())
 }
 
-#[async_trait]
-impl ReleaseRepository for PostgresJobRepository {
-    async fn open(&self, admission: &ReleaseAdmission) -> Result<ReleaseRecord> {
-        let input = &admission.input;
-        let source = &input.certified_source;
-        let id = input.identity()?;
+/// Validated before the legacy transaction begins; reusable within command publication.
+pub(crate) struct OpenRelease<'a> {
+    admission: &'a ReleaseAdmission,
+    id: BuildInvocationIdentity,
+}
 
-        if admission.input_reference != release_reference(&release_bytes(input)?) {
-            return Err(JobStoreError::Invalid);
-        }
+pub(crate) fn prepare_open(admission: &ReleaseAdmission) -> Result<OpenRelease<'_>> {
+    let input = &admission.input;
+    let id = input.identity()?;
 
-        let mut tx = self.pool.begin().await.map_err(db)?;
+    if admission.input_reference != release_reference(&release_bytes(input)?) {
+        return Err(JobStoreError::Invalid);
+    }
+
+    Ok(OpenRelease { admission, id })
+}
+
+impl OpenRelease<'_> {
+    pub(crate) async fn apply(&self, c: &mut PgConnection) -> Result<ReleaseRecord> {
+        let admission = self.admission;
+        let source = &admission.input.certified_source;
+        let id = &self.id;
         let allowed = sqlx::query(
             "SELECT actor FROM repository_grants WHERE project=$1 AND repository=$2 AND actor=$3 FOR SHARE",
         )
         .bind(source.project.to_string())
         .bind(source.repository.as_str())
         .bind(admission.actor.as_str())
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut *c)
         .await
         .map_err(db)?
         .is_some();
+
         let accepted: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM accepted_sources WHERE submission=$1 AND project=$2 AND repository=$3 AND source=$4)",
         )
@@ -140,7 +151,7 @@ impl ReleaseRepository for PostgresJobRepository {
         .bind(source.project.to_string())
         .bind(source.repository.as_str())
         .bind(json(&source.source)?)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut *c)
         .await
         .map_err(db)?;
 
@@ -154,20 +165,30 @@ impl ReleaseRepository for PostgresJobRepository {
         .bind(source.project.to_string())
         .bind(id.0.as_str())
         .bind(json(admission)?)
-        .execute(&mut *tx)
+        .execute(&mut *c)
         .await
         .map_err(db)?;
         let inserted = insertion.rows_affected() == 1;
-        let record = release_load(&mut tx, source.project, &id).await?;
+        let record = release_load(&mut *c, source.project, id).await?;
 
         if json(&record.admission)? != json(admission)? {
             return Err(JobStoreError::Conflict);
         }
 
         if inserted {
-            release_audit(&mut tx, source.project, &id, "BUILD_ADMITTED").await?;
+            release_audit(&mut *c, source.project, id, "BUILD_ADMITTED").await?;
         }
 
+        Ok(record)
+    }
+}
+
+#[async_trait]
+impl ReleaseRepository for PostgresJobRepository {
+    async fn open(&self, admission: &ReleaseAdmission) -> Result<ReleaseRecord> {
+        let prepared = prepare_open(admission)?;
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let record = prepared.apply(&mut tx).await?;
         tx.commit().await.map_err(db)?;
 
         Ok(record)

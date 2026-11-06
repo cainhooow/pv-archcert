@@ -115,6 +115,59 @@ impl QueryService {
     }
 }
 
+impl commands::ReleaseBuildSourceVerifier for QueryService {
+    fn verify(&self, input: &BuildInputManifest, certificate: &[u8]) -> Result<()> {
+        let _permit = self
+            .verification_budget
+            .try_acquire()
+            .map_err(|_| JobStoreError::Unavailable)?;
+
+        verify_release_source(
+            input,
+            certificate,
+            &self.source_keys,
+            &self.release_keys,
+            &self.recipes,
+        )
+    }
+}
+
+fn verify_release_source(
+    input: &BuildInputManifest,
+    certificate: &[u8],
+    source_keys: &[PublicKey],
+    release_keys: &[PublicKey],
+    recipes: &[RustReleaseRecipe],
+) -> Result<()> {
+    let source_key = source_keys
+        .iter()
+        .find(|key| key.key_id().as_str() == input.source_authority_key_sha256.as_str())
+        .ok_or(JobStoreError::Precondition)?;
+    let release_key = release_keys
+        .iter()
+        .find(|key| key.key_id().as_str() == input.release_authority_key_sha256.as_str())
+        .ok_or(JobStoreError::Precondition)?;
+    let recipe = recipes
+        .iter()
+        .find(|recipe| {
+            recipe
+                .identity()
+                .is_ok_and(|id| id == input.recipe_identity)
+        })
+        .ok_or(JobStoreError::Precondition)?;
+    let certificate = archcert_certificate::CertificateEnvelope::read(certificate)
+        .map_err(|_| JobStoreError::Precondition)?;
+
+    archcert_certificate::release::verify_source(
+        input,
+        recipe,
+        &certificate,
+        source_key,
+        release_key,
+    )
+    .map_err(|_| JobStoreError::Precondition)
+}
+
 #[async_trait]
 impl GlassmereQuery for QueryService {
     async fn search(
@@ -375,3 +428,6 @@ fn permit_facts(bytes: &[u8], keys: &[PublicKey]) -> Vec<ObservationField> {
 
     verification_failure("INVALID / UNKNOWN_KEY", "Existing Release Permit verifier")
 }
+
+#[cfg(test)]
+mod release_build_tests;

@@ -2,9 +2,14 @@
 
 mod presentation;
 mod readiness;
+mod release_build;
 
 pub use presentation::*;
 pub use readiness::{ReadinessRequestEvaluator, ReleaseReadinessObserver};
+pub use release_build::{
+    ControlReleaseCommandExecutor, PreparedReleaseBuild, ReleaseBuildRequestPreparer,
+    ReleaseBuildSourceVerifier,
+};
 
 use crate::{
     glassmere::ReleaseReadiness,
