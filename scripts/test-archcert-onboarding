@@ -7,10 +7,10 @@ const cp = require('node:child_process');
 const assert = require('node:assert/strict');
 const { chromium } = require('../tools/glassmere-browser/node_modules/playwright');
 
-const home = process.env.ARCHCERT_LOCAL_HOME;
+const home = process.env.ARCHCERT_HOME;
 assert(home && path.isAbsolute(home), 'select a dedicated fresh persistent test installation');
 const root = path.resolve(__dirname, '..');
-const output = process.env.ARCHCERT_LOCAL_TEST_OUTPUT;
+const output = process.env.ARCHCERT_TEST_OUTPUT;
 assert(output && path.resolve(output).startsWith(path.join(root,'target')+path.sep));
 fs.mkdirSync(output,{recursive:true,mode:0o700});
 const installed = JSON.parse(fs.readFileSync(path.join(home,'installation.json')));
@@ -25,11 +25,16 @@ function run(argv,options={}) {
   return cp.execFileSync(argv[0],argv.slice(1),{stdio:['pipe','pipe','pipe'],...options});
 }
 function git(repo,...args) {
-  return run(['/usr/bin/git','-c','core.hooksPath=/dev/null',...args],{cwd:repo,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_AUTHOR_NAME:'Local pilot operator',GIT_AUTHOR_EMAIL:account.email,GIT_COMMITTER_NAME:'Local pilot operator',GIT_COMMITTER_EMAIL:account.email,GIT_SSH_COMMAND:sshCommand}});
+  return run(['/usr/bin/git','-c','core.hooksPath=/dev/null',...args],{cwd:repo,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_AUTHOR_NAME:'ArchCert operator',GIT_AUTHOR_EMAIL:account.email,GIT_COMMITTER_NAME:'ArchCert operator',GIT_COMMITTER_EMAIL:account.email,GIT_SSH_COMMAND:sshCommand}});
 }
 
 function assertSshEnvironment() {
   const services = JSON.parse(fs.readFileSync(path.join(home, 'run/services.json')));
+  assert(!Object.hasOwn(services.children, 'local-api'));
+  const apiCommand = run(['/bin/ps', '-p', String(services.children.api), '-o', 'command=']).toString();
+  assert(apiCommand.includes(path.join(home, 'bin/archcertd')));
+  checked.push('existing archcertd API runs with no parallel local API');
+
   const pid = String(services.children['git-ingress']);
   const command = run(['/bin/ps', '-p', pid, '-o', 'command=']).toString();
   assert(command.includes(path.join(home, 'git/sshd_config')));
@@ -44,17 +49,17 @@ function assertSshEnvironment() {
 
 const key = path.join(home,'bootstrap/project-key');
 if (!fs.existsSync(key)) run(['/usr/bin/ssh-keygen','-q','-t','ed25519','-N','','-f',key]);
-const sshCommand = run([path.join(root,'scripts/archcert-local'),'--home',home,'git-config','--identity',key]).toString().trim();
+const sshCommand = run([path.join(root,'scripts/archcert-services'),'--home',home,'git-config','--identity',key]).toString().trim();
 
 (async()=>{
  const browser = await chromium.launch(process.env.GLASSMERE_CHROME_EXECUTABLE ? {executablePath:process.env.GLASSMERE_CHROME_EXECUTABLE,headless:true} : {channel:'chrome',headless:true});
  try {
   const context=await browser.newContext();
   const page=await context.newPage();
-  if (!process.env.ARCHCERT_LOCAL_TEST_RESUME) {
+  if (!process.env.ARCHCERT_TEST_RESUME) {
   await page.goto(base+'/setup');
   await page.getByRole('heading',{name:'Create the initial administrator'}).waitFor();
-  const setup={secret,display_name:'Local pilot operator',email:account.email,password:account.password,confirmation:account.password};
+  const setup={secret,display_name:'ArchCert operator',email:account.email,password:account.password,confirmation:account.password};
   const denied=await context.request.post(base+'/setup',{form:setup,headers:{Origin:'http://127.0.0.1:1'}});
   assert.equal(denied.status(),403); checked.push('setup Origin denial');
   // Two actual browser forms race the same PostgreSQL-enforced transition.
@@ -80,17 +85,17 @@ const sshCommand = run([path.join(root,'scripts/archcert-local'),'--home',home,'
   await page.locator('[name=email]').fill(account.email.toUpperCase());
   await page.locator('[name=password]').fill(account.password);
   await page.getByRole('button',{name:'Sign in',exact:true}).click();
-  await page.getByRole('heading',{name:'Local installation',exact:true}).waitFor();
-  if (process.env.ARCHCERT_LOCAL_TEST_CONFIGURE === '1') {
-    const args=[path.join(root,'scripts/archcert-local'),'--home',home,'configure-authority','--image',process.env.ARCHCERT_TEST_IMAGE,'--development-signing','--docker',process.env.ARCHCERT_TEST_DOCKER,'--endpoint',process.env.ARCHCERT_TEST_ENDPOINT];
+  await page.getByRole('heading',{name:'ArchCert platform',exact:true}).waitFor();
+  if (process.env.ARCHCERT_TEST_CONFIGURE_AUTHORITY === '1') {
+    const args=[path.join(root,'scripts/archcert-services'),'--home',home,'configure-authority','--image',process.env.ARCHCERT_TEST_IMAGE,'--development-signing','--docker',process.env.ARCHCERT_TEST_DOCKER,'--endpoint',process.env.ARCHCERT_TEST_ENDPOINT];
     assert(args.every(value=>typeof value==='string'));
     run(args);
-    run([path.join(root,'scripts/archcert-local'),'--home',home,'restart']);
+    run([path.join(root,'scripts/archcert-services'),'--home',home,'restart']);
     await page.goto(base+'/login');
     await page.locator('[name=email]').fill(account.email);
     await page.locator('[name=password]').fill(account.password);
     await page.getByRole('button',{name:'Sign in',exact:true}).click();
-    await page.getByRole('heading',{name:'Local installation',exact:true}).waitFor();
+    await page.getByRole('heading',{name:'ArchCert platform',exact:true}).waitFor();
     checked.push('host authority configured explicitly after browser account creation; service restart');
   }
   assertSshEnvironment();
@@ -123,7 +128,7 @@ const sshCommand = run([path.join(root,'scripts/archcert-local'),'--home',home,'
   const repo=path.join(home,'bootstrap/real-project');
   const existingRepo=fs.existsSync(path.join(repo,'.git'));
   fs.mkdirSync(repo,{mode:0o700,recursive:true});
-  for(const file of ['ledger.py','checks.py']) fs.copyFileSync(path.join(root,'examples/local-ledger',file),path.join(repo,file));
+  for(const file of ['ledger.py','checks.py']) fs.copyFileSync(path.join(root,'examples/cent-ledger',file),path.join(repo,file));
   git(repo,'init','--template=','--initial-branch=main');
   git(repo,'add','ledger.py','checks.py');
   if (!existingRepo) git(repo,'commit','-m','Implement integer-cent ledger with duplicate posting rejection');

@@ -6,8 +6,8 @@ const cp = require('node:child_process');
 const assert = require('node:assert/strict');
 const { chromium } = require('../tools/glassmere-browser/node_modules/playwright');
 
-const home = process.env.ARCHCERT_LOCAL_HOME;
-const output = process.env.ARCHCERT_LOCAL_TEST_OUTPUT;
+const home = process.env.ARCHCERT_HOME;
+const output = process.env.ARCHCERT_TEST_OUTPUT;
 assert(home && output && path.isAbsolute(home));
 const root = path.resolve(__dirname,'..');
 assert(path.resolve(output).startsWith(path.join(root,'target')+path.sep));
@@ -16,7 +16,7 @@ const installed = JSON.parse(fs.readFileSync(path.join(home,'installation.json')
 const account = JSON.parse(fs.readFileSync(path.join(home,'bootstrap/acceptance-account.json')));
 const base = `http://127.0.0.1:${installed.port}`;
 const checked = [];
-const launcher = path.join(root,'scripts/archcert-local');
+const launcher = path.join(root,'scripts/archcert-services');
 const run = (argv,options={}) => cp.execFileSync(argv[0],argv.slice(1),{stdio:['pipe','pipe','pipe'],timeout:180000,...options});
 const local = (...args) => run([launcher,'--home',home,...args]);
 
@@ -31,7 +31,7 @@ const local = (...args) => run([launcher,'--home',home,...args]);
       await page.locator('[name=email]').fill(account.email);
       await page.locator('[name=password]').fill(account.password);
       await page.getByRole('button',{name:'Sign in',exact:true}).click();
-      await page.getByRole('heading',{name:'Local installation',exact:true}).waitFor();
+      await page.getByRole('heading',{name:'ArchCert platform',exact:true}).waitFor();
     };
     await login();
     await page.screenshot({path:path.join(output,'local-installation.png'),fullPage:true});
@@ -69,30 +69,30 @@ const local = (...args) => run([launcher,'--home',home,...args]);
       assert(!fs.existsSync(retained));
       fs.renameSync(configured,retained);
       try {
-        await page.goto(base+'/local');
+        await page.goto(base+'/platform');
         const infrastructure = JSON.parse(await page.locator('section.panel pre').first().innerText());
         assert.equal(infrastructure[field],'ERROR');
         await page.getByRole('heading',{name:heading,exact:true}).waitFor();
-        assert.equal(await page.locator('form[action="/local/certify"]').count(),0);
+        assert.equal(await page.locator('form[action="/platform/certify"]').count(),0);
         assert.equal((await context.request.get(base+'/setup')).status(),410);
         assert(!fs.existsSync(configured));
       } finally {
         fs.renameSync(retained,configured);
       }
     }
-    await page.goto(base+'/local');
+    await page.goto(base+'/platform');
     const infrastructure = JSON.parse(await page.locator('section.panel pre').first().innerText());
     assert.equal(infrastructure.artifact_store,'READY');
     assert.equal(infrastructure.source_catalog,'READY');
     checked.push('store loss is visible; admission controls close; account setup stays closed; recovery preserves data');
 
-    await page.goto(base+'/local');
+    await page.goto(base+'/platform');
     const csrf = await page.locator('form[action="/logout"] input[name=csrf]').inputValue();
     const forbidden = await context.request.post(base+'/logout',{headers:{Origin:base},form:{csrf:'incorrect'}});
     assert.equal(forbidden.status(),403);
-    const foreignOrigin = await context.request.post(base+'/local/projects',{headers:{Origin:'http://127.0.0.1:1'},form:{csrf}});
+    const foreignOrigin = await context.request.post(base+'/platform/projects',{headers:{Origin:'http://127.0.0.1:1'},form:{csrf}});
     assert.equal(foreignOrigin.status(),403);
-    const elevated = await context.request.post(base+'/local/projects',{headers:{Origin:base},form:{csrf,role:'ADMINISTRATOR'}});
+    const elevated = await context.request.post(base+'/platform/projects',{headers:{Origin:base},form:{csrf,role:'ADMINISTRATOR'}});
     assert.equal(elevated.status(),400);
     checked.push('logout CSRF, configuration Origin and posted privilege escalation denied');
 
@@ -102,7 +102,7 @@ const local = (...args) => run([launcher,'--home',home,...args]);
     const wasChanged=fs.readFileSync(ledger,'utf8').includes('Deliberate duplicate-posting regression');
     fs.writeFileSync(ledger,fs.readFileSync(ledger,'utf8').replace('raise ValueError("duplicate posting reference")','pass  # Deliberate duplicate-posting regression for negative acceptance'));
     const ssh = local('git-config','--identity',path.join(home,'bootstrap/project-key')).toString().trim();
-    const git = (...args)=>run(['/usr/bin/git','-c','core.hooksPath=/dev/null',...args],{cwd:repo,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_SSH_COMMAND:ssh,GIT_AUTHOR_NAME:'Local pilot operator',GIT_AUTHOR_EMAIL:account.email,GIT_COMMITTER_NAME:'Local pilot operator',GIT_COMMITTER_EMAIL:account.email}});
+    const git = (...args)=>run(['/usr/bin/git','-c','core.hooksPath=/dev/null',...args],{cwd:repo,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_SSH_COMMAND:ssh,GIT_AUTHOR_NAME:'ArchCert operator',GIT_AUTHOR_EMAIL:account.email,GIT_COMMITTER_NAME:'ArchCert operator',GIT_COMMITTER_EMAIL:account.email}});
     git('add','ledger.py');
     if (!wasChanged) git('commit','-m','Introduce duplicate-posting regression for rejection acceptance');
     const changedCommit = git('rev-parse','HEAD').toString().trim();
@@ -113,7 +113,7 @@ const local = (...args) => run([launcher,'--home',home,...args]);
     await source.waitFor();
     const form = source.locator('xpath=following-sibling::form[1]');
     const intent = await form.locator('input').evaluateAll(inputs=>Object.fromEntries(inputs.map(i=>[i.name,i.value])));
-    const duplicate = await Promise.all([1,2].map(()=>context.request.post(base+'/local/certify',{headers:{Origin:base},form:intent})));
+    const duplicate = await Promise.all([1,2].map(()=>context.request.post(base+'/platform/certify',{headers:{Origin:base},form:intent})));
     assert(duplicate.every(r=>r.status()===200));
     const bodies = await Promise.all(duplicate.map(r=>r.text()));
     const jobs = bodies.map(body=>body.match(/\/jobs\/([0-9a-f-]+)/)[1]);

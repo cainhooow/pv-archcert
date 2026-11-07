@@ -323,7 +323,6 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
     // not acquire signing authority, directly or through an intermediate crate.
     for root in [
         "archcertd",
-        "archcert-local-api",
         "archcert-glassmere",
         "archcert-control-plane",
         "archcert-worker",
@@ -395,10 +394,15 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
         }
     }
 
-    for name in dependency_closure(&graph, "archcert-local-api") {
+    assert!(
+        !graph.contains_key("archcert-local-api"),
+        "product onboarding belongs in archcertd"
+    );
+
+    for name in dependency_closure(&graph, "archcertd") {
         assert!(
             !is_runtime_dependency(&name) && !is_semantic_provider_dependency(&name),
-            "runtime/provider enters local identity boundary: {name}"
+            "runtime/provider enters the API boundary: {name}"
         );
     }
 

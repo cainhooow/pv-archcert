@@ -46,14 +46,14 @@ pub(super) fn password_hash(password: &str) -> Result<String> {
 impl Service {
     pub(super) async fn instance_state(&self) -> Result<String> {
         let migrated: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=11 AND success)",
+            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=12 AND success)",
         )
         .fetch_one(&self.pool)
         .await?;
         ensure!(migrated, "RECOVERY_REQUIRED");
 
         let row = sqlx::query(
-            "SELECT instance,state,projection_pending FROM local_instance WHERE singleton",
+            "SELECT instance,state,projection_pending FROM platform_instance WHERE singleton",
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -73,13 +73,15 @@ impl Service {
         let secret = entropy()?;
         let mut tx = self.pool.begin().await?;
         if !renew {
-            sqlx::query("INSERT INTO local_instance(instance,state) VALUES ($1,'UNINITIALIZED')")
-                .bind(&self.config.instance)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "INSERT INTO platform_instance(instance,state) VALUES ($1,'UNINITIALIZED')",
+            )
+            .bind(&self.config.instance)
+            .execute(&mut *tx)
+            .await?;
         }
         let row =
-            sqlx::query("SELECT instance,state FROM local_instance WHERE singleton FOR UPDATE")
+            sqlx::query("SELECT instance,state FROM platform_instance WHERE singleton FOR UPDATE")
                 .fetch_one(&mut *tx)
                 .await?;
         ensure!(
@@ -92,7 +94,7 @@ impl Service {
             &self.config.root.join("bootstrap/setup-secret"),
             secret.as_bytes(),
         )?;
-        sqlx::query("UPDATE local_instance SET state='SETUP_PENDING',setup_hash=$1,setup_until=floor(extract(epoch FROM clock_timestamp()))+1800 WHERE singleton")
+        sqlx::query("UPDATE platform_instance SET state='SETUP_PENDING',setup_hash=$1,setup_until=floor(extract(epoch FROM clock_timestamp()))+1800 WHERE singleton")
             .bind(digest_bytes(secret.as_bytes()).as_str())
             .execute(&mut *tx)
             .await?;
@@ -113,7 +115,7 @@ impl Service {
 
     async fn budget(&self) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        let used: i32 = sqlx::query_scalar("UPDATE local_login_budget SET used=CASE WHEN window_start <= clock_timestamp()-interval '1 minute' THEN 1 ELSE used+1 END,window_start=CASE WHEN window_start <= clock_timestamp()-interval '1 minute' THEN clock_timestamp() ELSE window_start END WHERE singleton RETURNING used")
+        let used: i32 = sqlx::query_scalar("UPDATE login_attempt_budget SET used=CASE WHEN window_start <= clock_timestamp()-interval '1 minute' THEN 1 ELSE used+1 END,window_start=CASE WHEN window_start <= clock_timestamp()-interval '1 minute' THEN clock_timestamp() ELSE window_start END WHERE singleton RETURNING used")
             .fetch_one(&mut *tx).await?;
         audit(
             &mut tx,
@@ -127,13 +129,13 @@ impl Service {
         Ok(())
     }
 
-    pub(super) async fn validate(&self, identity: &LocalIdentity) -> Result<String> {
+    pub(super) async fn validate(&self, identity: &AccountIdentity) -> Result<String> {
         ensure!(
             self.instance_state().await? == "INITIALIZED",
             "UNAUTHORIZED"
         );
         let role: Option<String> = sqlx::query_scalar(
-            "SELECT role FROM local_accounts WHERE id=$1 AND generation=$2 AND enabled",
+            "SELECT role FROM accounts WHERE id=$1 AND generation=$2 AND enabled",
         )
         .bind(&identity.principal)
         .bind(&identity.generation)
@@ -164,7 +166,7 @@ impl Service {
         let address = email(&address)?;
         password_policy(&password, &confirmation)?;
         let secret_hash = digest_bytes(secret.as_bytes());
-        let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_instance WHERE singleton AND instance=$1 AND state='SETUP_PENDING' AND setup_hash=$2 AND setup_until>extract(epoch FROM clock_timestamp()))")
+        let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM platform_instance WHERE singleton AND instance=$1 AND state='SETUP_PENDING' AND setup_hash=$2 AND setup_until>extract(epoch FROM clock_timestamp()))")
             .bind(&self.config.instance)
             .bind(secret_hash.as_str())
             .fetch_one(&self.pool)
@@ -175,17 +177,17 @@ impl Service {
             .try_acquire()
             .map_err(|_| anyhow::anyhow!("RATE_LIMITED"))?;
         let hash = tokio::task::spawn_blocking(move || password_hash(&password)).await??;
-        let id = format!("local_{}", uuid::Uuid::new_v4().simple());
+        let id = format!("account_{}", uuid::Uuid::new_v4().simple());
 
         let mut tx = self.pool.begin().await?;
-        let changed = sqlx::query("UPDATE local_instance SET state='INITIALIZED',projection_pending=true,setup_hash=NULL,setup_until=NULL WHERE singleton AND instance=$1 AND state='SETUP_PENDING' AND setup_hash=$2 AND setup_until>extract(epoch FROM clock_timestamp())")
+        let changed = sqlx::query("UPDATE platform_instance SET state='INITIALIZED',projection_pending=true,setup_hash=NULL,setup_until=NULL WHERE singleton AND instance=$1 AND state='SETUP_PENDING' AND setup_hash=$2 AND setup_until>extract(epoch FROM clock_timestamp())")
             .bind(&self.config.instance)
             .bind(secret_hash.as_str())
             .execute(&mut *tx)
             .await?
             .rows_affected();
         ensure!(changed == 1, "CONFLICT");
-        sqlx::query("INSERT INTO local_accounts(id,display_name,email,password_hash,panel_credential,role,generation) VALUES ($1,$2,$3,$4,$5,'ADMINISTRATOR',$6)")
+        sqlx::query("INSERT INTO accounts(id,display_name,email,password_hash,panel_credential,role,generation) VALUES ($1,$2,$3,$4,$5,'ADMINISTRATOR',$6)")
             .bind(&id)
             .bind(display_name.trim())
             .bind(address)
@@ -212,7 +214,7 @@ impl Service {
             "UNAUTHORIZED"
         );
         let address = email(&address).map_err(|_| anyhow::anyhow!("UNAUTHORIZED"))?;
-        let account = sqlx::query("SELECT id,password_hash,panel_credential,generation FROM local_accounts WHERE email=$1 AND enabled")
+        let account = sqlx::query("SELECT id,password_hash,panel_credential,generation FROM accounts WHERE email=$1 AND enabled")
             .bind(address)
             .fetch_optional(&self.pool)
             .await?;
@@ -239,7 +241,7 @@ impl Service {
         ensure!(verified && account.is_some(), "UNAUTHORIZED");
         let account = account.ok_or_else(invalid)?;
         let id: String = account.try_get("id")?;
-        self.validate(&LocalIdentity {
+        self.validate(&AccountIdentity {
             principal: id.clone(),
             generation: account.try_get("generation")?,
         })
@@ -256,17 +258,17 @@ impl Service {
         password_policy(password, password)?;
         let hash = password_hash(password)?;
         let mut tx = self.pool.begin().await?;
-        sqlx::query("SELECT singleton FROM local_instance FOR UPDATE")
+        sqlx::query("SELECT singleton FROM platform_instance FOR UPDATE")
             .fetch_one(&mut *tx)
             .await?;
-        let id: String = sqlx::query_scalar("UPDATE local_accounts SET password_hash=$1,generation=$2,panel_credential=$3 WHERE email=$4 AND enabled RETURNING id")
+        let id: String = sqlx::query_scalar("UPDATE accounts SET password_hash=$1,generation=$2,panel_credential=$3 WHERE email=$4 AND enabled RETURNING id")
             .bind(hash)
             .bind(entropy()?)
             .bind(entropy()?)
             .bind(email(address)?)
             .fetch_one(&mut *tx)
             .await?;
-        sqlx::query("UPDATE local_instance SET projection_pending=true WHERE singleton")
+        sqlx::query("UPDATE platform_instance SET projection_pending=true WHERE singleton")
             .execute(&mut *tx)
             .await?;
         audit(&mut tx, "HOST_OPERATOR", "PASSWORD_RECOVERED", &id).await?;
@@ -287,10 +289,10 @@ impl Service {
             "unsupported role"
         );
         let mut tx = self.pool.begin().await?;
-        sqlx::query("SELECT singleton FROM local_instance FOR UPDATE")
+        sqlx::query("SELECT singleton FROM platform_instance FOR UPDATE")
             .fetch_one(&mut *tx)
             .await?;
-        let id: String = sqlx::query_scalar("UPDATE local_accounts SET role=CASE WHEN $1='DISABLED' THEN role ELSE $1 END,enabled=($1<>'DISABLED'),generation=$2,panel_credential=$3 WHERE email=$4 RETURNING id")
+        let id: String = sqlx::query_scalar("UPDATE accounts SET role=CASE WHEN $1='DISABLED' THEN role ELSE $1 END,enabled=($1<>'DISABLED'),generation=$2,panel_credential=$3 WHERE email=$4 RETURNING id")
             .bind(role)
             .bind(entropy()?)
             .bind(entropy()?)
@@ -298,12 +300,12 @@ impl Service {
             .fetch_one(&mut *tx)
             .await?;
         let remaining: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM local_accounts WHERE enabled AND role='ADMINISTRATOR'",
+            "SELECT count(*) FROM accounts WHERE enabled AND role='ADMINISTRATOR'",
         )
         .fetch_one(&mut *tx)
         .await?;
         ensure!(remaining > 0, "cannot disable the last administrator");
-        sqlx::query("UPDATE local_instance SET projection_pending=true WHERE singleton")
+        sqlx::query("UPDATE platform_instance SET projection_pending=true WHERE singleton")
             .execute(&mut *tx)
             .await?;
         audit(&mut tx, "HOST_OPERATOR", "GRANT_CHANGED", &id).await?;

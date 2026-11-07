@@ -1,11 +1,8 @@
 //! Owned project admission and exact Northgate source resolution.
 
 use super::*;
-use archcert_application::jobs::JobStoreError;
-use archcert_control_plane::{AuthorityGrant, ControlPlane, ControlPlaneConfiguration};
-use archcert_domain::{
-    ProjectId, ingress::SourceSubmissionId, jobs::IdempotencyKey, source::RepositoryId,
-};
+use archcert_control_plane::AuthorityGrant;
+use archcert_domain::{ProjectId, ingress::SourceSubmissionId, source::RepositoryId};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::Value;
 use sqlx::Row;
@@ -40,9 +37,35 @@ pub(super) struct ProjectRegistration {
 }
 
 impl Service {
+    pub(crate) async fn grant_for_account(
+        &self,
+        identity: &AccountIdentity,
+        project: ProjectId,
+        repository: &RepositoryId,
+        write: bool,
+    ) -> Result<AuthorityGrant> {
+        let role = self.validate(identity).await?;
+        ensure!(
+            !write || ["ADMINISTRATOR", "OPERATOR"].contains(&role.as_str()),
+            "UNAUTHORIZED"
+        );
+
+        let row = sqlx::query(
+            "SELECT * FROM project_registry WHERE id=$1 AND owner=$2 AND repository=$3",
+        )
+        .bind(project.to_string())
+        .bind(&identity.principal)
+        .bind(repository.as_str())
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("UNAUTHORIZED"))?;
+
+        self.grant(&row)
+    }
+
     pub(super) async fn create_project(
         &self,
-        identity: LocalIdentity,
+        identity: AccountIdentity,
         registration: ProjectRegistration,
     ) -> Result<Value> {
         let ProjectRegistration {
@@ -80,18 +103,18 @@ impl Service {
         let actor = uuid::Uuid::new_v4().to_string();
 
         let mut tx = self.pool.begin().await?;
-        // Serializes local provisioning and rechecks current privileges under the lock.
-        sqlx::query("SELECT singleton FROM local_instance FOR UPDATE")
+        // Serializes project provisioning and rechecks current privileges under the lock.
+        sqlx::query("SELECT singleton FROM platform_instance FOR UPDATE")
             .fetch_one(&mut *tx)
             .await?;
-        let authorized: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_accounts WHERE id=$1 AND generation=$2 AND enabled AND role='ADMINISTRATOR')")
+        let authorized: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts WHERE id=$1 AND generation=$2 AND enabled AND role='ADMINISTRATOR')")
             .bind(&identity.principal)
             .bind(&identity.generation)
             .fetch_one(&mut *tx)
             .await?;
         ensure!(authorized, "UNAUTHORIZED");
         let existing =
-            sqlx::query("SELECT * FROM local_projects WHERE owner=$1 AND request_key=$2")
+            sqlx::query("SELECT * FROM project_registry WHERE owner=$1 AND request_key=$2")
                 .bind(&identity.principal)
                 .bind(&request_key)
                 .fetch_optional(&mut *tx)
@@ -106,19 +129,19 @@ impl Service {
             );
             row.try_get::<String, _>("id")?
         } else {
-            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM local_projects")
+            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM project_registry")
                 .fetch_one(&mut *tx)
                 .await?;
             ensure!(count < 16, "CONFIGURATION_REQUIRED");
             let duplicate: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM local_projects WHERE repository=$1 OR device=$2)",
+                "SELECT EXISTS(SELECT 1 FROM project_registry WHERE repository=$1 OR device=$2)",
             )
             .bind(&repository)
             .bind(&device)
             .fetch_one(&mut *tx)
             .await?;
             ensure!(!duplicate, "CONFLICT");
-            sqlx::query("INSERT INTO local_projects(id,owner,name,description,repository,public_key,device,actor,request_key,legacy_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
+            sqlx::query("INSERT INTO project_registry(id,owner,name,description,repository,public_key,device,actor,request_key,legacy_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
                 .bind(&id)
                 .bind(&identity.principal)
                 .bind(name.trim())
@@ -148,61 +171,12 @@ impl Service {
             .await?;
             id
         };
-        sqlx::query("UPDATE local_instance SET projection_pending=true WHERE singleton")
+        sqlx::query("UPDATE platform_instance SET projection_pending=true WHERE singleton")
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
         self.publish().await?;
         Ok(json!({"project":project,"login_required":true}))
-    }
-
-    pub(super) async fn certify(
-        &self,
-        identity: LocalIdentity,
-        project: String,
-        submission: String,
-        request_key: String,
-    ) -> Result<Value> {
-        let role = self.validate(&identity).await?;
-        ensure!(
-            ["ADMINISTRATOR", "OPERATOR"].contains(&role.as_str()),
-            "UNAUTHORIZED"
-        );
-        let row = sqlx::query("SELECT * FROM local_projects WHERE id=$1 AND owner=$2")
-            .bind(&project)
-            .bind(&identity.principal)
-            .fetch_optional(&self.pool)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("UNAUTHORIZED"))?;
-        let grant = self.grant(&row)?;
-        let control = ControlPlane::connect(
-            &std::env::var("ARCHCERT_DATABASE_URL")?,
-            ControlPlaneConfiguration {
-                source_store: self.config.root.join("sources"),
-                artifact_root: self.config.root.join("artifacts"),
-                grants: vec![grant.clone()],
-            },
-        )
-        .await?;
-        let job = control
-            .submit(
-                grant.actor,
-                project.parse()?,
-                grant.repository,
-                SourceSubmissionId::parse(&submission)?,
-                IdempotencyKey::parse(request_key)?,
-            )
-            .await
-            .map_err(|e| match e {
-                JobStoreError::Conflict => anyhow::anyhow!("CONFLICT"),
-                JobStoreError::Unauthorized => anyhow::anyhow!("UNAUTHORIZED"),
-                _ => anyhow::anyhow!("certification admission unavailable"),
-            })?;
-        Ok(json!({
-            "job": job.id.to_string(),
-            "project": project,
-            "state": job.state,
-        }))
     }
 
     pub(super) fn grant(&self, row: &sqlx::postgres::PgRow) -> Result<AuthorityGrant> {
@@ -229,11 +203,12 @@ impl Service {
         })
     }
 
-    pub(super) async fn projects(&self, identity: &LocalIdentity) -> Result<Value> {
-        let rows = sqlx::query("SELECT * FROM local_projects WHERE owner=$1 ORDER BY id LIMIT 16")
-            .bind(&identity.principal)
-            .fetch_all(&self.pool)
-            .await?;
+    pub(super) async fn projects(&self, identity: &AccountIdentity) -> Result<Value> {
+        let rows =
+            sqlx::query("SELECT * FROM project_registry WHERE owner=$1 ORDER BY id LIMIT 16")
+                .bind(&identity.principal)
+                .fetch_all(&self.pool)
+                .await?;
         let reader =
             archcert_gateway::AcceptedSubmissionReader::open(&self.config.root.join("sources"))?;
         let mut projects = Vec::new();

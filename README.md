@@ -1,173 +1,148 @@
 # ArchCert
 
-## Introdução
+ArchCert certifies an exact Git source identity against authority-selected checks
+and a deterministic policy. It retains execution evidence, findings and verdicts,
+and issues a development certificate only when issuance requirements are met.
+A separate M6 lifecycle binds reproducible artifacts to Release Permits.
 
-O ArchCert reúne evidências sobre uma versão exata de um projeto Git, executa
-verificações em um ambiente isolado, avalia uma política determinística e pode
-assinar um certificado de desenvolvimento. Um fluxo separado pode autorizar um
-artefato reproduzível com um Release Permit.
+Running on localhost runs **the existing ArchCert application**. Glassmere is its
+web panel; `archcertd` is its API. There is no local edition or second certification
+backend. The deployment described here is a **DEVELOPMENT CERTIFICATION AUTHORITY**.
+It processes real source but is not a production authority or independent certifier.
+Passing bounded checks does not prove universal correctness or absence of flaws.
 
-**Classificação desta instalação: LOCAL SELF-HOSTED PILOT — DEVELOPMENT
-CERTIFICATION AUTHORITY.** O piloto aceita código real. Não é uma autoridade de
-produção nem uma certificação independente. Um resultado favorável vale para o
-escopo e as verificações registrados; não prova ausência de vulnerabilidades,
-correção universal, segurança de toda dependência ou prontidão para produção.
+A certification binds project, repository, full commit OID, Git tree, immutable
+snapshot digest, policy, plan and evidence. A moving branch, successful HTTP
+request or database row is not a certificate. `archcert.toml` remains untrusted and
+cannot weaken mandatory authority requirements.
 
-A identidade certificada contém projeto, repositório, commit completo, árvore Git e
-SHA-256 do snapshot imutável. Uma branch pode mudar; essa identidade permanece
-exata. Evidências, política, plano e assinatura precisam concordar. Um pedido HTTP
-aceito, uma linha no banco ou uma tela saudável não equivalem a um certificado.
-
-O caminho local implementado usa o Glassmere existente, com HTML/CSS/JavaScript
-embutidos. A migração para React permanece separada. M9 continua **INCOMPLETE**.
-
-## Arquitetura
+## Architecture
 
 ```mermaid
 flowchart LR
-    Browser[Navegador local] --> Panel[Glassmere / sessão HttpOnly]
-    Panel -->|SELECT / verificação pública| Read[Observação]
-    Panel -->|API privada e operações limitadas| Local[Identidade e provisionamento local]
-    Local --> PG[(PostgreSQL)]
-    Read --> PG
-    Read --> Objects[(Evidências imutáveis)]
-    Git[Git do operador] -->|SSH autenticado| Northgate[Northgate / quarentena]
-    Northgate --> Sources[(Snapshots aceitos)]
-    Local -->|fonte exata / admissão| Sources
-    Controller[Controlador confiável] --> PG
-    Controller --> Objects
+    Browser --> Glassmere[Glassmere / server-side sessions]
+    Glassmere -->|private account commands and original admission| API[archcertd]
+    Glassmere -->|SELECT-only observation| PG[(PostgreSQL)]
+    Glassmere -->|public verification| Artifacts[(Immutable evidence)]
+    API --> PG
+    API --> Sources[(Accepted immutable source)]
+    Git[Operator Git] -->|authenticated SSH| Northgate[Northgate / quarantine]
+    Northgate --> Sources
+    Controller[Trusted controller] --> PG
     Controller --> Sources
-    Controller -->|stdin privado / ambiente limpo| Worker[Worker]
-    Worker --> Runner[Runner / daemon OCI rootless separado]
-    Controller --> Signer[Assinador Ed25519 de desenvolvimento]
-    Signer --> Public[Chave pública / verificação offline]
+    Controller --> Artifacts
+    Controller --> Worker[Credential-free worker]
+    Worker --> Runner[Independent rootless OCI daemon]
+    Controller --> Signer[Development signer]
+    Signer --> Trust[Public key / offline verifier]
 ```
 
-O serviço local é uma fronteira de identidade e provisionamento limitada. O painel
-continua sem chave privada, socket Docker, credencial Git de aquisição ou banco
-com permissão de escrita. O controlador seleciona trabalho durável, lança o worker
-e mantém os controles de leases, fencing e limpeza do Stoneward. O worker recebe
-fonte/plano e configuração explícita do runtime; não recebe banco, armazenamento de
-evidências ou assinatura.
+PostgreSQL, `archcertd`, `archcert-panel`, OpenSSH/Northgate and the supervisor run
+throughout use. The supervisor invokes the original controller's `run-once` loop;
+the controller claims durable work and starts the original worker on demand.
+Execution also requires an independently provisioned rootless daemon, pinned image
+and explicit authority configuration. Signing requires explicit development key
+provisioning. A healthy panel alone does not establish execution readiness.
 
-Precisam funcionar simultaneamente: PostgreSQL, serviço local de identidade,
-painel, ingresso SSH e supervisor. Para executar e emitir certificados, também são
-necessários um daemon rootless independente, imagem aprovada disponível e chave de
-desenvolvimento provisionada explicitamente. O controlador roda sob demanda em um
-loop supervisionado; o worker é seu processo filho, não outro consumidor do banco.
+The panel receives SELECT-only observation, a bounded private API credential and
+public trust keys. It receives no password hashes, signing keys or Docker socket.
+The worker receives no database, acquisition credentials or signing authority.
+Leases, fencing, recovery gates and uncertain cleanup retain Stoneward semantics.
+See the [service inventory](docs/operations/DEPLOYMENT.md),
+[current architecture](docs/architecture/CURRENT_ARCHITECTURE_SNAPSHOT.md),
+[ADR 0071](docs/adr/0071-product-account-integration.md),
+[security model](docs/threat-model/PLATFORM_SETUP.md) and
+[preserved engineering reference](docs/operations/ENGINEERING_REFERENCE.md).
 
-`archcertd` preserva a API durável e o command broker das instalações provisionadas
-externamente. O piloto local usa a mesma admissão de aplicação pelo serviço local;
-não precisa iniciar um segundo daemon HTTP. Os brokers de comandos Glassmere,
-revisão semântica e builds M6 permanecem operações separadas, não opções fictícias
-no assistente local. Veja o [inventário operacional](docs/operations/LOCAL_PILOT.md),
-a [arquitetura atual](docs/architecture/CURRENT_ARCHITECTURE_SNAPSHOT.md), o
-[ADR 0070](docs/adr/0070-local-pilot-identity-and-provisioning.md) e a
-[referência de engenharia preservada](docs/operations/ENGINEERING_REFERENCE.md).
+## Requirements
 
-## Requisitos
+- Rust **1.99.1**, Cargo, rustfmt and Clippy, selected by `rust-toolchain.toml`.
+- Git, Python 3.9+, OpenSSH (`ssh`, `ssh-keygen`, `/usr/sbin/sshd`). The current
+  ingress uses `/usr/bin/git` and Ed25519 keys.
+- Docker CLI and an infrastructure daemon for PostgreSQL. The helper pins its image
+  by digest. Compose is not required.
+- For target execution: a separate Linux **rootless** Docker daemon with Unix
+  endpoint, cgroup v2/systemd, seccomp and enforced runner limits. Provision it
+  using the [Docker rootless guide](https://docs.docker.com/engine/security/rootless/)
+  and the [qualified runner profile](docs/qualification/NATIVE_LINUX_RUNNER.md).
+  `init` does not install or replace that daemon.
+- Private local POSIX filesystem outside target repositories, with locks/fsync.
+  Network filesystems are unqualified. The mechanism requires at least 1 GiB free
+  and 1024 available inodes on checked stores; this is an admission floor, not a
+  measured whole-product capacity recommendation. Allow additional space for Rust,
+  images, source and evidence retention. No global RAM/disk minimum is claimed.
+  Argon2id uses 64 MiB per hash, at most two concurrently in the API.
+- Free loopback ports: panel `8090`, API `8091`, PostgreSQL `55441`, SSH `22223`.
 
-- Rust **1.99.1**, selecionado por `rust-toolchain.toml`, com Cargo, rustfmt e Clippy.
-- Git, Python 3.9 ou posterior, OpenSSH (`ssh`, `ssh-keygen`, `/usr/sbin/sshd`).
-  O ingresso usa `/usr/bin/git` e chaves Ed25519.
-- Docker CLI e daemon para o PostgreSQL de infraestrutura. Compose não é necessário.
-  A imagem PostgreSQL é fixada por digest no launcher.
-- Para execução: outro daemon Docker Linux **rootless**, endpoint Unix explícito,
-  cgroup v2/systemd, seccomp e suporte aos limites exigidos pelo worker.
-- Diretório local privado, fora de repositórios e workspaces de código não confiável,
-  com semântica POSIX de lock/fsync. NFS e volumes de rede não estão qualificados.
-- Portas de loopback livres: painel `8090`, serviço local `8091`, PostgreSQL `55441`
-  e SSH `22223`. `init --port` também reserva a porta seguinte para a API local.
+macOS/Colima can exercise development workflows using a private forward to an
+independent rootless daemon in Linux. It does **not** establish native Linux
+qualification. Other OS/runtime combinations require their own qualification.
+See [macOS operations](docs/operations/DEPLOYMENT.md#macos-and-colima) and the
+[exact M6 Linux scope](docs/qualification/NATIVE_LINUX_M6_RELEASE.md).
 
-O mecanismo exige pelo menos **1 GiB livre e 1024 inodes disponíveis** nos volumes
-verificados de evidências/workspace. Isso é um limite de admissão, não uma medida
-de capacidade total. Não há mínimo global de RAM/disco medido para todo o produto;
-reserve espaço adicional para toolchain, imagens, código e retenção. Cada hash de
-senha usa 64 MiB, com até dois hashes concorrentes.
-
-O caminho macOS/Colima é de **desenvolvimento**, mesmo quando executa e assina.
-A qualificação nativa Linux tem uma combinação exata de distribuição, runtime e
-mecanismo, descrita em [NATIVE_LINUX_RUNNER.md](docs/qualification/NATIVE_LINUX_RUNNER.md).
-Docker Desktop, Podman, outras distribuições e execuções remotas não ganham essa
-qualificação por passarem no diagnóstico. Veja também o
-[perfil M6](docs/qualification/NATIVE_LINUX_M6_RELEASE.md).
-
-## Instalação do zero
-
-Use a versão entregue deste código. A instalação não reaproveita o banco da prévia
-Glassmere nem grava dados permanentes em `target/`.
+## Install from a fresh clone
 
 ```bash
 git clone https://github.com/cainhooow/pv-archcert.git
 cd pv-archcert
-git checkout feat/local-self-hosted-pilot
-export ARCHCERT_LOCAL_HOME="$HOME/.local/share/archcert-pilot"
-./scripts/archcert-local doctor
-./scripts/archcert-local init
-./scripts/archcert-local up
-./scripts/archcert-local status
+git checkout fix/existing-product-deployment
+export ARCHCERT_HOME="$HOME/.local/share/archcert"
+./scripts/archcert-services doctor
+./scripts/archcert-services init
+./scripts/archcert-services up
+./scripts/archcert-services status
 ```
 
-`doctor` verifica ferramentas e o Docker de infraestrutura. `init` compila os
-executáveis com o lockfile, cria armazenamento privado, sobe um PostgreSQL dedicado,
-aplica migrations explicitamente, separa credenciais de migração/controle/leitura e
-prepara o cadastro inicial. Não cria senha padrão nem identidade de assinatura.
-`up` supervisiona os serviços; não executa migrations ou reinicializa contas.
+Select the infrastructure Docker context before `init` if necessary, for example
+`export DOCKER_CONTEXT=colima`. The helper records it independently of the execution
+endpoint. `init` builds the actual workspace executables with the lockfile, creates
+private persistent stores, starts dedicated PostgreSQL, explicitly migrates it,
+separates migration/control/observation credentials and authorizes initial setup.
+It creates no default password or signing identity. `up` starts services without
+migrating or initializing accounts. Data does not live in repository `target/`.
 
-Se `8090` já estiver em uso, preserve o serviço existente e escolha uma porta livre:
+If ports are occupied, preserve the existing services and initialize a different
+empty installation with explicit ports, for example:
 
 ```bash
-./scripts/archcert-local init --port 8094 --database-port 55442 --ssh-port 22224
+./scripts/archcert-services init --port 8094 --database-port 55442 --ssh-port 22224
 ```
 
-Use a URL informada pelo comando e por `status`. O endereço permanece em
-`127.0.0.1`; HTTP local não é apresentado como HTTPS seguro para produção.
+The API uses the next port after the panel. Use the URL reported by `status`.
+The helper binds loopback only; HTTP is a development transport, not production TLS.
 
-## Primeira configuração
+## First administrator and initial configuration
 
-1. Abra a URL da instalação. Uma instalação nova redireciona para `/setup`.
-2. Em um **terminal local interativo**, obtenha o segredo:
+1. Open `http://127.0.0.1:8090` (or the selected port). Fresh deployments show setup.
+2. Obtain the setup secret in a **local interactive terminal**:
 
    ```bash
-   ./scripts/archcert-local setup-secret
+   ./scripts/archcert-services setup-secret
    ```
 
-3. Preencha segredo, nome, email, senha e confirmação no navegador. A senha deve ter
-   entre 12 e 128 caracteres; limites e confirmação também são verificados no servidor.
-4. Faça login com email e senha. O email é normalizado; a conta inicial tem o papel
-   `ADMINISTRATOR`, inicialmente sem projetos.
-5. Consulte a seção de infraestrutura em **Local installation** e configure a
-   autoridade no host, conforme abaixo. Depois reinicie e volte à página.
+3. Enter the secret, display name, email, password and confirmation. The server
+   validates email uniqueness, input limits and a 12–128-character password.
+4. Sign in with email/password. The initial account is `ADMINISTRATOR`, with no
+   existing project access. Open **ArchCert platform** to inspect infrastructure.
+5. Select development authority on the host as below; restart and inspect readiness.
 
-O segredo dura 30 minutos. Não o coloque em URL, README, chat, logs ou Git.
-`setup-secret` recusa stdout capturado. Para renovar um segredo ainda não consumido:
+The secret expires after 30 minutes and is never put in a URL. The command refuses
+captured output. Do not share it in chat, Git or logs. `renew-setup` renews only an
+unconsumed setup secret. PostgreSQL durably distinguishes `UNINITIALIZED`,
+`SETUP_PENDING`, `INITIALIZED` and `RECOVERY_REQUIRED`; concurrent registration
+creates exactly one administrator. Setup closes after initialization. An outage,
+missing cookie or restart cannot reopen it. Interrupted publication requires
+explicit recovery, not another initial account.
 
-```bash
-./scripts/archcert-local renew-setup
-```
+The bounded onboarding plan uses the existing `python` family and development
+policy, with mandatory `checks.py typecheck`, `checks.py test`, `checks.py build`.
+The host selects the recipe and pinned image. This contract is not a universal
+Python correctness proof; interpret project-authored checks and omissions honestly.
+For the included cent ledger, the tests exercise real business behavior.
 
-O PostgreSQL distingue `UNINITIALIZED`, `SETUP_PENDING`, `INITIALIZED` e
-`RECOVERY_REQUIRED`. A transição cria exatamente um administrador, mesmo com
-navegadores concorrentes. Depois disso, o cadastro inicial permanece fechado.
-Falha de banco, cookie ausente ou reinício não reabrem o formulário. Se uma
-publicação de configuração for interrompida, preserve o estado e use `publish`
-com os serviços parados; isso reconstrói projeções, não cria outra conta.
-
-### Selecionando a autoridade de desenvolvimento
-
-O perfil local inicial é `python-controlled-local-v1`: usa a família `python`, a
-política `archcert-development-v1` e três comandos obrigatórios do contrato
-`checks.py typecheck`, `checks.py test`, `checks.py build`. O instalador seleciona a
-receita e a imagem; `archcert.toml` do projeto não pode substituí-las. Isso não é
-um verificador universal de Python: a força das verificações do projeto e as
-limitações do contrato precisam ser interpretadas junto às evidências.
-
-No Linux, selecione o endpoint do daemon rootless previamente provisionado. No
-macOS/Colima usado nesta entrega, prepare primeiro o encaminhamento privado do
-[guia operacional](docs/operations/LOCAL_PILOT.md#macos--colima-observado) e use
-`unix://$HOME/.local/share/archcert-runtime/rootless.sock` como endpoint. Esse caminho
-requer o serviço rootless já provisionado na VM separada; uma VM Colima comum não
-o substitui. Disponibilize a imagem exata no daemon selecionado:
+First provision the rootless daemon. On Linux its usual endpoint is
+`unix:///run/user/$(id -u)/docker.sock`; use the actual selected endpoint. On the
+observed macOS host, use the private forward described in the operations guide:
 
 ```bash
 case "$(uname -s)" in
@@ -177,373 +152,254 @@ esac
 export ARCHCERT_DOCKER="$(command -v docker)"
 "$ARCHCERT_DOCKER" --host "$ARCHCERT_RUNTIME_ENDPOINT" pull \
   python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
-./scripts/archcert-local configure-authority \
+./scripts/archcert-services configure-authority \
   --image python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f \
-  --development-signing \
-  --docker "$ARCHCERT_DOCKER" \
+  --development-signing --docker "$ARCHCERT_DOCKER" \
   --endpoint "$ARCHCERT_RUNTIME_ENDPOINT"
-./scripts/archcert-local restart
-./scripts/archcert-local status
+./scripts/archcert-services restart
+./scripts/archcert-services status
 ```
 
-`--development-signing` é uma escolha explícita: cria uma chave Ed25519 exclusiva
-desta instalação se ainda não existir e seleciona sua chave pública para verificação.
-Não rotula essa chave como autoridade de produção. Trocar a imagem de uma instalação
-já configurada exige outro perfil/instalação revisado; não se reinterpretam jobs antigos.
+`--development-signing` explicitly creates one installation-specific Ed25519 key
+if absent and selects its public trust key. It grants no production trust. Image
+changes on an already selected installation are rejected; historical jobs cannot
+be silently reinterpreted. Without runtime/signing prerequisites, readiness reports
+the blocker and eligible requests may remain queued. No privileged fallback exists.
 
-No macOS, o endpoint acima não existe. Use um daemon rootless dentro de uma VM
-previamente provisionada e um encaminhamento Unix privado. O
-[guia operacional](docs/operations/LOCAL_PILOT.md) contém o caminho Colima observado.
-O launcher não transforma o daemon comum de infraestrutura em runner e não faz
-fallback privilegiado. Sem runtime ou assinatura disponíveis, os pedidos podem
-permanecer em fila; a página deve mostrar o bloqueio real.
+## Accounts and sessions
 
-## Gerenciamento de usuários
-
-| Papel | Acesso |
+| Role | Bounded access |
 | --- | --- |
-| `VIEWER` | Leitura dos projetos explicitamente atribuídos |
-| `OPERATOR` | Leitura e pedidos limitados nos projetos autorizados |
-| `REVIEWER` | Leitura; não cria dispensa de política ou autoridade de assinatura |
-| `ADMINISTRATOR` | Administração local limitada, criação de novos projetos próprios e auditoria do painel |
+| `VIEWER` | Read explicitly assigned projects |
+| `OPERATOR` | Read and bounded certification requests in assigned projects |
+| `REVIEWER` | Read; no policy waiver or signing authority |
+| `ADMINISTRATOR` | Delegated creation of new owned projects and panel audit |
 
-Administrador de plataforma não é autoridade de política, runtime, assinatura ou
-acesso irrestrito a projetos. Este recorte cria apenas a conta inicial; cadastro de
-outras contas, transferência de propriedade e edição de usuários pelo navegador
-não estão implementados. Não há opção de interface que prometa essas operações.
+Platform administration is independent of policy, runtime, signing and cross-project
+authority. Additional account registration, ownership transfer and browser user
+editing are currently unavailable. Existing externally provisioned bearer accounts
+remain supported under [Glassmere provisioning](docs/glassmere/PROVISIONING.md).
 
-Login usa Argon2id; a sessão é opaca, validada no servidor, HttpOnly,
-SameSite=Strict e expira após 30 minutos. Logout invalida a sessão. Reinício do
-painel exige novo login e preserva a conta. A instalação local usa HTTP, portanto
-não usa cookie Secure; o modo HTTPS provisionado externamente preserva Secure.
-Tokens não vão para localStorage. Tentativas de autenticação têm orçamento global
-no banco e limite de hashes concorrentes.
+Password mode extends the same Glassmere authentication/authorization/session engine.
+Argon2id hashes stay in PostgreSQL. Sessions are opaque, validated server-side,
+HttpOnly, SameSite=Strict and expire after 30 minutes; logout invalidates them.
+Current account generation and grants are rechecked. Panel restart ends sessions,
+not accounts. HTTPS mode uses Secure cookies; this loopback HTTP deployment does
+not. No token is stored in localStorage. A persistent shared login budget and
+bounded hashing limit brute force; waiting for its minute window may be necessary.
 
-Recuperação e alterações de papel são comandos do operador do host, auditados:
-
-```bash
-./scripts/archcert-local recover-password operator@archcert.local
-./scripts/archcert-local set-role operator@archcert.local ADMINISTRATOR
-```
-
-A recuperação solicita a nova senha sem eco no terminal, troca geração/credencial
-e invalida sessões anteriores. Não reabre setup. O último administrador não pode
-ser desabilitado. Para outra conta já provisionada, `set-role EMAIL DISABLED`
-revoga o acesso local. Os papéis não criam automaticamente grants de outros serviços.
-
-## Criando um projeto
-
-Em **Local installation**, consulte primeiro infraestrutura e seleção de autoridade.
-Crie uma chave de autenticação exclusiva para o repositório, no host:
+Audited host recovery and role changes invalidate previous sessions:
 
 ```bash
-ssh-keygen -q -t ed25519 -N '' -f "$ARCHCERT_LOCAL_HOME/bootstrap/project-key"
-cat "$ARCHCERT_LOCAL_HOME/bootstrap/project-key.pub"
+./scripts/archcert-services recover-password operator@example.com
+./scripts/archcert-services set-role operator@example.com VIEWER
 ```
 
-Essa chave privada local sem passphrase depende da proteção do diretório privado;
-a chave pública é a única parte colocada no formulário. Ela não entra no snapshot
-nem no worker. Para outro repositório, crie outra chave, com outro nome.
+Recovery prompts privately with confirmation; no password goes in argv. Role changes
+may use VIEWER, OPERATOR, REVIEWER, ADMINISTRATOR or DISABLED. The final enabled
+administrator cannot be disabled/demoted. These commands do not create accounts.
 
-Preencha nome, descrição, identificador como `pilot/cent-ledger` e a chave pública.
-O backend gera projeto/ator, valida o identificador, grava admissão/grant/auditoria
-em transação e publica o registro Northgate. O perfil autorizado é o único
-selecionado pelo host. Depois da criação, faça login novamente para adquirir o novo
-grant explícito. Alterar uma UUID na URL não concede acesso.
+## Create a project and register Git
 
-## Configurando Git
-
-O ingresso local suporta **push SSH autenticado**, um commit exato por sessão,
-Git SHA-1 e criação de `refs/heads/...`. Não oferece clone remoto, fetch GitHub,
-force-update de fonte certificada ou integração GitHub decorativa. O Northgate
-preserva separadamente os outros formatos e resoluções já suportados por sua
-configuração original. LFS/submódulos sem bytes adquiridos pela autoridade ficam
-incompletos e não podem ser executados como fonte completa.
-
-Prepare o cliente com a chave correta e o host key pin gerado na instalação:
+Create an Ed25519 key outside target source. Use a separate key per registration:
 
 ```bash
-export GIT_SSH_COMMAND="$(./scripts/archcert-local git-config \
-  --identity "$ARCHCERT_LOCAL_HOME/bootstrap/project-key")"
+ssh-keygen -t ed25519 -f "$ARCHCERT_HOME/bootstrap/project-key"
+cat "$ARCHCERT_HOME/bootstrap/project-key.pub"
 ```
 
-Na página do projeto, **copie os comandos Git exibidos**: o remote já contém
-usuário e UUID reais registrados; a porta está no comando SSH selecionado. Execute-os no seu repositório. Eles usam
-`git remote add archcert` e `git push archcert HEAD:refs/heads/candidate`; não
-substitua a UUID por uma escolhida manualmente.
+In **ArchCert platform**, enter project name `Cent ledger`, description,
+repository identifier `pilot/cent-ledger` and that public key. The backend generates
+the project UUID and transactionally creates the owned project, repository grant
+and audit. The profile is selected on the host, not supplied by the browser.
+Publication changes assignments, so sign in again when redirected.
 
-Para experimentar um projeto pequeno com funcionalidade e testes reais:
+Copy the **exact registered remote** from the project screen. It contains the
+actual project UUID and SSH user; do not invent a UUID or reuse another deployment's
+remote. Configure the pinned SSH connection and push your real project:
 
 ```bash
-mkdir -p "$HOME/archcert-ledger"
-cp examples/local-ledger/ledger.py examples/local-ledger/checks.py "$HOME/archcert-ledger/"
-cd "$HOME/archcert-ledger"
-git init --template= --initial-branch=main
-git add ledger.py checks.py
-git -c user.name='Local operator' -c user.email='operator@archcert.local' \
-  commit -m 'Implement integer-cent ledger'
+export GIT_SSH_COMMAND="$(./scripts/archcert-services git-config \
+  --identity "$ARCHCERT_HOME/bootstrap/project-key")"
+git remote add archcert "$ARCHCERT_REGISTERED_REMOTE"
+git push archcert HEAD:refs/heads/candidate
 ```
 
-Depois execute nesse diretório os dois comandos copiados da página. O exemplo
-calcula saldo em centavos e rejeita lançamentos duplicados. Seu `typecheck` é uma
-checagem limitada de anotações e tipo de retorno desse contrato, não análise de
-tipos de todo programa Python. O build de fonte produz bytecode temporário no
-runner; isso **não** é um Release Permit M6.
+Set `ARCHCERT_REGISTERED_REMOTE` to the complete value shown on your project page
+before those commands. This is an installation-specific value, not a fixed endpoint.
+For a first supported example, copy `examples/cent-ledger/ledger.py` and `checks.py`
+into a new Git repository outside ArchCert, commit both, then run the commands.
+A passphrase-protected key uses ordinary SSH-agent/terminal authentication.
 
-O onboarding local admite até **16 projetos**. O armazenamento Northgate mantém
-o limite existente de **32 sessões retidas**,
-inclusive tentativas rejeitadas. Não há coleta automática nem expansão silenciosa
-desse limite no piloto. Preserve fontes que sustentam evidências; esgotamento exige
-planejamento de retenção/uma nova instalação, não exclusão arbitrária de snapshots.
+Only authenticated push is exposed here. Northgate validates protocol, bounded
+packs, repository identity and exact objects through quarantine before acceptance.
+Onboarding uses SHA-1 Git repositories; no arbitrary web `git clone`, GitHub import,
+remote credentials, submodule fetching or LFS acquisition is offered. Refer to
+[Northgate](docs/source-ingress/README.md) for its full contract.
 
-## Executando uma certificação
+## Request and inspect certification
 
-1. Atualize **Local installation** depois do push.
-2. Confira repositório, submission, commit completo, árvore e SHA-256 do snapshot.
-3. Confira política, imagem e plano selecionados pela autoridade na mesma página.
-4. Clique em **Request certification of this exact source**.
-5. A tela mostra **REQUEST ACCEPTED** e o ID durável do job. Abra o monitoramento.
-6. O supervisor chama o controlador existente. Ele reivindica o job no PostgreSQL,
-   lança o worker sem credenciais, executa sob rootless OCI e confirma limpeza.
-7. Só depois vêm avaliação determinística, persistência e eventual assinatura.
+Refresh **ArchCert platform** after pushing. Accepted-source entries show full
+commit, tree and immutable snapshot identities, plus the authority policy/plan.
+Review the exact entry and request certification. The response says **REQUEST
+ACCEPTED** and links a durable job; it does not claim a pass. Repeated requests for
+the same source use retained idempotency. A modified commit is a distinct source
+and requires distinct certification.
 
-Atualizar a página de resultado não submete novamente. O pedido retém uma chave
-de idempotência; duplicatas iguais retornam o mesmo job, entradas diferentes
-conflitam. Outro commit gera outra identidade e precisa de outra certificação.
+Follow the job link. The controller records actual queue/attempt/lease states,
+worker evidence and errors. Source is read-only, runtime networking is denied and
+limits are authority-selected. Inspect evidence rows, original bytes and findings;
+completed execution alone does not authorize issuance. An infrastructure failure,
+uncertain cleanup or unresolved gate remains visible and may require operator
+reconciliation under [Ravenport operations](docs/architecture/RAVENPORT_OPERATIONS.md).
+Never delete unknown containers or retry until a desirable verdict appears.
 
-Estados duráveis incluem `QUEUED`, `RUNNING`, `EVALUATING`, `SIGNING`, `COMPLETED`,
-`NOT_ELIGIBLE` e `INCONCLUSIVE`. Observe tentativas, falhas e limpeza na página do
-job; não interprete `COMPLETED` de uma etapa como emissão do certificado inteiro.
-O loop não aumenta orçamentos nem transforma falha de alvo em retry até passar.
-Recursos desconhecidos e limpeza incerta continuam bloqueando execução.
-
-## Resultados, evidências e certificados
-
-| Resultado de regra | Interpretação |
+| Property result | Meaning |
 | --- | --- |
-| `PROVEN` | A propriedade limitada foi estabelecida pelas evidências aceitas |
-| `FAILED` | Evidência aceita contradiz a propriedade exigida |
-| `NOT_PROVEN` | Evidência insuficiente para estabelecer a propriedade |
-| `NOT_APPLICABLE` | A regra não se aplica dentro do escopo declarado |
-| `INCONCLUSIVE` | Infraestrutura ou observação não permitem conclusão segura |
+| `PROVEN` | Required evidence establishes this bounded property |
+| `FAILED` | Evidence contradicts the requirement |
+| `NOT_PROVEN` | Evidence does not establish the property |
+| `NOT_APPLICABLE` | Explicitly outside the applicable requirement |
+| `INCONCLUSIVE` | Failure/uncertainty prevents a reliable conclusion |
 
-Elegibilidade é uma etapa ainda sem assinatura. Um certificado legítimo exige
-payload canônico, identidades concordantes, chave pública selecionada e assinatura
-verificada. O Glassmere separa metadados, disponibilidade dos bytes e verificação.
-Inspecione identidade do certificado, fonte/política, digest das evidências,
-identidade da chave e instante de emissão registrado no payload.
+Overall eligibility and individual property results differ. `NOT_ELIGIBLE` is not
+an issued certificate. When legitimately issued, open the CERTIFICATE evidence,
+inspect project/repository, commit/tree/snapshot, policy, verdict, evidence digest,
+key identity and signature verification, then download original bytes. A missing
+certificate or invalid signature must never be treated as certification.
 
-Nas páginas do job/projeto, abra as evidências e o certificado registrado. Downloads
-são anexos de bytes originais com digest e autorização de projeto. Preserve as
-omissões e os resultados negativos; uma resposta semântica `CONTINUE` não produz
-propriedades determinísticas. Evidência pode conter informação confidencial do
-código; não publique o armazenamento privado.
+## Offline verification
 
-## Verificação offline
-
-Baixe o envelope original do certificado pelo painel. Selecione a chave pública
-provisionada no host, sem confiar apenas na chave embutida no envelope:
+Select the installation's public key independently; download the certificate to
+`certificate.json` in your current directory. The verifier requires neither database,
+runtime nor private signing key:
 
 ```bash
-"$ARCHCERT_LOCAL_HOME/bin/archcert" verify certificado.json \
-  --public-key "$ARCHCERT_LOCAL_HOME/public/source.hex"
+"$ARCHCERT_HOME/bin/archcert" verify certificate.json \
+  --public-key "$ARCHCERT_HOME/public/source.hex"
 ```
 
-O nome `certificado.json` representa o arquivo que você acabou de baixar; o painel
-usa nomes baseados no digest. O comando trabalha sem PostgreSQL, controlador,
-worker ou daemon OCI. Verifica assinatura e identidade sob a chave selecionada;
-não estabelece revogação, expiração ou confiança de produção nessa chave.
+Require `CERTIFIED` and a valid signature under the intended trusted key. A public
+key's mere presence does not establish trust. Development signatures remain
+engineering artifacts even when verification succeeds.
 
-## Builds e Release Permits
+## Builds and Release Permits
 
-Certificação de fonte não autoriza automaticamente um binário. O M6 existente
-usa fonte e certificado exatos, receita Rust da autoridade, builds A/B independentes,
-comparação dos bytes, digest do arquivo e Release Permit separado. Seu escopo
-qualificado é um único arquivo regular, com receita e ambiente documentados.
+Source certification does not authorize an artifact. M6 requires exact source
+certificate, an authority-owned recipe, independent A/B builds, reproducibility
+evidence, artifact digest, Release Permit and offline deployment gate. Current
+project onboarding marks M6 **UNSUPPORTED**; it exposes no arbitrary shell recipe.
+Use the separate [M6 operations](docs/release/README.md) only within its exact
+single-file native Linux scope. Original opt-in command-broker workflows remain
+available under their existing provisioning, not implied by account setup.
 
-O assistente local Python mostra M6 como **UNSUPPORTED**. Não oferece shell recipes
-nem simula `BUILD COMPLETED` ou `RELEASE PERMITTED`. Para o fluxo M6 já implementado,
-use o [guia de release](docs/release/README.md) e a qualificação correspondente. O
-comando offline existente é `archcert release-gate`; execute seu `--help` para os
-argumentos exatos e selecione explicitamente a chave de release, artefato, projeto
-e repositório. Uma build admitida não é autorização de deploy.
-
-## Operação diária
+## Daily operation
 
 ```bash
-./scripts/archcert-local up
-./scripts/archcert-local status
-./scripts/archcert-local logs
-./scripts/archcert-local down
-./scripts/archcert-local restart
+./scripts/archcert-services status
+./scripts/archcert-services logs
+./scripts/archcert-services down
+./scripts/archcert-services up
+./scripts/archcert-services restart
 ```
 
-`status` consulta `/healthz`, `/readyz` e a observação recente do supervisor.
-`READY`, `CONFIGURATION_REQUIRED`, `UNAVAILABLE`, `UNQUALIFIED` e `ERROR` têm
-significados distintos. Saúde do processo não significa que é possível certificar.
-No macOS, runtime utilizável continua `UNQUALIFIED` para qualificação nativa.
-`logs` mostra os caminhos privados; inspecione os arquivos localmente.
+`status` distinguishes process inventory and timestamped dependency observations;
+`logs` shows private installation log locations. Read the platform page for
+READY, CONFIGURATION_REQUIRED, UNAVAILABLE, UNQUALIFIED or ERROR. `down` stops only
+owned native processes and its dedicated database, preserving data; shared rootless
+daemons/forwards remain separately operated. `up` is the start command.
 
-`down` encerra somente os processos e o PostgreSQL identificados desta instalação.
-Não apaga dados, gates ou recursos OCI desconhecidos. Um processo interrompido
-pode exigir a reconciliação conservadora já documentada em
-[Ravenport operations](docs/architecture/RAVENPORT_OPERATIONS.md).
-
-## Backup e restauração
-
-Pare a instalação para uma cópia consistente. O backup exige jobs quiescentes;
-execução/avaliação/assinatura em andamento precisam de investigação/reconciliação
-antes. O comando sobe apenas o banco para `pg_dump` e o para ao terminar:
+## Backup, restore and upgrade
 
 ```bash
-./scripts/archcert-local down
-./scripts/archcert-local backup
-```
-
-A pasta impressa contém dump PostgreSQL, snapshots, artefatos imutáveis, cadastro
-Git, configurações privadas, auditoria, gates retidos e custódia das chaves. Ela
-contém **segredos reais** e precisa de proteção/cópia externa sob sua responsabilidade.
-Backup apenas do PostgreSQL não preserva uma autoridade utilizável. Hashes do
-manifesto detectam alteração de conteúdo; não autenticam uma origem de backup.
-
-Restaure em **outro diretório vazio**, selecionando a pasta privada impressa:
-
-```bash
-export ARCHCERT_BACKUP="$(ls -dt "$ARCHCERT_LOCAL_HOME"/backups/backup-* | head -1)"
-./scripts/archcert-local --home "$HOME/.local/share/archcert-restored" restore \
+./scripts/archcert-services backup
+export ARCHCERT_BACKUP="/absolute/path/reported/by/backup"
+./scripts/archcert-services --home "$HOME/.local/share/archcert-restored" restore \
   --backup "$ARCHCERT_BACKUP" --port 8096 --database-port 55443 --ssh-port 22225
-./scripts/archcert-local --home "$HOME/.local/share/archcert-restored" up
-./scripts/archcert-local --home "$HOME/.local/share/archcert-restored" status
+./scripts/archcert-services --home "$HOME/.local/share/archcert-restored" up
 ```
 
-A restauração verifica os arquivos, preserva a identidade durável e as evidências,
-cria credenciais de infraestrutura próprias e reconstrói projeções locais. Não
-restaura automaticamente autorização de execução: revise gates/runtime e configure
-explicitamente o ambiente antes de processar jobs. Não remova tombstones ou limpe
-claims para liberar trabalho. Verifique certificados restaurados offline.
+`backup` quiesces services, dumps PostgreSQL and retains source, artifacts, Git,
+private configuration, public trust, signing custody, audit and runtime gates.
+The printed directory is private and includes credentials/keys: protect it off-host;
+never commit it. Database backup alone is insufficient. Restoration requires a new
+empty home/database/ports, verifies checksums, restores exact records and applies
+forward migrations. Runtime execution remains disabled until explicit host review
+and reconfiguration. Old gates are not permission to run on a new host. Verify
+retained certificates offline before resuming. Checksums detect corruption, not
+malicious replacement by a trusted backup owner.
 
-## Atualização do ArchCert
-
-Faça backup completo e retenha a versão instalada. Em seguida, selecione no Git
-uma versão revisada e execute, com os serviços parados:
+Before upgrading, inspect release/schema compatibility and make a complete backup:
 
 ```bash
-./scripts/archcert-local update
-./scripts/archcert-local up
-./scripts/archcert-local status
+./scripts/archcert-services backup
+git fetch origin
+git checkout fix/existing-product-deployment
+git pull --ff-only
+./scripts/archcert-services update
+./scripts/archcert-services up
+./scripts/archcert-services status
 ```
 
-`update` compila com o lockfile, aplica migrations com a credencial separada e
-instala executáveis/configurações. Uma falha mantém um marcador que bloqueia `up`
-até concluir a atualização. O manifesto privado registra commit, estado de trabalho
-e digests dos binários. Retorne apenas a uma versão comprovadamente compatível;
-não faça downgrade destrutivo sobre banco já migrado. Restaurar backup completo em
-outra instalação é diferente de executar migrations antigas sobre o banco atual.
+`update` requires stopped services, builds selected committed source, explicitly
+migrates and publishes projections. It records executable digests/source. An
+interrupted update blocks startup. Never downgrade executables over a migrated
+metadata database. Roll back by restoring the complete compatible backup into a
+separate installation. Legacy deployment paths require `--home` explicitly;
+update migrates their configuration in place without reopening account creation.
 
-## Solução de problemas
+## Troubleshooting
 
-| Sintoma | Diagnóstico e ação |
+| Symptom | Diagnosis and action |
 | --- | --- |
-| PostgreSQL indisponível | `status`; verifique o Docker de infraestrutura e o container identificado no manifesto privado; retome com `up`. Não rode `init` sobre a instalação existente. |
-| Porta ocupada | Escolha portas livres em uma instalação nova; preserve a prévia antiga. `init` recusa conflitos. |
-| Setup falhou/expirou | Confira estado durável e disponibilidade do banco. `renew-setup` só funciona antes da inicialização. Após inicializar, use recuperação de conta. |
-| `RECOVERY_REQUIRED` | Preserve banco/configuração/auditoria. Corrija dependências e, para publicação interrompida, execute `publish` com serviços parados. Nunca apague o banco para reabrir cadastro. |
-| Senha esquecida | `recover-password EMAIL` no terminal local autorizado; login novamente após a recuperação auditada. |
-| Login inválido ou limitado | Confira email/senha; aguarde a janela do orçamento global. Reiniciar não apaga o limite durável. |
-| Git sem autenticação | Use a chave privada correspondente à pública registrada e o resultado de `git-config --identity`. Confira host pin, porta e logs SSH privados. |
-| Repositório/commit inválido | Use o remote registrado e `HEAD:refs/heads/candidate`; confira SHA-1 e o commit completo. Tags, deleção, atualização de ref antiga e objetos inválidos são recusados. |
-| Fonte aceita ausente | Confira saída Northgate e a página após refresh. LFS/submódulos podem deixar a fonte incompleta. O ID de uma fonte não concede autorização. |
-| Runner/Docker rootless ausente | Consulte a observação do worker doctor; confirme o endpoint independente. Não use o socket comum nem modo privilegiado como fallback. |
-| Assinatura não configurada | Execute a seleção explícita `configure-authority --development-signing` no host e reinicie. Não copie chaves para o painel ou runner. |
-| Job permanece pendente | Confira runtime, imagem, assinatura e log do controlador. A fila sobrevive a reinícios; painel saudável não prova processamento. |
-| Evidência ausente/corrompida | Metadados não substituem bytes; restaure a cópia completa e investigue. Não fabrique objetos nem altere digests. |
-| Readiness negada | Leia os bloqueios exatos e a identidade observada. Um certificado de fonte ou recibo antigo não satisfaz o gate M6. |
-| Migration/update falhou | Preserve o marcador e logs privados; corrija o requisito e repita a mesma atualização. Não edite migrations históricas/checksums nem faça downgrade do banco. |
-| Perfil não suportado | O onboarding aceita apenas o perfil Python descrito. Rust controlado, revisão semântica e M6 usam os fluxos operacionais existentes. |
+| PostgreSQL unavailable | Check selected Docker context/container and private logs; restore connectivity. Setup must remain closed. |
+| Failed migration or corrupt configuration | Preserve files and pending markers. Investigate version/checksum and logs; use explicit update/recovery, never delete the database. |
+| Onboarding denied/expired | Use the correct loopback Origin and local secret; renew only before initialization. INITIALIZED requires normal login. |
+| Forgotten password | Use audited `recover-password` locally. It cannot reopen bootstrap. |
+| Port conflict | Choose distinct free ports on a new empty installation; preserve existing services. |
+| Git authentication failure | Use the registered key, exact remote, generated SSH options and pinned host key; inspect ingress logs. |
+| Invalid commit/missing accepted source | Push a complete supported Git object graph through Northgate; a local branch alone is not accepted source. |
+| Rootless daemon unavailable | Inspect the independently provisioned endpoint and worker doctor; infrastructure Docker is not the runner. |
+| Missing signing identity | Explicitly provision development signing; the panel cannot supply a private key. |
+| Job pending | Inspect actual controller/runtime/signing observations and durable gates, not just panel liveness. |
+| Missing evidence | Inspect artifact-store readiness and durable publication state. Never fabricate or replace evidence. |
+| Readiness denied | Resolve exact identity, profile, fence and dependency blockers; a receipt is not deployment authorization. |
+| Unsupported profile/build | Use the documented qualified profile; no arbitrary target recipe or automatic fallback exists. |
 
-## Segurança e limitações
+## Security, development and roadmap
 
-Dados locais são privados, mas não criptografados em repouso pelo adaptador de
-armazenamento. Mesma UID/root, administrador do banco e administrador do runtime
-continuam no contexto confiável de desenvolvimento. Separação de dependências e
-processos não é proteção contra comprometimento total desse host. O endpoint não
-é público; TLS/identidade/custódia de produção exigem outro provisionamento revisado.
+All target bytes, including tests/configuration/instructions, remain untrusted.
+No target selects policy, image, runtime, limits, signing or disclosure authority.
+The current helper uses same-UID/root trusted custody, private unencrypted files
+and loopback HTTP. It is not a hostile multi-tenant or production IAM deployment.
+External import, browser account administration, arbitrary languages/builds,
+production keys and React modernization are outside this delivery.
 
-O piloto não inicia M10, M11, Pre-Genesis ou Genesis. Não acrescenta suporte universal
-a linguagens, coleta externa de dependências, garantia contra escape, IAM empresarial,
-revogação/expiração de certificados ou recuperação de power loss qualificada. Consulte
-os [modelos de ameaça](docs/threat-model/) e as [decisões arquiteturais](docs/adr/).
+For executable command syntax use `./scripts/archcert-services --help`, its
+subcommand `--help`, and `"$ARCHCERT_HOME/bin/archcert" --help`. Additional helper
+commands are `publish`, `renew-setup`, `setup-secret`, `git-config`,
+`configure-authority`, `recover-password`, `set-role`, `backup`, `restore`, `update`.
+The internal `__supervise` entrypoint is not an operator workflow.
+
+Engineering gates are `cargo fmt --check`, workspace check/clippy/test with
+`--locked`, rustdoc with warnings denied, `cargo deny check` and
+`./scripts/check-architecture`; see [AGENTS.md](AGENTS.md). Real PostgreSQL,
+Northgate SSH, controller crash/recovery and independently provisioned rootless OCI
+regressions are opt-in and cannot be replaced by mocks. Browser acceptance uses
+`scripts/test-archcert-onboarding` and `scripts/test-archcert-certification` with a
+separate fresh installation and real Chrome, as documented in the operations guide.
+Passing engineering gates does not establish production or independent assurance.
+
+[ADR 0045](docs/adr/0045-roadmap-reconciliation.md) remains authoritative:
+M5.2 Stoneward and M6 Ironcrest are COMPLETE only in their exact qualification
+scopes; M7 Asterwyn and M8 Greywatch are COMPLETE in their bounded recorded scopes.
+**M9 Glassmere remains INCOMPLETE / IN PROGRESS. M10 Crownvale, M11 Thornwick,
+Pre-Genesis and Genesis / Firstwarden are NOT STARTED.**
 
 > This is engineering self-validation under a shared implementation/authority context. It is not independent certification and does not replace Genesis / Firstwarden.
 
-## Referência de comandos
-
-| Comando | Função |
-| --- | --- |
-| `doctor` | Ferramentas e Docker de infraestrutura |
-| `init` | Nova instalação, migrations explícitas e setup privado |
-| `up`, `down`, `restart` | Ciclo de vida da instalação selecionada |
-| `status`, `logs` | Saúde observada e caminhos dos logs privados |
-| `setup-secret`, `renew-setup` | Entrega local/renovação de segredo não consumido |
-| `configure-authority` | Perfil/imagem e seleção explícita de custódia/runtime |
-| `git-config --identity PATH` | Comando SSH com host pin e chave selecionada |
-| `recover-password EMAIL` | Recuperação auditada no host |
-| `set-role EMAIL ROLE` | Alteração auditada e invalidação de sessões |
-| `publish` | Reconstrução de projeções a partir do estado durável |
-| `backup`, `restore --backup PATH` | Cópia completa quiescente e restauração isolada |
-| `update` | Compilação, migration explícita e atualização controlada |
-
-Use `./scripts/archcert-local --help` e os `--help` dos subcomandos. O argumento
-global `--home` ou `ARCHCERT_LOCAL_HOME` escolhe uma instalação privada; não é uma
-opção de projeto nem de código executado no runner.
-
-## Desenvolvimento e testes
-
-Os sete gates padrão são:
-
-```bash
-cargo fmt --check
-cargo check --workspace --all-targets --all-features --locked
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --locked
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
-cargo deny check
-./scripts/check-architecture
-```
-
-Testes ignorados não contam como execução. PostgreSQL real é necessário para
-concorrência/recuperação: `scripts/test-ravenport` e os testes opt-in de
-`archcert-local-api` criam schemas isolados com a URL de teste provisionada fora do
-repositório. `scripts/test-northgate` usa SSH real. `scripts/test-live-oci` exige
-Docker/endpoint/imagem explícitos. Os grupos históricos, revisão/journal, protocolos,
-artefatos e M6 mantêm seus escopos e pré-requisitos próprios.
-
-A automação de navegador usa somente as dependências de teste travadas em
-`tools/glassmere-browser` e Chrome selecionado explicitamente. Não há Node no
-produto em execução. O teste `scripts/test-local-pilot-browser` requer uma instalação
-nova dedicada, `ARCHCERT_LOCAL_HOME`, `ARCHCERT_LOCAL_TEST_OUTPUT` sob `target/` e,
-quando necessário, `GLASSMERE_CHROME_EXECUTABLE`. Não publique seu diretório privado.
-
-Resultados executados, contagens, falhas e limites desta entrega ficam no
-[registro operacional de aceitação](docs/operations/LOCAL_PILOT.md). Evidências
-transitórias ficam em `target/local-pilot/`; certificados históricos continuam
-vinculados aos seus commits originais. Esta entrega não declara autocertificação
-do novo código do ArchCert apenas por compilar ou certificar o projeto de exemplo.
-
-## Roadmap
-
-| Marco | Estado e escopo |
-| --- | --- |
-| M5.2 Stoneward | COMPLETE no perfil exato documentado |
-| M6 Ironcrest | COMPLETE no escopo nativo de arquivo único; assinatura de desenvolvimento |
-| M7 Asterwyn | COMPLETE no escopo determinístico limitado dos ADRs 0045/0049 |
-| M8 Greywatch | COMPLETE no escopo suplementar limitado dos ADRs 0045/0050 |
-| M9 Glassmere | INCOMPLETE / IN PROGRESS; o piloto local não constitui fechamento |
-| M10 Crownvale | NOT STARTED |
-| M11 Thornwick | NOT STARTED |
-| Pre-Genesis | NOT STARTED |
-| Genesis / Firstwarden | NOT STARTED |
-
-[ADR 0045](docs/adr/0045-roadmap-reconciliation.md) reconcilia nomes e escopos.
-Identificadores históricos `ironcrest` permanecem compatíveis e não provam, por si,
-conclusão de um marco canônico.
+Advanced contracts remain in [Glassmere](docs/glassmere/README.md),
+[provisioning](docs/glassmere/PROVISIONING.md),
+[self-validation](docs/self-validation/README.md), [ADRs](docs/adr/),
+[threat models](docs/threat-model/) and the
+[engineering reference](docs/operations/ENGINEERING_REFERENCE.md).

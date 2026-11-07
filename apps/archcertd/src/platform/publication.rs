@@ -33,14 +33,14 @@ impl Service {
         sqlx::query("SELECT pg_advisory_xact_lock(714322881)")
             .execute(&mut *tx)
             .await?;
-        sqlx::query("SELECT singleton FROM local_instance FOR UPDATE")
+        sqlx::query("SELECT singleton FROM platform_instance FOR UPDATE")
             .fetch_one(&mut *tx)
             .await?;
 
-        let accounts = sqlx::query("SELECT * FROM local_accounts WHERE enabled ORDER BY id")
+        let accounts = sqlx::query("SELECT * FROM accounts WHERE enabled ORDER BY id")
             .fetch_all(&mut *tx)
             .await?;
-        let projects = sqlx::query("SELECT * FROM local_projects ORDER BY id")
+        let projects = sqlx::query("SELECT * FROM project_registry ORDER BY id")
             .fetch_all(&mut *tx)
             .await?;
         let mut principals = Vec::new();
@@ -71,7 +71,7 @@ impl Service {
         let panel = json!({
             "schema": 1,
             "origin": self.config.origin,
-            "development_http": true,
+            "development_http": self.config.development_http,
             "demonstration_data": false,
             "principals": principals,
             "audit_path": self.config.root.join("audit/panel.jsonl"),
@@ -95,7 +95,7 @@ impl Service {
             // Each repository retains its own key and actor.
             ensure!(
                 !devices.contains_key(&device),
-                "one SSH key per local repository is required"
+                "one SSH key per registered repository is required"
             );
             let owner: String = project.try_get("owner")?;
             let enabled = accounts.iter().any(|account| {
@@ -182,7 +182,7 @@ impl Service {
             &self.config.instance,
         )
         .await?;
-        sqlx::query("UPDATE local_instance SET projection_pending=false WHERE singleton")
+        sqlx::query("UPDATE platform_instance SET projection_pending=false WHERE singleton")
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;

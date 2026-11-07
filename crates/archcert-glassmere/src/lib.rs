@@ -2,7 +2,7 @@
 
 pub mod auth;
 mod inspection;
-mod local;
+mod platform;
 mod render;
 mod search_view;
 mod workflow;
@@ -24,7 +24,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 struct Panel {
     query: Arc<dyn GlassmereQuery>,
-    local: Option<Arc<dyn archcert_application::local::LocalPlatform>>,
+    platform: Option<Arc<dyn archcert_application::platform::Platform>>,
     commands: Option<Arc<dyn GlassmereCommandBroker>>,
     authentication: Authentication,
     concurrency: tokio::sync::Semaphore,
@@ -45,24 +45,24 @@ pub fn router_with_commands(
     configured_router(query, configuration, Some(commands), None)
 }
 
-/// Add the separately authenticated local onboarding port without persistence/runtime access.
-pub fn router_with_local(
+/// Add the existing API account/project interface without persistence/runtime access.
+pub fn router_with_platform(
     query: Arc<dyn GlassmereQuery>,
     configuration: PathBuf,
-    local: Arc<dyn archcert_application::local::LocalPlatform>,
+    platform: Arc<dyn archcert_application::platform::Platform>,
 ) -> Result<Router, AuthError> {
-    configured_router(query, configuration, None, Some(local))
+    configured_router(query, configuration, None, Some(platform))
 }
 
 fn configured_router(
     query: Arc<dyn GlassmereQuery>,
     configuration: PathBuf,
     commands: Option<Arc<dyn GlassmereCommandBroker>>,
-    local: Option<Arc<dyn archcert_application::local::LocalPlatform>>,
+    platform: Option<Arc<dyn archcert_application::platform::Platform>>,
 ) -> Result<Router, AuthError> {
     let panel = Arc::new(Panel {
         query,
-        local,
+        platform,
         commands,
         authentication: Authentication::open(configuration)?,
         concurrency: tokio::sync::Semaphore::new(8),
@@ -86,8 +86,8 @@ fn configured_router(
         .route(
             "/",
             get(|State(panel): State<Arc<Panel>>| async move {
-                Redirect::to(if panel.local.is_some() {
-                    "/local"
+                Redirect::to(if panel.platform.is_some() {
+                    "/platform"
                 } else {
                     "/projects"
                 })
@@ -140,8 +140,8 @@ fn configured_router(
     } else {
         router
     };
-    let router = if panel.local.is_some() {
-        local::routes(router)
+    let router = if panel.platform.is_some() {
+        platform::routes(router)
     } else {
         router
     };
@@ -255,11 +255,11 @@ async fn boundary(State(panel): State<Arc<Panel>>, request: Request, next: Next)
     {
         let _ = panel.authentication.audit("UNKNOWN", "ORIGIN_DENIED");
         error(StatusCode::FORBIDDEN, "FORBIDDEN")
-    } else if let Err(error) = validate_local_session(&panel, request.headers()).await {
+    } else if let Err(error) = validate_account_session(&panel, request.headers()).await {
         auth_error(error)
     } else if let Ok(_permit) = panel.concurrency.try_acquire() {
         match tokio::time::timeout(
-            Duration::from_secs(if panel.local.is_some() { 45 } else { 15 }),
+            Duration::from_secs(if panel.platform.is_some() { 45 } else { 15 }),
             next.run(request),
         )
         .await
@@ -321,12 +321,12 @@ async fn boundary(State(panel): State<Arc<Panel>>, request: Request, next: Next)
 fn html(panel: &Panel, title: &str, body: &str, identity: Option<&Identity>) -> Response {
     match panel.authentication.configuration() {
         Ok(config) => {
-            let local_body;
-            let body = if panel.local.is_some() {
-                local_body = format!(
-                    "<p><a href=/local>Local installation and project onboarding</a> · LOCAL SELF-HOSTED PILOT — DEVELOPMENT CERTIFICATION AUTHORITY</p>{body}"
+            let platform_body;
+            let body = if panel.platform.is_some() {
+                platform_body = format!(
+                    "<p><a href=/platform>ArchCert setup and projects</a> · DEVELOPMENT CERTIFICATION AUTHORITY</p>{body}"
                 );
-                local_body.as_str()
+                platform_body.as_str()
             } else {
                 body
             };
@@ -342,8 +342,8 @@ fn html(panel: &Panel, title: &str, body: &str, identity: Option<&Identity>) -> 
 }
 
 async fn login_page(State(panel): State<Arc<Panel>>) -> Response {
-    if panel.local.is_some() {
-        return local::login_page(&panel).await;
+    if panel.platform.is_some() {
+        return platform::login_page(&panel).await;
     }
     html(&panel, "Operator access", &render::login(), None)
 }
@@ -355,7 +355,7 @@ struct Login {
 }
 
 async fn login(State(panel): State<Arc<Panel>>, Form(request): Form<Login>) -> Response {
-    if panel.local.is_some() {
+    if panel.platform.is_some() {
         return auth_error(AuthError::Forbidden);
     }
 
@@ -365,8 +365,8 @@ async fn login(State(panel): State<Arc<Panel>>, Form(request): Form<Login>) -> R
 fn login_session(panel: &Panel, credential: &str) -> Response {
     match panel.authentication.login(credential) {
         Ok((_, cookie)) => {
-            let mut response = Redirect::to(if panel.local.is_some() {
-                "/local"
+            let mut response = Redirect::to(if panel.platform.is_some() {
+                "/platform"
             } else {
                 "/projects"
             })
@@ -712,17 +712,17 @@ pub async fn serve(listener: tokio::net::TcpListener, router: HttpRouter) -> std
     axum::serve(listener, router).await
 }
 
-fn local_identity(
+fn account_identity(
     panel: &Panel,
     identity: &Identity,
-) -> Result<archcert_application::local::LocalIdentity, AuthError> {
+) -> Result<archcert_application::platform::AccountIdentity, AuthError> {
     let configuration = panel.authentication.configuration()?;
     let principal = configuration
         .principals
         .iter()
         .find(|p| p.id == identity.id)
         .ok_or(AuthError::Unauthenticated)?;
-    Ok(archcert_application::local::LocalIdentity {
+    Ok(archcert_application::platform::AccountIdentity {
         principal: identity.id.clone(),
         generation: principal
             .grant_generation
@@ -731,8 +731,8 @@ fn local_identity(
     })
 }
 
-async fn validate_local_session(panel: &Panel, headers: &HeaderMap) -> Result<(), AuthError> {
-    let Some(local) = &panel.local else {
+async fn validate_account_session(panel: &Panel, headers: &HeaderMap) -> Result<(), AuthError> {
+    let Some(platform) = &panel.platform else {
         return Ok(());
     };
     if token(headers).is_empty() {
@@ -743,10 +743,10 @@ async fn validate_local_session(panel: &Panel, headers: &HeaderMap) -> Result<()
         Err(AuthError::Unauthenticated) => return Ok(()),
         Err(error) => return Err(error),
     };
-    let current = local_identity(panel, &identity)?;
+    let current = account_identity(panel, &identity)?;
 
-    local
-        .call(archcert_application::local::LocalRequest::Validate { identity: current })
+    platform
+        .call(archcert_application::platform::PlatformRequest::Validate { identity: current })
         .await
         .map(|_| ())
         .map_err(|error| {

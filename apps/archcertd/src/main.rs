@@ -1,8 +1,9 @@
 //! Authenticated durable ArchCert admission/status API. No execution or signing.
 
-mod commands;
-
-use archcert_application::{artifacts::ImmutableArtifactStore, jobs::JobStoreError};
+use archcert_application::{
+    artifacts::ImmutableArtifactStore,
+    jobs::{JobRepository, JobStoreError},
+};
 use archcert_control_plane::{ControlPlane, ControlPlaneConfiguration};
 use archcert_domain::jobs::{IdempotencyKey, JobId};
 use archcert_protocol::jobs::{CertificationJobResponse, CreateCertificationRequest};
@@ -17,6 +18,9 @@ use clap::Parser;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tower_http::trace::TraceLayer;
 
+mod commands;
+mod platform;
+
 #[derive(Parser)]
 struct Args {
     #[arg(long)]
@@ -24,6 +28,12 @@ struct Args {
     /// Optional strict private command-only credentials; never legacy submission tokens.
     #[arg(long)]
     command_credentials: Option<PathBuf>,
+    /// Product accounts use this API and the existing Glassmere sessions.
+    #[arg(long)]
+    platform_config: Option<PathBuf>,
+    /// Explicit host administration; ordinary startup never initializes accounts.
+    #[command(subcommand)]
+    administration: Option<platform::Command>,
     #[arg(long, default_value = "127.0.0.1:8080")]
     listen: SocketAddr,
 }
@@ -33,6 +43,7 @@ struct ApiState {
     control: Arc<ControlPlane>,
     command_credentials: Option<PathBuf>,
     command_slots: Arc<tokio::sync::Semaphore>,
+    platform: Option<Arc<platform::Service>>,
 }
 
 #[tokio::main]
@@ -51,9 +62,29 @@ async fn main() -> anyhow::Result<()> {
         "development authority API must bind loopback"
     );
 
-    let config = ControlPlaneConfiguration::load(&args.config)?;
+    let platform = if let Some(path) = &args.platform_config {
+        Some(platform::Service::open(path).await?)
+    } else {
+        None
+    };
+
+    if let Some(command) = args.administration {
+        let service = platform
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("product account configuration required"))?;
+        return service.administer(command).await;
+    }
+
     let database_url = std::env::var("ARCHCERT_DATABASE_URL")?;
-    let state = Arc::new(ControlPlane::connect(&database_url, config).await?);
+    let state = Arc::new(if let Some(service) = &platform {
+        service.control().await?
+    } else {
+        ControlPlane::connect(
+            &database_url,
+            ControlPlaneConfiguration::load(&args.config)?,
+        )
+        .await?
+    });
 
     // Verify migrations were applied explicitly; do not mutate schema at startup.
     state.repository.check_readiness().await?;
@@ -67,6 +98,7 @@ async fn main() -> anyhow::Result<()> {
         control: state,
         command_credentials: args.command_credentials,
         command_slots: Arc::new(tokio::sync::Semaphore::new(8)),
+        platform,
     });
 
     tracing::info!(address=%args.listen,"ArchCert durable API listening");
@@ -83,6 +115,16 @@ fn router(state: ApiState) -> Router {
         .route("/api/v1/certifications", post(submit))
         .route("/api/v1/certifications/{id}", get(status))
         .route("/api/v1/certifications/{id}/certificate", get(certificate));
+
+    let app = if state.platform.is_some() {
+        app.merge(
+            Router::new()
+                .route("/api/v1/platform", post(platform::call))
+                .layer(DefaultBodyLimit::max(8192)),
+        )
+    } else {
+        app
+    };
     let app = if state.command_credentials.is_some() {
         app.merge(commands::router())
     } else {
@@ -136,19 +178,86 @@ fn error(e: JobStoreError) -> Response {
     (status, e.to_string()).into_response()
 }
 
+fn has_account_identity(headers: &HeaderMap) -> bool {
+    headers.contains_key("x-archcert-principal") || headers.contains_key("x-archcert-generation")
+}
+
+async fn authorized_control(
+    state: &ApiState,
+    headers: &HeaderMap,
+    project: archcert_domain::ProjectId,
+    repository: &archcert_domain::source::RepositoryId,
+    write: bool,
+) -> Result<(archcert_domain::ingress::GitActorId, Arc<ControlPlane>), JobStoreError> {
+    if !has_account_identity(headers) {
+        return Ok((actor(&state.control, headers)?, Arc::clone(&state.control)));
+    }
+
+    let service = state.platform.as_ref().ok_or(JobStoreError::Unauthorized)?;
+    let identity = service
+        .identity_from_headers(headers)
+        .map_err(platform::store_error)?;
+    let grant = service
+        .grant_for_account(&identity, project, repository, write)
+        .await
+        .map_err(platform::store_error)?;
+    let actor = grant.actor.clone();
+
+    // Narrow the existing control plane to the authenticated project. Reuse its
+    // metadata pool, artifact adapter and unchanged admission/verification logic.
+    let control = ControlPlane {
+        repository: state.control.repository.clone(),
+        artifacts: Arc::clone(&state.control.artifacts),
+        configuration: ControlPlaneConfiguration {
+            source_store: state.control.configuration.source_store.clone(),
+            artifact_root: state.control.configuration.artifact_root.clone(),
+            grants: vec![grant],
+        },
+    };
+    Ok((actor, Arc::new(control)))
+}
+
+async fn control_for_job(
+    state: &ApiState,
+    headers: &HeaderMap,
+    id: JobId,
+) -> Result<(archcert_domain::ingress::GitActorId, Arc<ControlPlane>), JobStoreError> {
+    if !has_account_identity(headers) {
+        return Ok((actor(&state.control, headers)?, Arc::clone(&state.control)));
+    }
+
+    // Authenticate the private broker before reading even internal job metadata.
+    state
+        .platform
+        .as_ref()
+        .ok_or(JobStoreError::Unauthorized)?
+        .identity_from_headers(headers)
+        .map_err(platform::store_error)?;
+    let job = state.control.repository.get(id).await?;
+    authorized_control(
+        state,
+        headers,
+        job.inputs.project,
+        &job.inputs.repository,
+        false,
+    )
+    .await
+}
+
 async fn submit(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Json(request): Json<CreateCertificationRequest>,
 ) -> Response {
     let result = async {
-        let actor = actor(&state.control, &headers)?;
+        let (actor, control) =
+            authorized_control(&state, &headers, request.project, &request.repository, true)
+                .await?;
         let key = headers
             .get("idempotency-key")
             .and_then(|v| v.to_str().ok())
             .ok_or(JobStoreError::Invalid)?;
-        state
-            .control
+        control
             .submit(
                 actor,
                 request.project,
@@ -176,8 +285,9 @@ async fn status(
     Path(id): Path<String>,
 ) -> Response {
     let result = async {
-        let actor = actor(&state.control, &headers)?;
-        state.control.status(&actor, JobId::parse(&id)?).await
+        let id = JobId::parse(&id)?;
+        let (actor, control) = control_for_job(&state, &headers, id).await?;
+        control.status(&actor, id).await
     }
     .await;
 
@@ -193,8 +303,9 @@ async fn certificate(
     Path(id): Path<String>,
 ) -> Response {
     let result = async {
-        let actor = actor(&state.control, &headers)?;
-        let job = state.control.status(&actor, JobId::parse(&id)?).await?;
+        let id = JobId::parse(&id)?;
+        let (actor, control) = control_for_job(&state, &headers, id).await?;
+        let job = control.status(&actor, id).await?;
 
         let cert = job.certificate.ok_or(JobStoreError::Precondition)?;
 

@@ -75,3 +75,10 @@ Run `python3 scripts/test-glassmere-provisioning` for the file/locking regressio
 The Rust authentication tests separately establish session revision invalidation.
 These are development engineering checks, not production IAM or independent
 certification. M9 remains INCOMPLETE until its separate closure criteria pass.
+
+## Product account setup
+
+Fresh deployments may use the existing `archcertd` account adapter and Glassmere
+password/setup screens under [ADR 0071](../adr/0071-product-account-integration.md).
+This extends the same sessions and authorization; the external bearer contract
+above remains supported. See the [deployment guide](../operations/DEPLOYMENT.md).

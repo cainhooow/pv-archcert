@@ -1,6 +1,6 @@
-//! Independently authenticated loopback local-identity client; no authority adapters.
+//! Private client of the existing ArchCert API; no authority adapters.
 
-use archcert_application::{jobs::JobStoreError, local::*};
+use archcert_application::{jobs::JobStoreError, platform::*};
 use async_trait::async_trait;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::{Request, body::Bytes};
@@ -18,14 +18,14 @@ struct Configuration {
     token: String,
 }
 
-pub(super) struct LocalClient {
+pub(super) struct PlatformClient {
     path: PathBuf,
     endpoint: SocketAddr,
     client: Client<HttpConnector, Full<Bytes>>,
     slots: tokio::sync::Semaphore,
 }
 
-impl LocalClient {
+impl PlatformClient {
     pub(super) fn open(path: PathBuf) -> Result<Self, JobStoreError> {
         let config: Configuration = serde_json::from_slice(&super::broker::read_private(&path)?)
             .map_err(|_| JobStoreError::Invalid)?;
@@ -49,8 +49,8 @@ impl LocalClient {
 }
 
 #[async_trait]
-impl LocalPlatform for LocalClient {
-    async fn call(&self, request: LocalRequest) -> Result<LocalReply, JobStoreError> {
+impl Platform for PlatformClient {
+    async fn call(&self, request: PlatformRequest) -> Result<PlatformReply, JobStoreError> {
         let _slot = self
             .slots
             .try_acquire()
@@ -61,10 +61,38 @@ impl LocalPlatform for LocalClient {
         if config.endpoint != self.endpoint || config.token.len() != 64 {
             return Err(JobStoreError::Unavailable);
         }
-        let bytes = serde_json::to_vec(&request).map_err(|_| JobStoreError::Invalid)?;
-        let request = Request::post(format!("http://{}/local", self.endpoint))
+        let mut identity = None;
+        let (path, bytes) = match request {
+            PlatformRequest::Certify {
+                identity: current,
+                project,
+                repository,
+                submission,
+                request_key,
+            } => {
+                identity = Some((current, request_key));
+                (
+                    "/api/v1/certifications",
+                    serde_json::to_vec(&serde_json::json!({
+                        "project": project,
+                        "repository": repository,
+                        "source_submission": submission,
+                    })),
+                )
+            }
+            operation => ("/api/v1/platform", serde_json::to_vec(&operation)),
+        };
+        let bytes = bytes.map_err(|_| JobStoreError::Invalid)?;
+        let mut request = Request::post(format!("http://{}{path}", self.endpoint))
             .header("content-type", "application/json")
-            .header("authorization", format!("Bearer {}", config.token))
+            .header("authorization", format!("Bearer {}", config.token));
+        if let Some((current, key)) = &identity {
+            request = request
+                .header("x-archcert-principal", &current.principal)
+                .header("x-archcert-generation", &current.generation)
+                .header("idempotency-key", key);
+        }
+        let request = request
             .body(Full::new(Bytes::from(bytes)))
             .map_err(|_| JobStoreError::Invalid)?;
         tokio::time::timeout(Duration::from_secs(40), async {
@@ -73,6 +101,14 @@ impl LocalPlatform for LocalClient {
                 .request(request)
                 .await
                 .map_err(|_| JobStoreError::Unavailable)?;
+            if identity.is_some() && response.status().as_u16() != 202 {
+                return Err(match response.status().as_u16() {
+                    400 => JobStoreError::Invalid,
+                    401 | 403 => JobStoreError::Unauthorized,
+                    409 => JobStoreError::Conflict,
+                    _ => JobStoreError::Unavailable,
+                });
+            }
             if !response.status().is_success() {
                 return Err(match response.status().as_u16() {
                     400 => JobStoreError::Invalid,
@@ -86,7 +122,21 @@ impl LocalPlatform for LocalClient {
                 .await
                 .map_err(|_| JobStoreError::Unavailable)?
                 .to_bytes();
-            serde_json::from_slice(&bytes).map_err(|_| JobStoreError::Unavailable)
+            if identity.is_some() {
+                let admission: serde_json::Value =
+                    serde_json::from_slice(&bytes).map_err(|_| JobStoreError::Unavailable)?;
+                let job = admission["job_id"]
+                    .as_str()
+                    .ok_or(JobStoreError::Unavailable)?;
+                archcert_domain::jobs::JobId::parse(job).map_err(|_| JobStoreError::Unavailable)?;
+                Ok(PlatformReply {
+                    state: "REQUEST_ACCEPTED".into(),
+                    details: serde_json::json!({"job":job}),
+                    credential: None,
+                })
+            } else {
+                serde_json::from_slice(&bytes).map_err(|_| JobStoreError::Unavailable)
+            }
         })
         .await
         .map_err(|_| JobStoreError::Unavailable)?

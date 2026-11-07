@@ -15,7 +15,7 @@ impl Fixture {
     async fn open() -> Result<Self> {
         let url = std::env::var("ARCHCERT_TEST_DATABASE_URL")?;
         let admin = PgPool::connect(&url).await?;
-        let schema = format!("local_{}", uuid::Uuid::new_v4().simple());
+        let schema = format!("platform_{}", uuid::Uuid::new_v4().simple());
         // The identifier contains only our fixed prefix and a generated UUID.
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
             .execute(&admin)
@@ -58,13 +58,13 @@ impl Fixture {
                 instance: uuid::Uuid::new_v4().to_string(),
                 root,
                 origin: "http://127.0.0.1:18090".into(),
-                listen: "127.0.0.1:18091".parse()?,
-                token_sha256: digest_bytes(entropy()?.as_bytes()).as_str().into(),
+                development_http: true,
+                token_sha256: digest_bytes("b".repeat(64).as_bytes()).as_str().into(),
                 gateway_binary: "/usr/bin/true".into(),
                 ssh_user: "local".into(),
                 ssh_port: 22223,
                 image: Some("python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f".into()),
-                authority_toml: include_str!("../../../docs/policy/CONTROLLED_AUTHORITY.toml").into(),
+                authority_toml: include_str!("../../../../docs/policy/CONTROLLED_AUTHORITY.toml").into(),
             },
             pool,
             publication: Mutex::new(()),
@@ -81,11 +81,11 @@ impl Fixture {
         })
     }
 
-    async fn identity(&self) -> Result<LocalIdentity> {
-        let row = sqlx::query("SELECT id,generation FROM local_accounts ORDER BY id LIMIT 1")
+    async fn identity(&self) -> Result<AccountIdentity> {
+        let row = sqlx::query("SELECT id,generation FROM accounts ORDER BY id LIMIT 1")
             .fetch_one(&self.service.pool)
             .await?;
-        Ok(LocalIdentity {
+        Ok(AccountIdentity {
             principal: row.try_get("id")?,
             generation: row.try_get("generation")?,
         })
@@ -126,7 +126,7 @@ async fn concurrent_bootstrap_replay_restart_and_recovery_are_monotonic() -> Res
     let (first, second) = tokio::join!(fixture.setup(), fixture.setup());
 
     assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
-    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM local_accounts")
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts")
         .fetch_one(&fixture.service.pool)
         .await?;
     assert_eq!(count, 1);
@@ -135,14 +135,14 @@ async fn concurrent_bootstrap_replay_restart_and_recovery_are_monotonic() -> Res
     assert!(fixture.service.initialize(true).await.is_err());
     assert!(
         sqlx::query(
-            "UPDATE local_instance SET state='UNINITIALIZED',setup_hash=NULL,setup_until=NULL"
+            "UPDATE platform_instance SET state='UNINITIALIZED',setup_hash=NULL,setup_until=NULL"
         )
         .execute(&fixture.service.pool)
         .await
         .is_err()
     );
 
-    sqlx::query("UPDATE local_instance SET projection_pending=true")
+    sqlx::query("UPDATE platform_instance SET projection_pending=true")
         .execute(&fixture.service.pool)
         .await?;
     assert_eq!(fixture.service.instance_state().await?, "RECOVERY_REQUIRED");
@@ -157,12 +157,12 @@ async fn concurrent_bootstrap_replay_restart_and_recovery_are_monotonic() -> Res
             .is_err()
     );
 
-    let password_hash: String = sqlx::query_scalar("SELECT password_hash FROM local_accounts")
+    let password_hash: String = sqlx::query_scalar("SELECT password_hash FROM accounts")
         .fetch_one(&fixture.service.pool)
         .await?;
     assert!(password_hash.starts_with("$argon2id$v=19$m=65536,t=3,p=1$"));
     assert!(!password_hash.contains("a long test password"));
-    let duplicate = sqlx::query("INSERT INTO local_accounts SELECT id||'_duplicate',display_name,email,password_hash,panel_credential,role,generation,enabled FROM local_accounts").execute(&fixture.service.pool).await;
+    let duplicate = sqlx::query("INSERT INTO accounts SELECT id||'_duplicate',display_name,email,password_hash,panel_credential,role,generation,enabled FROM accounts").execute(&fixture.service.pool).await;
     assert!(duplicate.is_err());
     fixture.close().await
 }
@@ -219,17 +219,16 @@ async fn password_recovery_and_grant_cycles_invalidate_previous_generations() ->
             .is_ok()
     );
 
-    sqlx::query("INSERT INTO local_accounts SELECT id||'_reader','Reader','reader@example.local',password_hash,panel_credential,'VIEWER',generation,enabled FROM local_accounts LIMIT 1").execute(&fixture.service.pool).await?;
+    sqlx::query("INSERT INTO accounts SELECT id||'_reader','Reader','reader@example.local',password_hash,panel_credential,'VIEWER',generation,enabled FROM accounts LIMIT 1").execute(&fixture.service.pool).await?;
     let reader: String =
-        sqlx::query_scalar("SELECT id FROM local_accounts WHERE email='reader@example.local'")
+        sqlx::query_scalar("SELECT id FROM accounts WHERE email='reader@example.local'")
             .fetch_one(&fixture.service.pool)
             .await?;
-    let generation: String =
-        sqlx::query_scalar("SELECT generation FROM local_accounts WHERE id=$1")
-            .bind(&reader)
-            .fetch_one(&fixture.service.pool)
-            .await?;
-    let identity = LocalIdentity {
+    let generation: String = sqlx::query_scalar("SELECT generation FROM accounts WHERE id=$1")
+        .bind(&reader)
+        .fetch_one(&fixture.service.pool)
+        .await?;
+    let identity = AccountIdentity {
         principal: reader,
         generation,
     };
@@ -273,7 +272,7 @@ async fn project_admission_is_owned_atomic_and_idempotent() -> Result<()> {
         .create_project(owner.clone(), registration())
         .await?;
     assert_eq!(first, second);
-    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM local_projects")
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM project_registry")
         .fetch_one(&fixture.service.pool)
         .await?;
     assert_eq!(count, 1);
@@ -293,14 +292,95 @@ async fn project_admission_is_owned_atomic_and_idempotent() -> Result<()> {
     assert!(
         fixture
             .service
-            .certify(
-                owner.clone(),
-                uuid::Uuid::new_v4().to_string(),
-                uuid::Uuid::new_v4().to_string(),
-                "request".into()
+            .grant_for_account(
+                &owner,
+                archcert_domain::ProjectId::new(),
+                &archcert_domain::source::RepositoryId::parse("other/repository")?,
+                true,
             )
             .await
             .is_err()
+    );
+
+    // The account adapter reaches the original admission route. Missing accepted
+    // source is rejected by existing validation, never a successful certification.
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+
+    let state = crate::ApiState {
+        control: Arc::new(fixture.service.control().await?),
+        platform: Some(Arc::clone(&fixture.service)),
+        command_credentials: None,
+        command_slots: Arc::new(tokio::sync::Semaphore::new(8)),
+    };
+    let project: String = sqlx::query_scalar("SELECT id FROM project_registry")
+        .fetch_one(&fixture.service.pool)
+        .await?;
+    let request = |repository: &str, generation: &str, token: &str| {
+        Request::post("/api/v1/certifications")
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {token}"))
+            .header("x-archcert-principal", &owner.principal)
+            .header("x-archcert-generation", generation)
+            .header("idempotency-key", "product-admission-test")
+            .body(Body::from(
+                json!({
+                    "project": project,
+                    "repository": repository,
+                    "source_submission": uuid::Uuid::new_v4().to_string(),
+                })
+                .to_string(),
+            ))
+    };
+    let app = crate::router(state);
+    for (repository, generation, token, expected) in [
+        (
+            "pilot/ledger",
+            owner.generation.as_str(),
+            "b".repeat(64),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "other/repository",
+            owner.generation.as_str(),
+            "b".repeat(64),
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            "pilot/ledger",
+            "revoked",
+            "b".repeat(64),
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            "pilot/ledger",
+            owner.generation.as_str(),
+            "c".repeat(64),
+            StatusCode::UNAUTHORIZED,
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(request(repository, generation, &token)?)
+            .await?;
+        assert_eq!(response.status(), expected);
+    }
+    let alternate_rpc = fixture
+        .service
+        .call(PlatformRequest::Certify {
+            identity: owner.clone(),
+            project,
+            repository: "pilot/ledger".into(),
+            submission: uuid::Uuid::new_v4().to_string(),
+            request_key: "product-admission-test".into(),
+        })
+        .await;
+    assert_eq!(
+        alternate_rpc
+            .err()
+            .map(|error| error.to_string())
+            .as_deref(),
+        Some("INVALID_REQUEST")
     );
 
     let mut malicious = registration();
@@ -316,11 +396,11 @@ async fn project_admission_is_owned_atomic_and_idempotent() -> Result<()> {
 }
 
 #[test]
-fn local_input_limits_and_ssh_options_are_closed() {
+fn product_input_limits_and_ssh_options_are_closed() {
     // Full parsing is exercised through real browser forms and the private broker.
     let posted_authority =
         json!({"operation":"CREATE_PROJECT","actor":"forged","policy":"weakened"});
-    assert!(serde_json::from_value::<LocalRequest>(posted_authority).is_err());
+    assert!(serde_json::from_value::<PlatformRequest>(posted_authority).is_err());
 }
 
 #[tokio::test]
@@ -329,16 +409,35 @@ async fn readiness_reports_store_loss_without_reopening_initialization() -> Resu
     let fixture = Fixture::open().await?;
     fixture.setup().await?;
 
-    let ready = fixture.service.call(LocalRequest::Status).await?;
+    let ready = fixture.service.call(PlatformRequest::Status).await?;
     assert_eq!(ready.state, "INITIALIZED");
     assert_eq!(ready.details["artifact_store"], "READY");
     assert_eq!(ready.details["source_catalog"], "READY");
+
+    // Supervisor observations and validation use the same native host clock,
+    // regardless of a PostgreSQL VM's clock offset.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    for (timestamp, expected) in [
+        (now, "READY"),
+        (now - 90, "UNAVAILABLE"),
+        (now + 90, "UNAVAILABLE"),
+    ] {
+        let observation = json!({"state": "READY", "observed_at_unix": timestamp});
+        publication::replace(
+            &fixture.service.config.root.join("health/readiness.json"),
+            &serde_json::to_vec(&observation)?,
+        )?;
+        let status = fixture.service.call(PlatformRequest::Status).await?;
+        assert_eq!(status.details["observed_health"]["state"], expected);
+    }
 
     let artifacts = fixture.service.config.root.join("artifacts");
     let retained = fixture.service.config.root.join("retained-artifacts");
     std::fs::rename(&artifacts, &retained)?;
 
-    let unavailable = fixture.service.call(LocalRequest::Status).await?;
+    let unavailable = fixture.service.call(PlatformRequest::Status).await?;
     assert_eq!(unavailable.state, "INITIALIZED");
     assert_eq!(unavailable.details["artifact_store"], "ERROR");
     assert!(!artifacts.exists());
@@ -348,12 +447,12 @@ async fn readiness_reports_store_loss_without_reopening_initialization() -> Resu
     let sources = fixture.service.config.root.join("sources");
     std::fs::set_permissions(&sources, std::fs::Permissions::from_mode(0o755))?;
 
-    let unsafe_store = fixture.service.call(LocalRequest::Status).await?;
+    let unsafe_store = fixture.service.call(PlatformRequest::Status).await?;
     assert_eq!(unsafe_store.details["source_catalog"], "ERROR");
     assert_eq!(unsafe_store.details["artifact_store"], "READY");
 
     std::fs::set_permissions(&sources, std::fs::Permissions::from_mode(0o700))?;
-    let recovered = fixture.service.call(LocalRequest::Status).await?;
+    let recovered = fixture.service.call(PlatformRequest::Status).await?;
     assert_eq!(recovered.state, "INITIALIZED");
     assert_eq!(recovered.details["source_catalog"], "READY");
     assert_eq!(recovered.details["artifact_store"], "READY");
@@ -382,17 +481,17 @@ async fn login_budget_survives_reconstruction_and_migration_failure_denies_setup
         refused.err().map(|error| error.to_string()).as_deref(),
         Some("RATE_LIMITED")
     );
-    let used: i32 = sqlx::query_scalar("SELECT used FROM local_login_budget")
+    let used: i32 = sqlx::query_scalar("SELECT used FROM login_attempt_budget")
         .fetch_one(&fixture.service.pool)
         .await?;
     assert_eq!(used, 21);
 
-    sqlx::query("UPDATE _sqlx_migrations SET success=false WHERE version=11")
+    sqlx::query("UPDATE _sqlx_migrations SET success=false WHERE version=12")
         .execute(&fixture.service.pool)
         .await?;
     assert!(fixture.service.instance_state().await.is_err());
     assert!(fixture.setup().await.is_err());
-    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM local_accounts")
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts")
         .fetch_one(&fixture.service.pool)
         .await?;
     assert_eq!(count, 0);

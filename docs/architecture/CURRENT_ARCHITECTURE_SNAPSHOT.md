@@ -651,28 +651,36 @@ and blocker summaries without live-confirmation attributes; their exact live que
 is a separate link. No new build, review waiver, signature or release authority is
 introduced. Full browser integration qualification and M9 closure remain separate.
 
-## Local self-hosted pilot (M9 remains incomplete)
+## Product accounts and deployment (M9 remains incomplete)
 
-ADR 0070 adds an opt-in separate local identity/provisioning service. PostgreSQL
-owns one-way instance initialization, Argon2id accounts, non-revivable assignment
-generations, bounded owned project registration and operational audit. Glassmere
-uses a private fixed loopback port for onboarding and rechecks the durable account
-generation on each authenticated local request. Its authority observation remains
-SELECT-only and excludes account tables; the service receives no runtime or signer.
-Legacy external bearer and command-broker contracts remain available separately.
+[ADR 0071](../adr/0071-product-account-integration.md) supersedes the separate
+local API from ADR 0070. There is one ArchCert application: `archcertd` owns the
+normal account/provisioning adapter and original durable certification endpoint.
+Glassmere retains its existing authentication, server-side sessions, authorization,
+Origin/CSRF, observation adapter and public verification. Account enablement and
+generation are rechecked in PostgreSQL on every authenticated account request.
+Legacy external bearer and command-broker provisioning remain supported.
 
-`scripts/archcert-local` explicitly installs/migrates private storage outside target
-source, supervises the existing native services, and invokes the existing trusted
-controller's run-once loop only with explicit rootless runtime/development custody.
-Northgate still validates authenticated Git pushes into immutable source; local
-certification reuses existing exact-source durable admission. The worker remains a
-credential-free child. No new target execution, policy, certificate, canonical
-artifact, M6 recipe or runtime cleanup mechanism is introduced. Private projections
-are reconstructible from retained database state; initialized setup never reopens.
+Migration 0012 renames the five account/provisioning tables in place, preserving
+identities, initialization state, hashes, assignments, constraints and audit.
+Migration 0011 is retained unchanged. Explicit host provisioning creates a single-use
+expiring bootstrap secret; initialized registration never reopens on outage/restart.
+Project creation generates identity in the backend and transactionally records an
+owned project, Northgate grant and audit. Private configuration files are
+reconstructible projections with a durable pending marker.
 
-The local UI supports one host-selected bounded Python profile, with unsupported
-M6/remote-import/provider paths explicit. Classification is LOCAL SELF-HOSTED PILOT
-— DEVELOPMENT CERTIFICATION AUTHORITY. Operational acceptance and limits are in
-operations/LOCAL_PILOT.md; compilation or web availability alone establishes no
-end-to-end acceptance, M9 completion, native qualification or independent certification.
-M10, M11, Pre-Genesis and Genesis remain NOT STARTED.
+`scripts/archcert-services` builds and supervises existing executables, applies
+migrations only on explicit init/update/restore, and stores private state outside
+source. It launches `archcertd`, Glassmere, OpenSSH/Northgate and a bounded controller
+loop. The original controller claims durable jobs, reconciles gates and invokes
+the original credential-free worker. Runtime/signing selection stays in host
+configuration; neither panel nor API gains a Docker endpoint or signing key.
+Account-mediated requests use `/api/v1/certifications` and `ControlPlane::submit`;
+there is no second certification admission RPC or backend.
+
+The current onboarding UI delegates one host-selected Python plan. M6 release,
+remote import and semantic-provider provisioning remain separate documented
+operations, unavailable in this onboarding path. macOS/Colima execution is a
+DEVELOPMENT CERTIFICATION AUTHORITY and does not establish native Linux
+qualification. See [deployment operations](../operations/DEPLOYMENT.md).
+M9 remains INCOMPLETE. M10, M11, Pre-Genesis and Genesis remain NOT STARTED.

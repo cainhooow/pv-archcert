@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persistent loopback pilot installation; host provisioning is never target input."""
+"""Deployment helper for the existing ArchCert services; host provisioning is never target input."""
 
 import argparse
 import fcntl
@@ -22,11 +22,11 @@ import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_HOME = Path.home() / ".local/share/archcert-pilot"
+DEFAULT_HOME = Path.home() / ".local/share/archcert"
 POSTGRES = "postgres@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336"
 BINARIES = [
     "archcert",
-    "archcert-local-api",
+    "archcertd",
     "archcert-panel",
     "archcert-controller",
     "archcert-worker",
@@ -126,7 +126,7 @@ def environment(home, observation=False):
             "database role provisioning incomplete; run update with migration authority"
         )
     password = password_path.read_text().strip()
-    role = "local_observer" if observation else "local_control"
+    role = "archcert_observer" if observation else "archcert_control"
     env = {"PATH": os.defpath, "HOME": str(Path.home()), "TMPDIR": str(home / "run")}
     key = "ARCHCERT_OBSERVATION_DATABASE_URL" if observation else "ARCHCERT_DATABASE_URL"
     env[key] = f"postgresql://{role}:{password}@127.0.0.1:{config['database_port']}/archcert"
@@ -149,10 +149,9 @@ def database(home, start=True):
     )
     if result.returncode == 0:
         inspected = json.loads(result.stdout)[0]
-        if (
-            inspected["Config"].get("Labels", {}).get("archcert.local.instance")
-            != config["instance"]
-        ):
+        labels = inspected["Config"].get("Labels", {})
+        identity = labels.get("archcert.instance", labels.get("archcert.local.instance"))
+        if identity != config["instance"]:
             raise RuntimeError("database ownership label mismatch; refusing to control it")
         if not start:
             run(["docker", "--context", config["database_context"], "stop", config["container"]])
@@ -169,7 +168,7 @@ def database(home, start=True):
                 "--name",
                 config["container"],
                 "--label",
-                f"archcert.local.instance={config['instance']}",
+                f"archcert.instance={config['instance']}",
                 "--publish",
                 f"127.0.0.1:{config['database_port']}:5432",
                 "--mount",
@@ -243,21 +242,33 @@ def sql(home, statement):
     )
 
 
-def provision_roles(home, create=False):
+def provision_roles(home):
     passwords = {}
     for role, filename in [
-        ("local_control", "control-password"),
-        ("local_observer", "observation-password"),
+        ("archcert_control", "control-password"),
+        ("archcert_observer", "observation-password"),
     ]:
+        legacy = role.replace("archcert_", "local_", 1)
+        present = (
+            sql(home, f"SELECT rolname FROM pg_roles WHERE rolname IN ('{role}','{legacy}');")
+            .decode()
+            .splitlines()
+        )
+        if role in present and legacy in present:
+            raise RuntimeError("conflicting database role generations; preserve state and inspect before continuing")
+        if legacy in present:
+            sql(home, f"ALTER ROLE {legacy} RENAME TO {role};")
+            present = [role]
+
         path = home / "config" / filename
         if not path.exists():
             replace(path, (uuid.uuid4().hex + uuid.uuid4().hex).encode())
         passwords[role] = path.read_text().strip()
-        verb = "CREATE ROLE" if create else "ALTER ROLE"
+        verb = "ALTER ROLE" if role in present else "CREATE ROLE"
         sql(home, f"{verb} {role} LOGIN PASSWORD '{passwords[role]}';")
     sql(
         home,
-        "GRANT CONNECT ON DATABASE archcert TO local_control,local_observer; GRANT USAGE ON SCHEMA public TO local_control,local_observer; GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA public TO local_control; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO local_control; REVOKE INSERT,UPDATE ON _sqlx_migrations FROM local_control;",
+        "GRANT CONNECT ON DATABASE archcert TO archcert_control,archcert_observer; GRANT USAGE ON SCHEMA public TO archcert_control,archcert_observer; GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA public TO archcert_control; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO archcert_control; REVOKE INSERT,UPDATE ON _sqlx_migrations FROM archcert_control;",
     )
     tables = (
         sql(home, "SELECT tablename FROM pg_tables WHERE schemaname='public';")
@@ -268,14 +279,29 @@ def provision_roles(home, create=False):
         if not table.replace("_", "").isalnum():
             raise RuntimeError("unexpected table identifier")
         if "audit" in table:
-            sql(home, f'REVOKE UPDATE ON "{table}" FROM local_control;')
-        if not table.startswith("local_"):
-            sql(home, f'GRANT SELECT ON "{table}" TO local_observer;')
+            sql(home, f'REVOKE UPDATE ON "{table}" FROM archcert_control;')
+        if table in {
+            "platform_instance",
+            "accounts",
+            "project_registry",
+            "provisioning_audit",
+            "login_attempt_budget",
+        } or table.startswith("local_"):
+            sql(home, f'REVOKE ALL ON "{table}" FROM archcert_observer;')
+        else:
+            sql(home, f'GRANT SELECT ON "{table}" TO archcert_observer;')
 
 
-def local_admin(home, *arguments):
+def platform_admin(home, *arguments):
     return run(
-        [home / "bin/archcert-local-api", "--config", home / "config/local-api.json", *arguments],
+        [
+            home / "bin/archcertd",
+            "--config",
+            home / "config/control.json",
+            "--platform-config",
+            home / "config/platform.json",
+            *arguments,
+        ],
         env=environment(home),
     )
 
@@ -299,7 +325,7 @@ def doctor(home):
             results[name] = run(command, timeout=20).decode().strip()
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
             results[name] = "UNAVAILABLE"
-    results["classification"] = "LOCAL SELF-HOSTED PILOT — DEVELOPMENT CERTIFICATION AUTHORITY"
+    results["classification"] = "DEVELOPMENT CERTIFICATION AUTHORITY"
     results["target_runtime"] = (
         "CONFIGURATION_REQUIRED (separate rootless daemon; database Docker context is not execution authority)"
     )
@@ -313,7 +339,7 @@ def doctor(home):
 def initialize(home, args):
     if (home / "installation.json").exists():
         raise RuntimeError(
-            "installation already exists; use up, migrate, renew-setup or recovery; init never resets it"
+            "installation already exists; use up, update, renew-setup or recovery; init never resets it"
         )
     for port in [args.port, args.port + 1, args.database_port, args.ssh_port]:
         available_port(port)
@@ -339,7 +365,7 @@ def initialize(home, args):
         "database_port": args.database_port,
         "ssh_port": args.ssh_port,
         "database_context": run(["docker", "context", "show"]).decode().strip(),
-        "container": f"archcert-local-{suffix}-postgres",
+        "container": f"archcert-{suffix}-postgres",
     }
     private_json(home / "installation.json", config)
     password = uuid.uuid4().hex + uuid.uuid4().hex
@@ -367,15 +393,15 @@ def initialize(home, args):
         f"postgresql://postgres:{password}@127.0.0.1:{args.database_port}/archcert"
     )
     run([home / "bin/migrate"], env=migration_env)
-    provision_roles(home, create=True)
+    provision_roles(home)
     token = uuid.uuid4().hex + uuid.uuid4().hex
     private_json(
-        home / "config/local-api.json",
+        home / "config/platform.json",
         {
             "instance": instance,
             "root": str(home),
             "origin": f"http://127.0.0.1:{args.port}",
-            "listen": f"127.0.0.1:{args.port+1}",
+            "development_http": True,
             "token_sha256": hashlib.sha256(token.encode()).hexdigest(),
             "gateway_binary": str(home / "bin/archcert-gateway"),
             "ssh_user": getpass.getuser(),
@@ -385,7 +411,7 @@ def initialize(home, args):
         },
     )
     private_json(
-        home / "config/local-client.json", {"endpoint": f"127.0.0.1:{args.port+1}", "token": token}
+        home / "config/platform-client.json", {"endpoint": f"127.0.0.1:{args.port+1}", "token": token}
     )
     private_json(
         home / "config/query.json",
@@ -430,12 +456,12 @@ AllowUsers {getpass.getuser()}
 LogLevel VERBOSE
 """
     replace(home / "git/sshd_config", ssh_config.encode())
-    local_admin(home, "init")
+    platform_admin(home, "initialize")
     print(
-        f"Initialized persistent pilot at {home}. Run up, then open http://127.0.0.1:{args.port}/setup."
+        f"Initialized ArchCert at {home}. Run up, then open http://127.0.0.1:{args.port}/setup."
     )
     print(
-        "Obtain the setup secret locally with scripts/archcert-local setup-secret. It is never printed during init."
+        "Obtain the setup secret locally with scripts/archcert-services setup-secret. It is never printed during init."
     )
 
 
@@ -444,13 +470,13 @@ def configure(home, args):
 
     if not re.fullmatch(r"[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}", args.image):
         raise RuntimeError("authority image must be repository@sha256 with a full digest")
-    config = read(home / "config/local-api.json")
+    config = read(home / "config/platform.json")
     if config["image"] not in [None, args.image]:
         raise RuntimeError(
             "changing an installed authority image requires a new separately reviewed installation/profile"
         )
     config["image"] = args.image
-    private_json(home / "config/local-api.json", config)
+    private_json(home / "config/platform.json", config)
     if args.development_signing:
         key = home / "signing/development.der"
         public = home / "public/source.hex"
@@ -484,7 +510,7 @@ def configure(home, args):
             home / "config/runtime.json",
             {"docker": str(Path(args.docker).resolve()), "endpoint": args.endpoint},
         )
-    local_admin(home, "publish")
+    platform_admin(home, "publish")
     print(
         "Development authority selection recorded. Restart services to load the new selection. Runtime readiness is checked independently."
     )
@@ -508,8 +534,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def local_status(home):
-    client = read(home / "config/local-client.json")
+def platform_status(home):
+    client = read(home / "config/platform-client.json")
     address, port = client["endpoint"].rsplit(":", 1)
     if (
         address != "127.0.0.1"
@@ -519,7 +545,7 @@ def local_status(home):
     ):
         raise RuntimeError("invalid private loopback client configuration")
     request = urllib.request.Request(
-        "http://" + client["endpoint"] + "/local",
+        "http://" + client["endpoint"] + "/api/v1/platform",
         data=b'{"operation":"STATUS"}',
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + client["token"]},
     )
@@ -533,6 +559,8 @@ def start(home):
         raise RuntimeError(
             "interrupted update: complete update before startup; do not downgrade the migrated database"
         )
+    if not (home / "config/platform.json").exists():
+        raise RuntimeError("product configuration requires explicit update; startup never reinitializes accounts")
     state = supervisor_state(home)
     if state.get("running") and state.get("supervisor") and pid_running(state["supervisor"]):
         raise RuntimeError("supervisor already running; inspect status")
@@ -569,7 +597,7 @@ def start(home):
             raise RuntimeError("supervisor startup failed; inspect private supervisor log")
         if state.get("supervisor") == process.pid:
             try:
-                observed = local_status(home)
+                observed = platform_status(home)
                 with urllib.request.urlopen(
                     f"http://127.0.0.1:{config['port']}/healthz", timeout=1
                 ) as response:
@@ -586,7 +614,7 @@ def start(home):
         raise RuntimeError(
             "service startup not ready after 120 seconds; inspect private logs and status"
         )
-    print(f"Started http://127.0.0.1:{config['port']}/local; use status for actual dependencies.")
+    print(f"Started http://127.0.0.1:{config['port']}/platform; use status for actual dependencies.")
 
 
 def stop(home, stop_database=True):
@@ -623,6 +651,7 @@ def stop(home, stop_database=True):
                 home
                 / "bin"
                 / {
+                    "api": "archcertd",
                     "local-api": "archcert-local-api",
                     "panel": "archcert-panel",
                     "controller": "archcert-controller",
@@ -658,11 +687,14 @@ def supervise(home):
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
     commands = {
-        "local-api": [
-            home / "bin/archcert-local-api",
+        "api": [
+            home / "bin/archcertd",
             "--config",
-            home / "config/local-api.json",
-            "serve",
+            home / "config/control.json",
+            "--platform-config",
+            home / "config/platform.json",
+            "--listen",
+            f"127.0.0.1:{config['port']+1}",
         ],
         "panel": [
             home / "bin/archcert-panel",
@@ -670,8 +702,8 @@ def supervise(home):
             home / "config/panel.json",
             "--query-config",
             home / "config/query.json",
-            "--local-config",
-            home / "config/local-client.json",
+            "--platform-config",
+            home / "config/platform-client.json",
             "--listen",
             f"127.0.0.1:{config['port']}",
         ],
@@ -831,7 +863,7 @@ def status(home):
     config = manifest(home)
     state = supervisor_state(home)
     report = {
-        "url": f"http://127.0.0.1:{config['port']}/local",
+        "url": f"http://127.0.0.1:{config['port']}/platform",
         "home": str(home),
         "source_commit": config["source_commit"],
         "source_dirty_at_install": config["source_dirty"],
@@ -842,7 +874,7 @@ def status(home):
     for route in ["healthz", "readyz"]:
         try:
             with urllib.request.urlopen(
-                report["url"].replace("/local", "/" + route), timeout=5
+                report["url"].replace("/platform", "/" + route), timeout=5
             ) as response:
                 report[route] = response.status
         except (urllib.error.URLError, TimeoutError):
@@ -928,6 +960,37 @@ def backup(home):
     print(destination)
 
 
+def upgrade_configuration(home):
+    # A forward migration of the previous deployment layout, not another service.
+    retained = home / "backups/pre-product-integration"
+    for old_name, new_name in [
+        ("local-api.json", "platform.json"),
+        ("local-client.json", "platform-client.json"),
+    ]:
+        previous = home / "config" / old_name
+        selected = home / "config" / new_name
+        if not previous.exists():
+            continue
+        value = read(previous)
+        if new_name == "platform.json":
+            value.pop("listen", None)
+            value["development_http"] = read(home / "config/panel.json")["development_http"]
+        if selected.exists() and read(selected) != value:
+            raise RuntimeError("conflicting product configuration; inspect retained deployment state")
+        private_json(selected, value)
+        retained.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if (retained / old_name).exists():
+            raise RuntimeError("prior configuration already retained; inspect interrupted migration")
+        os.replace(previous, retained / old_name)
+
+    previous_binary = home / "bin/archcert-local-api"
+    if previous_binary.exists():
+        retained.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if (retained / "archcert-local-api").exists():
+            raise RuntimeError("prior API binary already retained; inspect before replacing it")
+        os.replace(previous_binary, retained / "archcert-local-api")
+
+
 def update(home):
     installed = manifest(home)
     if "database_context" not in installed:
@@ -955,6 +1018,7 @@ def update(home):
     )
     run([ROOT / "target/debug/examples/migrate"], env=env)
     provision_roles(home)
+    upgrade_configuration(home)
     for name in BINARIES + ["migrate"]:
         source = ROOT / "target/debug" / ("examples/migrate" if name == "migrate" else name)
         replace(home / "bin" / name, source.read_bytes())
@@ -966,7 +1030,7 @@ def update(home):
         name: hashlib.sha256((home / "bin" / name).read_bytes()).hexdigest() for name in BINARIES
     }
     private_json(home / "installation.json", config)
-    local_admin(home, "publish")
+    platform_admin(home, "publish")
     (home / "run/update.pending").unlink()
     print(
         "Explicit migration and executable update completed. Run up; retained authority identities were not reinterpreted."
@@ -984,6 +1048,13 @@ def restore(home, args):
             raise RuntimeError("backup checksum mismatch")
     initialize(home, args)
     deployed = manifest(home)
+    # initialize() created a fresh, non-serving restore target. Preserve its
+    # placeholder product configuration before installing the backup's identity.
+    initial_config = home / "run/restore-initial-config"
+    initial_config.mkdir(mode=0o700)
+    for name in ["platform.json", "platform-client.json"]:
+        os.replace(home / "config" / name, initial_config / name)
+
     skip = {
         "installation.json",
         "config/database-password",
@@ -1013,6 +1084,9 @@ def restore(home, args):
                 with archive.extractfile(member) as incoming:
                     replace(target, incoming.read())
                 target.chmod(member.mode & 0o700)
+    # Only this newly created, never-started restore database is replaced.
+    # Clearing it avoids mixing the initialized schema with an older backup.
+    sql(home, "DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
     run(
         [
             "docker",
@@ -1036,19 +1110,25 @@ def restore(home, args):
         data=(source / "metadata.dump").read_bytes(),
         timeout=300,
     )
+    migration_env = environment(home)
+    password = (home / "config/database-password").read_text().strip()
+    migration_env["ARCHCERT_DATABASE_URL"] = (
+        f"postgresql://postgres:{password}@127.0.0.1:{deployed['database_port']}/archcert"
+    )
+    run([home / "bin/migrate"], env=migration_env)
     provision_roles(home)
-    api = read(home / "config/local-api.json")
+    upgrade_configuration(home)
+    api = read(home / "config/platform.json")
     api.update(
         root=str(home),
         origin=f"http://127.0.0.1:{args.port}",
-        listen=f"127.0.0.1:{args.port+1}",
         gateway_binary=str(home / "bin/archcert-gateway"),
         ssh_port=args.ssh_port,
     )
-    private_json(home / "config/local-api.json", api)
-    client = read(home / "config/local-client.json")
-    client["endpoint"] = api["listen"]
-    private_json(home / "config/local-client.json", client)
+    private_json(home / "config/platform.json", api)
+    client = read(home / "config/platform-client.json")
+    client["endpoint"] = f"127.0.0.1:{args.port+1}"
+    private_json(home / "config/platform-client.json", client)
     query = read(home / "config/query.json")
     query["artifact_root"] = str(home / "artifacts")
     private_json(home / "config/query.json", query)
@@ -1056,7 +1136,7 @@ def restore(home, args):
         home / "git/known_hosts",
         (f"[127.0.0.1]:{args.ssh_port} " + (home / "git/host.pub").read_text()).encode(),
     )
-    local_admin(home, "publish")
+    platform_admin(home, "publish")
     print(
         "Restored accounts, projects, exact source/evidence, trust and private custody into a new installation."
     )
@@ -1068,7 +1148,7 @@ def restore(home, args):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--home", default=os.environ.get("ARCHCERT_LOCAL_HOME", str(DEFAULT_HOME)))
+    parser.add_argument("--home", default=os.environ.get("ARCHCERT_HOME", str(DEFAULT_HOME)))
     sub = parser.add_subparsers(dest="command", required=True)
     for name in [
         "doctor",
@@ -1146,11 +1226,11 @@ def main():
                 )
             print((home / "bootstrap/setup-secret").read_text())
         elif args.command == "renew-setup":
-            local_admin(home, "renew-setup")
+            platform_admin(home, "renew-setup")
             print("Unconsumed setup secret renewed privately.")
         elif args.command == "publish":
             database(home)
-            local_admin(home, "publish")
+            platform_admin(home, "publish")
             print("Private projections reconstructed from durable records.")
         elif args.command == "git-config":
             config = manifest(home)
@@ -1184,7 +1264,7 @@ def main():
         elif args.command == "update":
             update(home)
         elif args.command == "set-role":
-            local_admin(home, "set-role", args.email, args.role)
+            platform_admin(home, "set-role", args.email, args.role)
             print("Audited role change; previous sessions are invalid.")
         elif args.command == "recover-password":
             password = getpass.getpass("New password (at least 12 characters): ")
@@ -1193,7 +1273,7 @@ def main():
             path = home / "bootstrap" / ("password-" + uuid.uuid4().hex)
             try:
                 replace(path, password.encode())
-                local_admin(home, "recover-password", args.email, "--password-file", path)
+                platform_admin(home, "recover-password", args.email, "--password-file", path)
             finally:
                 path.unlink(missing_ok=True)
             print(
@@ -1205,5 +1285,5 @@ if __name__ == "__main__":
     try:
         main()
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
-        print(f"archcert-local: {error}", file=sys.stderr)
+        print(f"archcert-services: {error}", file=sys.stderr)
         sys.exit(1)

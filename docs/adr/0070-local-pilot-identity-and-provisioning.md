@@ -1,6 +1,7 @@
 # ADR 0070: Bounded local pilot identity and project provisioning
 
-Status: Accepted for development implementation; acceptance is recorded separately.
+Status: Superseded by [ADR 0071](0071-product-account-integration.md).
+The separate local service decision below is historical and is no longer the deployment architecture.
 Date: November 6, 2026. Extends ADRs 0028, 0035–0040 and 0051–0059.
 
 ## Context

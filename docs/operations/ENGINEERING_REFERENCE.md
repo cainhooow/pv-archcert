@@ -1,6 +1,6 @@
 # Preserved engineering reference
 
-This is the pre-local-pilot README retained from 00c68e4. For current installation instructions, use the repository README and ADR 0070. Historical commands and qualification remain scoped to their original evidence.
+This is the original engineering README retained from 00c68e4. For current installation instructions, use the repository README and ADR 0071. Historical commands and qualification remain scoped to their original evidence.
 
 # ArchCert
 
@@ -211,7 +211,7 @@ Application commands/results are independent of HTTP DTOs. The runner consumes a
 application-owned verified source-export port; no production materialization adapter
 dependency remains. ProjectConfiguration, AuthorityConfiguration and RuntimeConfiguration
 are separate trust domains. `run --config FILE` and `config-check --file FILE` use
-the same strict bounded parser; the [complete example](config/archcert.toml.example)
+the same strict bounded parser; the [complete example](../../config/archcert.toml.example)
 is parsed by a default regression test. Development catalog IDs are python, rust
 and node. These names do not prove installed toolchain versions.
 

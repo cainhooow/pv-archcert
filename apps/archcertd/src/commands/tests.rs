@@ -182,6 +182,7 @@ async fn fixture(real: bool) -> Result<Fixture> {
             control,
             command_credentials: Some(credential_path.clone()),
             command_slots: Arc::new(tokio::sync::Semaphore::new(8)),
+            platform: None,
         },
         pool,
         job,
