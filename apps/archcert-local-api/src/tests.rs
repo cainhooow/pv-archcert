@@ -325,6 +325,44 @@ fn local_input_limits_and_ssh_options_are_closed() {
 
 #[tokio::test]
 #[ignore = "requires real isolated PostgreSQL schemas"]
+async fn readiness_reports_store_loss_without_reopening_initialization() -> Result<()> {
+    let fixture = Fixture::open().await?;
+    fixture.setup().await?;
+
+    let ready = fixture.service.call(LocalRequest::Status).await?;
+    assert_eq!(ready.state, "INITIALIZED");
+    assert_eq!(ready.details["artifact_store"], "READY");
+    assert_eq!(ready.details["source_catalog"], "READY");
+
+    let artifacts = fixture.service.config.root.join("artifacts");
+    let retained = fixture.service.config.root.join("retained-artifacts");
+    std::fs::rename(&artifacts, &retained)?;
+
+    let unavailable = fixture.service.call(LocalRequest::Status).await?;
+    assert_eq!(unavailable.state, "INITIALIZED");
+    assert_eq!(unavailable.details["artifact_store"], "ERROR");
+    assert!(!artifacts.exists());
+    assert!(fixture.setup().await.is_err());
+
+    std::fs::rename(&retained, &artifacts)?;
+    let sources = fixture.service.config.root.join("sources");
+    std::fs::set_permissions(&sources, std::fs::Permissions::from_mode(0o755))?;
+
+    let unsafe_store = fixture.service.call(LocalRequest::Status).await?;
+    assert_eq!(unsafe_store.details["source_catalog"], "ERROR");
+    assert_eq!(unsafe_store.details["artifact_store"], "READY");
+
+    std::fs::set_permissions(&sources, std::fs::Permissions::from_mode(0o700))?;
+    let recovered = fixture.service.call(LocalRequest::Status).await?;
+    assert_eq!(recovered.state, "INITIALIZED");
+    assert_eq!(recovered.details["source_catalog"], "READY");
+    assert_eq!(recovered.details["artifact_store"], "READY");
+
+    fixture.close().await
+}
+
+#[tokio::test]
+#[ignore = "requires real isolated PostgreSQL schemas"]
 async fn login_budget_survives_reconstruction_and_migration_failure_denies_setup() -> Result<()> {
     let fixture = Fixture::open().await?;
     for _ in 0..20 {

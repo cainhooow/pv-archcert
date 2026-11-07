@@ -140,18 +140,28 @@ async fn home(State(panel): State<Arc<Panel>>, headers: HeaderMap) -> Response {
         Ok(v) => v,
         Err(_) => return Redirect::to("/login").into_response(),
     };
-    let projects = match local
+    let projects = local
         .call(LocalRequest::Projects { identity: current })
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => return query_error(e),
-    };
+        .await;
     let csrf = render::escape(&id.csrf);
     let mut body = format!(
         "<p class=lede>LOCAL SELF-HOSTED PILOT — DEVELOPMENT CERTIFICATION AUTHORITY</p><p><a href=/local>Refresh infrastructure and accepted commits</a> · <a href=/projects>Evidence, jobs and certificates</a> · <a href=/audit>Panel audit</a></p><section class=panel><h2>1. Infrastructure and authority</h2><p>Host provisioning selects the execution profile and signing key. Administrator access does not select authority.</p><pre>{}</pre><p>Health is an observation at the recorded time. M6 local onboarding: UNSUPPORTED. Native qualification is not established by this installation.</p></section>",
         render::escape(&serde_json::to_string_pretty(&status.details).unwrap_or_default())
     );
+
+    let projects = match projects {
+        Ok(reply) => reply,
+        Err(JobStoreError::Unavailable) => {
+            body.push_str("<section class=panel><h2>Project catalog unavailable</h2><p>Project metadata is unavailable. Inspect the infrastructure states and private installation logs before registering or certifying sources.</p></section>");
+            return html(&panel, "Local installation", &body, Some(&id));
+        }
+        Err(error) => return query_error(error),
+    };
+
+    if status.details["artifact_store"] == "ERROR" {
+        body.push_str("<section class=panel><h2>Artifact store unavailable</h2><p>Certification admission requires the configured artifact store to be READY. Inspect the private storage permissions, availability and capacity before submitting a source.</p></section>");
+    }
+
     if id.role == auth::Role::Administrator && status.details["profile"] != "CONFIGURATION_REQUIRED"
     {
         let key = match auth::random_credential() {
@@ -208,6 +218,7 @@ async fn home(State(panel): State<Arc<Panel>>, headers: HeaderMap) -> Response {
                     );
                     if matches!(id.role, auth::Role::Administrator | auth::Role::Operator)
                         && source["completeness"] == "COMPLETE"
+                        && status.details["artifact_store"] == "READY"
                     {
                         let _ = write!(
                             body,

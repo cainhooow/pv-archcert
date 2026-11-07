@@ -4,6 +4,7 @@ use anyhow::{Result, ensure};
 use archcert_application::local::*;
 use archcert_control_plane::read_private;
 use archcert_domain::source::digest_bytes;
+use archcert_storage::artifacts::FilesystemArtifactStore;
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State},
@@ -211,9 +212,21 @@ impl Service {
             details: json!({}),
             credential: None,
         };
+
         match request {
             LocalRequest::Status => {
                 reply.state = self.instance_state().await?;
+
+                let artifacts_ready = FilesystemArtifactStore::open_unencrypted_development(
+                    &self.config.root.join("artifacts"),
+                )
+                .and_then(|store| store.check_readiness())
+                .is_ok();
+                let sources_ready = archcert_gateway::AcceptedSubmissionReader::open(
+                    &self.config.root.join("sources"),
+                )
+                .is_ok();
+
                 let observed = read_private(&self.config.root.join("health/readiness.json"), 16384)
                     .ok()
                     .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
@@ -222,8 +235,19 @@ impl Service {
                 )
                 .fetch_one(&self.pool)
                 .await?;
-                let readiness = observed.filter(|value| value["observed_at_unix"].as_i64().is_some_and(|time| (0..=45).contains(&(now-time))))
-                    .unwrap_or_else(|| json!({"state":"UNAVAILABLE","reason":"No recent host dependency observation"}));
+                let readiness = observed
+                    .filter(|value| {
+                        value["observed_at_unix"]
+                            .as_i64()
+                            .is_some_and(|time| (0..=45).contains(&(now - time)))
+                    })
+                    .unwrap_or_else(|| {
+                        json!({
+                            "state": "UNAVAILABLE",
+                            "reason": "No recent host dependency observation",
+                        })
+                    });
+
                 let policy = archcert_policy::development_bundle()?;
                 let plan = self
                     .config
@@ -238,6 +262,7 @@ impl Service {
                     })
                     .transpose()?;
                 let plan_digest = plan.as_ref().map(|plan| plan.digest()).transpose()?;
+
                 reply.details = json!({
                     "authority": {
                         "policy": policy.identity(),
@@ -248,6 +273,9 @@ impl Service {
                     "profile": if self.config.image.is_some() { "python-controlled-local-v1" } else { "CONFIGURATION_REQUIRED" },
                     "m6": "UNSUPPORTED in local onboarding",
                     "postgres": "READY",
+                    "migrations": "READY — required local schema 0011",
+                    "artifact_store": if artifacts_ready { "READY" } else { "ERROR" },
+                    "source_catalog": if sources_ready { "READY" } else { "ERROR" },
                     "git_ssh_port": self.config.ssh_port,
                     "observed_health": readiness,
                 });

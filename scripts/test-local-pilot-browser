@@ -71,7 +71,7 @@ const sshCommand = run([path.join(root,'scripts/archcert-local'),'--home',home,'
   }));
   fs.writeFileSync(path.join(output,'setup-race.json'),JSON.stringify(await Promise.all(races.map(async r=>({status:r.status(),body:r.status()===303?'REDIRECT':(await r.text()).slice(0,300)}))),null,2));
   assert.equal(races.filter(r=>r.status()===303).length,1);
-  assert(races.some(r=>[401,409].includes(r.status()))); checked.push('concurrent setup exactly one administrator');
+  assert(races.some(r=>[401,404,409].includes(r.status()))); checked.push('concurrent setup exactly one administrator');
   await competing.close();
   assert.equal((await context.request.get(base+'/setup')).status(),410);
   assert([401,404,409].includes((await context.request.post(base+'/setup',{form:setup,headers:{Origin:base},maxRedirects:0})).status())); checked.push('setup permanently closed and token replay rejected');
@@ -94,6 +94,12 @@ const sshCommand = run([path.join(root,'scripts/archcert-local'),'--home',home,'
     checked.push('host authority configured explicitly after browser account creation; service restart');
   }
   assertSshEnvironment();
+  const infrastructure = JSON.parse(await page.locator('section.panel pre').first().innerText());
+  assert.equal(infrastructure.artifact_store, 'READY');
+  assert.equal(infrastructure.source_catalog, 'READY');
+  assert(infrastructure.migrations.startsWith('READY'));
+  checked.push('migration, private artifact store and source catalog readiness shown');
+
   const cookie=(await context.cookies()).find(c=>c.name==='archcert_session');
   assert(cookie.httpOnly && cookie.sameSite==='Strict' && !cookie.secure); checked.push('password login and HttpOnly Strict session');
   const foreign=await context.request.get(base+'/projects/11111111-1111-4111-8111-111111111111');

@@ -64,8 +64,15 @@ gates, accepted evidence, failure classification and signing are unchanged. The
 launcher never prunes unknown resources. A panel process being healthy establishes
 neither runtime readiness nor certification success.
 
+Local status checks the required migration and opens the existing artifact/source
+stores through their original private no-follow adapters. Artifact headroom is
+checked without publication. Missing or unsafe stores are reported as ERROR,
+without creating replacement directories or reopening initialized accounts.
+
 Development signing requires the host's explicit configure-authority operation.
-Only controller invocations receive key and runtime paths. M6 remains a separate
+Only controller invocations receive signing-key paths. Workers receive an explicit
+runtime endpoint for execution or diagnostics; panel and ingress receive neither.
+M6 remains a separate
 operator lifecycle and is unavailable in the local onboarding UI. No arbitrary
 build recipe, semantic provider, production signing or native qualification is added.
 
