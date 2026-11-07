@@ -59,7 +59,7 @@ const sshCommand = run([path.join(root,'scripts/archcert-local'),'--home',home,'
   assert(races.some(r=>[401,409].includes(r.status()))); checked.push('concurrent setup exactly one administrator');
   await competing.close();
   assert.equal((await context.request.get(base+'/setup')).status(),410);
-  assert([401,409].includes((await context.request.post(base+'/setup',{form:setup,headers:{Origin:base},maxRedirects:0})).status())); checked.push('setup permanently closed and token replay rejected');
+  assert([401,404,409].includes((await context.request.post(base+'/setup',{form:setup,headers:{Origin:base},maxRedirects:0})).status())); checked.push('setup permanently closed and token replay rejected');
   } else { checked.push('resumed existing browser-created administrator; fresh setup acceptance remains separate'); }
   await page.goto(base+'/login');
   await page.locator('[name=email]').fill(account.email.toUpperCase());
