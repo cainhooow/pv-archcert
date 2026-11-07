@@ -560,7 +560,9 @@ def start(home):
             start_new_session=True,
             cwd=home / "run",
         )
-    deadline = time.monotonic() + 45
+    # Cold executable loading and the first bounded runtime probe can overlap.
+    # Continue to require both API and panel readiness within a finite window.
+    deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         state = supervisor_state(home)
         if process.poll() is not None:
@@ -582,7 +584,7 @@ def start(home):
         time.sleep(0.1)
     else:
         raise RuntimeError(
-            "service startup not ready after 45 seconds; inspect private logs and status"
+            "service startup not ready after 120 seconds; inspect private logs and status"
         )
     print(f"Started http://127.0.0.1:{config['port']}/local; use status for actual dependencies.")
 
