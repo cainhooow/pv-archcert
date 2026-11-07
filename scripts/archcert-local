@@ -595,7 +595,8 @@ def stop(home, stop_database=True):
         if "__supervise" not in command or str(home) not in command:
             raise RuntimeError("PID identity mismatch; refusing to signal an unknown process")
         os.kill(pid, signal.SIGTERM)
-        for _ in range(150):
+        # A worker diagnostic has a 25-second bound before child shutdown.
+        for _ in range(450):
             if not pid_running(pid) or not supervisor_state(home).get("running", False):
                 break
             time.sleep(0.1)
