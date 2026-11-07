@@ -688,13 +688,22 @@ def supervise(home):
         while not stopping:
             for name, command in commands.items():
                 if name not in children or children[name].poll() is not None:
+                    if name == "git-ingress":
+                        child_environment = {
+                            "PATH": os.defpath,
+                            "HOME": str(Path.home()),
+                            "TMPDIR": str(home / "run"),
+                        }
+                    else:
+                        child_environment = environment(home, observation=name == "panel")
+
                     with (home / f"logs/{name}.log").open("ab") as log:
                         children[name] = subprocess.Popen(
                             [str(a) for a in command],
                             stdin=subprocess.DEVNULL,
                             stdout=log,
                             stderr=log,
-                            env=environment(home, observation=name == "panel"),
+                            env=child_environment,
                             start_new_session=True,
                             cwd=home / "run",
                         )

@@ -15,6 +15,7 @@ Existing Northgate, Glassmere, Ravenport, execution and signing models still app
 | Project escalation | Server UUID, authenticated current admin, independent host-selected profile; transaction/audit; owned project queries | Compromised provisioner can alter its delegated installation |
 | CSRF/stored XSS | Exact Origin, session CSRF, strict forms, escaped inert metadata, existing CSP | Same-origin code/browser compromise |
 | Git command injection | Validated Ed25519 wire key, fixed virtual UUID route and forced executable; original Northgate receiver | OpenSSH, Git and parsers remain trusted dependencies |
+| SSH daemon credential inheritance | Supervisor supplies only PATH, HOME and private TMPDIR to ingress; live browser regression inspects the selected daemon environment | Same-UID/root compromise remains outside this development boundary |
 | SSRF/credential disclosure | No external clone/provider endpoint, no target-selected network, no private client key in target | Authored source may contain its own secrets |
 | Panel signing/runtime escalation | Separate process/API, transitive guards; no key/endpoint field in application port | Same-UID/root protection is not established |
 | False readiness | Dependency observations include timestamp; process liveness separate from runtime doctor and actual job state | Observations are historical and not deployment authorization |
