@@ -336,6 +336,15 @@ def doctor(home):
     return results
 
 
+def build_directory():
+    # Cargo may select another output directory through its standard environment
+    # or configuration. Install the executables Cargo actually built.
+    metadata = json.loads(
+        run(["cargo", "metadata", "--no-deps", "--format-version", "1", "--locked"])
+    )
+    return Path(metadata["target_directory"])
+
+
 def initialize(home, args):
     if (home / "installation.json").exists():
         raise RuntimeError(
@@ -380,10 +389,11 @@ def initialize(home, args):
         timeout=600,
         capture=False,
     )
+    built = build_directory() / "debug"
     for name in BINARIES:
-        shutil.copyfile(ROOT / "target/debug" / name, home / "bin" / name)
+        shutil.copyfile(built / name, home / "bin" / name)
         (home / "bin" / name).chmod(0o700)
-    shutil.copyfile(ROOT / "target/debug/examples/migrate", home / "bin/migrate")
+    shutil.copyfile(built / "examples/migrate", home / "bin/migrate")
     (home / "bin/migrate").chmod(0o700)
     database(home)
     replace(home / "config/control-password", (uuid.uuid4().hex + uuid.uuid4().hex).encode())
@@ -1016,11 +1026,12 @@ def update(home):
     env["ARCHCERT_DATABASE_URL"] = (
         f"postgresql://postgres:{password}@127.0.0.1:{config['database_port']}/archcert"
     )
-    run([ROOT / "target/debug/examples/migrate"], env=env)
+    built = build_directory() / "debug"
+    run([built / "examples/migrate"], env=env)
     provision_roles(home)
     upgrade_configuration(home)
     for name in BINARIES + ["migrate"]:
-        source = ROOT / "target/debug" / ("examples/migrate" if name == "migrate" else name)
+        source = built / ("examples/migrate" if name == "migrate" else name)
         replace(home / "bin" / name, source.read_bytes())
         (home / "bin" / name).chmod(0o700)
     config["source_commit"] = run(["git", "-C", ROOT, "rev-parse", "HEAD"]).decode().strip()

@@ -312,6 +312,7 @@ daemons/forwards remain separately operated. `up` is the start command.
 ## Backup, restore and upgrade
 
 ```bash
+./scripts/archcert-services down
 ./scripts/archcert-services backup
 export ARCHCERT_BACKUP="/absolute/path/reported/by/backup"
 ./scripts/archcert-services --home "$HOME/.local/share/archcert-restored" restore \
@@ -319,7 +320,7 @@ export ARCHCERT_BACKUP="/absolute/path/reported/by/backup"
 ./scripts/archcert-services --home "$HOME/.local/share/archcert-restored" up
 ```
 
-`backup` quiesces services, dumps PostgreSQL and retains source, artifacts, Git,
+`backup` requires stopped services, dumps PostgreSQL and retains source, artifacts, Git,
 private configuration, public trust, signing custody, audit and runtime gates.
 The printed directory is private and includes credentials/keys: protect it off-host;
 never commit it. Database backup alone is insufficient. Restoration requires a new
@@ -332,6 +333,7 @@ malicious replacement by a trusted backup owner.
 Before upgrading, inspect release/schema compatibility and make a complete backup:
 
 ```bash
+./scripts/archcert-services down
 ./scripts/archcert-services backup
 git fetch origin
 git checkout fix/existing-product-deployment
