@@ -1,10 +1,11 @@
 //! Glassmere composition: read-only observation and optional bounded command mediation.
 
-mod broker;
-
 use archcert_glassmere::auth::PanelConfiguration;
 use clap::Parser;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+
+mod broker;
+mod local;
 
 #[derive(Parser)]
 struct Arguments {
@@ -12,6 +13,8 @@ struct Arguments {
     config: PathBuf,
     #[arg(long)]
     query_config: PathBuf,
+    #[arg(long)]
+    local_config: Option<PathBuf>,
     #[arg(long)]
     command_config: Option<PathBuf>,
     #[arg(long, default_value = "127.0.0.1:8090")]
@@ -40,7 +43,15 @@ async fn main() -> anyhow::Result<()> {
         .await
         .map_err(|_| anyhow::anyhow!("read-only observation initialization failed"))?;
     let query = Arc::new(query);
-    let router = if let Some(path) = args.command_config {
+    let router = if let Some(path) = args.local_config {
+        anyhow::ensure!(
+            args.command_config.is_none(),
+            "select one independently provisioned command mode"
+        );
+        let local = local::LocalClient::open(path)
+            .map_err(|_| anyhow::anyhow!("local identity configuration unavailable"))?;
+        archcert_glassmere::router_with_local(query, args.config, Arc::new(local))
+    } else if let Some(path) = args.command_config {
         let commands = broker::CommandBroker::open(path, args.config.clone())
             .map_err(|_| anyhow::anyhow!("private command broker initialization failed"))?;
         archcert_glassmere::router_with_commands(query, args.config, Arc::new(commands))

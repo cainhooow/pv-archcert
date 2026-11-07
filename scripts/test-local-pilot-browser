@@ -1,0 +1,125 @@
+#!/usr/bin/env node
+// Actual browser onboarding and exact-source admission; no simulated authority result.
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const cp = require('node:child_process');
+const assert = require('node:assert/strict');
+const { chromium } = require('../tools/glassmere-browser/node_modules/playwright');
+
+const home = process.env.ARCHCERT_LOCAL_HOME;
+assert(home && path.isAbsolute(home), 'select a dedicated fresh persistent test installation');
+const root = path.resolve(__dirname, '..');
+const output = process.env.ARCHCERT_LOCAL_TEST_OUTPUT;
+assert(output && path.resolve(output).startsWith(path.join(root,'target')+path.sep));
+fs.mkdirSync(output,{recursive:true,mode:0o700});
+const installed = JSON.parse(fs.readFileSync(path.join(home,'installation.json')));
+const base = `http://127.0.0.1:${installed.port}`;
+const secret = fs.readFileSync(path.join(home,'bootstrap/setup-secret'),'utf8').trim();
+const account = {email:'operator@archcert.local',password:crypto.randomBytes(24).toString('hex')};
+const credentialsPath=path.join(home,'bootstrap/acceptance-account.json');
+if (fs.existsSync(credentialsPath)) Object.assign(account,JSON.parse(fs.readFileSync(credentialsPath)));
+else fs.writeFileSync(credentialsPath,JSON.stringify(account),{mode:0o600,flag:'wx'});
+const checked = [];
+function run(argv,options={}) {
+  return cp.execFileSync(argv[0],argv.slice(1),{stdio:['pipe','pipe','pipe'],...options});
+}
+function git(repo,...args) {
+  return run(['/usr/bin/git','-c','core.hooksPath=/dev/null',...args],{cwd:repo,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_AUTHOR_NAME:'Local pilot operator',GIT_AUTHOR_EMAIL:account.email,GIT_COMMITTER_NAME:'Local pilot operator',GIT_COMMITTER_EMAIL:account.email,GIT_SSH_COMMAND:sshCommand}});
+}
+const key = path.join(home,'bootstrap/project-key');
+if (!fs.existsSync(key)) run(['/usr/bin/ssh-keygen','-q','-t','ed25519','-N','','-f',key]);
+const sshCommand = run([path.join(root,'scripts/archcert-local'),'--home',home,'git-config','--identity',key]).toString().trim();
+
+(async()=>{
+ const browser = await chromium.launch(process.env.GLASSMERE_CHROME_EXECUTABLE ? {executablePath:process.env.GLASSMERE_CHROME_EXECUTABLE,headless:true} : {channel:'chrome',headless:true});
+ try {
+  const context=await browser.newContext();
+  const page=await context.newPage();
+  if (!process.env.ARCHCERT_LOCAL_TEST_RESUME) {
+  await page.goto(base+'/setup');
+  await page.getByRole('heading',{name:'Create the initial administrator'}).waitFor();
+  const setup={secret,display_name:'Local pilot operator',email:account.email,password:account.password,confirmation:account.password};
+  const denied=await context.request.post(base+'/setup',{form:setup,headers:{Origin:'http://127.0.0.1:1'}});
+  assert.equal(denied.status(),403); checked.push('setup Origin denial');
+  // Two actual browser forms race the same PostgreSQL-enforced transition.
+  const competing=await browser.newContext();
+  const second=await competing.newPage();
+  await second.goto(base+'/setup');
+  for (const candidate of [page,second]) {
+    for (const [name,value] of Object.entries(setup)) await candidate.locator(`[name=${name}]`).fill(value);
+  }
+  const races=await Promise.all([page,second].map(async candidate=>{
+    const response=candidate.waitForResponse(r=>r.url()===base+'/setup' && r.request().method()==='POST');
+    await candidate.getByRole('button',{name:'Create administrator',exact:true}).click();
+    return response;
+  }));
+  fs.writeFileSync(path.join(output,'setup-race.json'),JSON.stringify(await Promise.all(races.map(async r=>({status:r.status(),body:r.status()===303?'REDIRECT':(await r.text()).slice(0,300)}))),null,2));
+  assert.equal(races.filter(r=>r.status()===303).length,1);
+  assert(races.some(r=>[401,409].includes(r.status()))); checked.push('concurrent setup exactly one administrator');
+  await competing.close();
+  assert.equal((await context.request.get(base+'/setup')).status(),410);
+  assert([401,409].includes((await context.request.post(base+'/setup',{form:setup,headers:{Origin:base},maxRedirects:0})).status())); checked.push('setup permanently closed and token replay rejected');
+  } else { checked.push('resumed existing browser-created administrator; fresh setup acceptance remains separate'); }
+  await page.goto(base+'/login');
+  await page.locator('[name=email]').fill(account.email.toUpperCase());
+  await page.locator('[name=password]').fill(account.password);
+  await page.getByRole('button',{name:'Sign in',exact:true}).click();
+  await page.getByRole('heading',{name:'Local installation',exact:true}).waitFor();
+  if (process.env.ARCHCERT_LOCAL_TEST_CONFIGURE === '1') {
+    const args=[path.join(root,'scripts/archcert-local'),'--home',home,'configure-authority','--image',process.env.ARCHCERT_TEST_IMAGE,'--development-signing','--docker',process.env.ARCHCERT_TEST_DOCKER,'--endpoint',process.env.ARCHCERT_TEST_ENDPOINT];
+    assert(args.every(value=>typeof value==='string'));
+    run(args);
+    run([path.join(root,'scripts/archcert-local'),'--home',home,'restart']);
+    await page.goto(base+'/login');
+    await page.locator('[name=email]').fill(account.email);
+    await page.locator('[name=password]').fill(account.password);
+    await page.getByRole('button',{name:'Sign in',exact:true}).click();
+    await page.getByRole('heading',{name:'Local installation',exact:true}).waitFor();
+    checked.push('host authority configured explicitly after browser account creation; service restart');
+  }
+  const cookie=(await context.cookies()).find(c=>c.name==='archcert_session');
+  assert(cookie.httpOnly && cookie.sameSite==='Strict' && !cookie.secure); checked.push('password login and HttpOnly Strict session');
+  const foreign=await context.request.get(base+'/projects/11111111-1111-4111-8111-111111111111');
+  assert.equal(foreign.status(),404); checked.push('unassigned project denied');
+  if (await page.getByRole('heading',{name:'Cent ledger',exact:true}).count()===0) {
+  await page.locator('[name=name]').fill('Cent ledger');
+  await page.locator('[name=description]').fill('Integer-cent ledger <script>window.owned=true</script>');
+  await page.locator('[name=repository]').fill('pilot/cent-ledger');
+  await page.locator('[name=public_key]').fill(fs.readFileSync(key+'.pub','utf8').trim());
+  await page.getByRole('button',{name:'Create project and register repository'}).click();
+  await page.waitForURL(base+'/login'); checked.push('project and SSH repository registration');
+  await page.locator('[name=email]').fill(account.email);
+  await page.locator('[name=password]').fill(account.password);
+  await page.getByRole('button',{name:'Sign in',exact:true}).click();
+  await page.getByRole('heading',{name:'Cent ledger',exact:true}).waitFor();
+  }
+  assert.equal(await page.evaluate(()=>window.owned),undefined); checked.push('stored project metadata escaped');
+  const text=await page.locator('main').innerText();
+  const remote=text.match(/[a-zA-Z0-9_.-]+@127\.0\.0\.1:projects\/([0-9a-f-]+)\.git/);
+  assert(remote); const project=remote[1];
+  const repo=path.join(home,'bootstrap/real-project');
+  const existingRepo=fs.existsSync(path.join(repo,'.git'));
+  fs.mkdirSync(repo,{mode:0o700,recursive:true});
+  for(const file of ['ledger.py','checks.py']) fs.copyFileSync(path.join(root,'examples/local-ledger',file),path.join(repo,file));
+  git(repo,'init','--template=','--initial-branch=main');
+  git(repo,'add','ledger.py','checks.py');
+  if (!existingRepo) git(repo,'commit','-m','Implement integer-cent ledger with duplicate posting rejection');
+  const commit=git(repo,'rev-parse','HEAD').toString().trim();
+  git(repo,'remote',existingRepo?'set-url':'add','archcert',remote[0]);
+  git(repo,'push','archcert','HEAD:refs/heads/candidate'); checked.push('real authenticated Northgate push');
+  await page.reload();
+  await page.getByText(commit,{exact:false}).first().waitFor();
+  assert((await page.locator('main').innerText()).includes('snapshot_sha256')); checked.push('commit tree snapshot identity shown');
+  const form=page.locator('form[action="/local/certify"]').first();
+  await form.getByRole('button').click();
+  await page.getByRole('heading',{name:'REQUEST ACCEPTED',exact:true}).waitFor();
+  const jobLink=page.getByRole('link',{name:/Monitor job/});
+  const jobHref=await jobLink.getAttribute('href');
+  await jobLink.click();
+  assert((await page.locator('main').innerText()).includes('QUEUED') || (await page.locator('main').innerText()).includes('RUNNING')); checked.push('real durable certification admitted');
+  await page.screenshot({path:path.join(output,'job-admitted.png'),fullPage:true});
+  fs.writeFileSync(path.join(output,'journey.json'),JSON.stringify({project,commit,job:jobHref.split('/').at(-1),job_url:base+jobHref,browser:browser.version(),checked},null,2));
+  console.log(JSON.stringify({checked,project,commit,job:jobHref.split('/').at(-1)}));
+ } finally {await browser.close();}
+})().catch(error=>{console.error(error.message.replaceAll(secret,"[REDACTED]").replaceAll(account.password,"[REDACTED]"));process.exit(1);});

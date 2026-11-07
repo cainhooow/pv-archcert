@@ -19,6 +19,8 @@ pub mod jobs;
 
 pub mod knowledge;
 
+pub mod local;
+
 pub mod materialization;
 
 pub mod semantic;

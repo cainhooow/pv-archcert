@@ -3,8 +3,9 @@
 Terminology: [ADR 0045](../adr/0045-roadmap-reconciliation.md) reconciles this work to M7 Asterwyn,
 M8 Greywatch and their durable lifecycle integration. `Ironcrest` in retained
 implementation identifiers and this document is a historical label. Canonical
-M6 Ironcrest (Artifact Binding, Reproducible Builds & Release Permit) remains
-PLANNED / NOT YET IMPLEMENTED. No security or compatibility semantics change.
+M6 Ironcrest (Artifact Binding, Reproducible Builds & Release Permit) is COMPLETE
+within the separately documented single-file native scope, with development signing;
+see [the release guide](../release/README.md). No security or compatibility semantics change.
 
 The PostgreSQL service is infrastructure. It is separate from the independently
 provisioned rootless target execution daemon, network, credentials and filesystem.

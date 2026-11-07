@@ -323,6 +323,7 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
     // not acquire signing authority, directly or through an intermediate crate.
     for root in [
         "archcertd",
+        "archcert-local-api",
         "archcert-glassmere",
         "archcert-control-plane",
         "archcert-worker",
@@ -392,6 +393,13 @@ fn workspace_dependencies_point_inward_and_scaffolds_stay_outside_active_executi
                 "runtime, provider or acquisition enters Glassmere graph {root}: {name}"
             );
         }
+    }
+
+    for name in dependency_closure(&graph, "archcert-local-api") {
+        assert!(
+            !is_runtime_dependency(&name) && !is_semantic_provider_dependency(&name),
+            "runtime/provider enters local identity boundary: {name}"
+        );
     }
 
     for root in ["archcert-gateway", "archcert-gateway-cli"] {

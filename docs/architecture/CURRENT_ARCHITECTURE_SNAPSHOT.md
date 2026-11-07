@@ -650,3 +650,29 @@ and the explicit historical marker. Retained observations have structured identi
 and blocker summaries without live-confirmation attributes; their exact live query
 is a separate link. No new build, review waiver, signature or release authority is
 introduced. Full browser integration qualification and M9 closure remain separate.
+
+## Local self-hosted pilot (M9 remains incomplete)
+
+ADR 0070 adds an opt-in separate local identity/provisioning service. PostgreSQL
+owns one-way instance initialization, Argon2id accounts, non-revivable assignment
+generations, bounded owned project registration and operational audit. Glassmere
+uses a private fixed loopback port for onboarding and rechecks the durable account
+generation on each authenticated local request. Its authority observation remains
+SELECT-only and excludes account tables; the service receives no runtime or signer.
+Legacy external bearer and command-broker contracts remain available separately.
+
+`scripts/archcert-local` explicitly installs/migrates private storage outside target
+source, supervises the existing native services, and invokes the existing trusted
+controller's run-once loop only with explicit rootless runtime/development custody.
+Northgate still validates authenticated Git pushes into immutable source; local
+certification reuses existing exact-source durable admission. The worker remains a
+credential-free child. No new target execution, policy, certificate, canonical
+artifact, M6 recipe or runtime cleanup mechanism is introduced. Private projections
+are reconstructible from retained database state; initialized setup never reopens.
+
+The local UI supports one host-selected bounded Python profile, with unsupported
+M6/remote-import/provider paths explicit. Classification is LOCAL SELF-HOSTED PILOT
+— DEVELOPMENT CERTIFICATION AUTHORITY. Operational acceptance and limits are in
+operations/LOCAL_PILOT.md; compilation or web availability alone establishes no
+end-to-end acceptance, M9 completion, native qualification or independent certification.
+M10, M11, Pre-Genesis and Genesis remain NOT STARTED.

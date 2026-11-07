@@ -58,7 +58,7 @@ fn supported(operation: ControlOperation) -> bool {
     )
 }
 
-fn read_private(path: &Path) -> Result<Vec<u8>> {
+pub(super) fn read_private(path: &Path) -> Result<Vec<u8>> {
     if !path.is_absolute()
         || path
             .canonicalize()

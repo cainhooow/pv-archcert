@@ -1,0 +1,128 @@
+#!/usr/bin/env node
+// Real certificate download/verification, negative source, sessions and restart.
+const fs = require('node:fs');
+const path = require('node:path');
+const cp = require('node:child_process');
+const assert = require('node:assert/strict');
+const { chromium } = require('../tools/glassmere-browser/node_modules/playwright');
+
+const home = process.env.ARCHCERT_LOCAL_HOME;
+const output = process.env.ARCHCERT_LOCAL_TEST_OUTPUT;
+assert(home && output && path.isAbsolute(home));
+const root = path.resolve(__dirname,'..');
+assert(path.resolve(output).startsWith(path.join(root,'target')+path.sep));
+const journey = JSON.parse(fs.readFileSync(path.join(output,'journey.json')));
+const installed = JSON.parse(fs.readFileSync(path.join(home,'installation.json')));
+const account = JSON.parse(fs.readFileSync(path.join(home,'bootstrap/acceptance-account.json')));
+const base = `http://127.0.0.1:${installed.port}`;
+const checked = [];
+const launcher = path.join(root,'scripts/archcert-local');
+const run = (argv,options={}) => cp.execFileSync(argv[0],argv.slice(1),{stdio:['pipe','pipe','pipe'],timeout:180000,...options});
+const local = (...args) => run([launcher,'--home',home,...args]);
+
+(async()=>{
+  const browser = await chromium.launch(process.env.GLASSMERE_CHROME_EXECUTABLE ?
+    {executablePath:process.env.GLASSMERE_CHROME_EXECUTABLE,headless:true} : {channel:'chrome',headless:true});
+  try {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const login = async()=>{
+      await page.goto(base+'/login');
+      await page.locator('[name=email]').fill(account.email);
+      await page.locator('[name=password]').fill(account.password);
+      await page.getByRole('button',{name:'Sign in',exact:true}).click();
+      await page.getByRole('heading',{name:'Local installation',exact:true}).waitFor();
+    };
+    await login();
+    await page.screenshot({path:path.join(output,'local-installation.png'),fullPage:true});
+
+    await page.goto(journey.job_url);
+    for(let attempt=0;attempt<90;attempt++) {
+      if ((await page.locator('main').innerText()).includes('COMPLETED')) break;
+      await page.waitForTimeout(1000);
+      await page.reload();
+    }
+    assert((await page.locator('main').innerText()).includes('COMPLETED'));
+    const certificateRow = page.locator('tr').filter({hasText:'CERTIFICATE'}).first();
+    await certificateRow.locator('a').first().click();
+    await page.getByRole('link',{name:'Download original bytes',exact:true}).waitFor();
+    const downloadHref = await page.getByRole('link',{name:'Download original bytes',exact:true}).getAttribute('href');
+    const response = await context.request.get(base+downloadHref);
+    assert.equal(response.status(),200);
+    assert(response.headers()['content-disposition'].includes('attachment'));
+    const certificate = path.join(output,'certificate.json');
+    fs.writeFileSync(certificate,await response.body(),{mode:0o600});
+    const verified = JSON.parse(run([path.join(home,'bin/archcert'),'verify',certificate,'--public-key',path.join(home,'public/source.hex')]));
+    assert.equal(verified.status,'CERTIFIED');
+    fs.writeFileSync(path.join(output,'offline-verification.json'),JSON.stringify(verified,null,2));
+    await page.screenshot({path:path.join(output,'certificate-verified.png'),fullPage:true});
+    checked.push('completed isolated job, immutable evidence, authenticated certificate download, selected-key offline verification');
+
+    await page.goto(base+'/local');
+    const csrf = await page.locator('form[action="/logout"] input[name=csrf]').inputValue();
+    const forbidden = await context.request.post(base+'/logout',{headers:{Origin:base},form:{csrf:'incorrect'}});
+    assert.equal(forbidden.status(),403);
+    const foreignOrigin = await context.request.post(base+'/local/projects',{headers:{Origin:'http://127.0.0.1:1'},form:{csrf}});
+    assert.equal(foreignOrigin.status(),403);
+    const elevated = await context.request.post(base+'/local/projects',{headers:{Origin:base},form:{csrf,role:'ADMINISTRATOR'}});
+    assert.equal(elevated.status(),400);
+    checked.push('logout CSRF, configuration Origin and posted privilege escalation denied');
+
+    // A real changed source contains a business regression; it must receive a separate negative result.
+    const repo = path.join(home,'bootstrap/real-project');
+    const ledger = path.join(repo,'ledger.py');
+    const wasChanged=fs.readFileSync(ledger,'utf8').includes('Deliberate duplicate-posting regression');
+    fs.writeFileSync(ledger,fs.readFileSync(ledger,'utf8').replace('raise ValueError("duplicate posting reference")','pass  # Deliberate duplicate-posting regression for negative acceptance'));
+    const ssh = local('git-config','--identity',path.join(home,'bootstrap/project-key')).toString().trim();
+    const git = (...args)=>run(['/usr/bin/git','-c','core.hooksPath=/dev/null',...args],{cwd:repo,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_SSH_COMMAND:ssh,GIT_AUTHOR_NAME:'Local pilot operator',GIT_AUTHOR_EMAIL:account.email,GIT_COMMITTER_NAME:'Local pilot operator',GIT_COMMITTER_EMAIL:account.email}});
+    git('add','ledger.py');
+    if (!wasChanged) git('commit','-m','Introduce duplicate-posting regression for rejection acceptance');
+    const changedCommit = git('rev-parse','HEAD').toString().trim();
+    assert.notEqual(changedCommit,journey.commit);
+    git('push','archcert','HEAD:refs/heads/candidate');
+    await page.reload();
+    const source = page.locator('pre').filter({hasText:changedCommit}).first();
+    await source.waitFor();
+    const form = source.locator('xpath=following-sibling::form[1]');
+    const intent = await form.locator('input').evaluateAll(inputs=>Object.fromEntries(inputs.map(i=>[i.name,i.value])));
+    const duplicate = await Promise.all([1,2].map(()=>context.request.post(base+'/local/certify',{headers:{Origin:base},form:intent})));
+    assert(duplicate.every(r=>r.status()===200));
+    const bodies = await Promise.all(duplicate.map(r=>r.text()));
+    const jobs = bodies.map(body=>body.match(/\/jobs\/([0-9a-f-]+)/)[1]);
+    assert.equal(jobs[0],jobs[1]);
+    assert.notEqual(jobs[0],journey.job);
+    const changedUrl = base+`/projects/${journey.project}/jobs/${jobs[0]}`;
+    await page.goto(changedUrl);
+    for(let attempt=0;attempt<90;attempt++) {
+      if ((await page.locator('main').innerText()).includes('NOT_ELIGIBLE')) break;
+      await page.waitForTimeout(1000);
+      await page.reload();
+    }
+    assert((await page.locator('main').innerText()).includes('NOT_ELIGIBLE'));
+    await page.screenshot({path:path.join(output,'changed-source-rejected.png'),fullPage:true});
+    checked.push('modified commit has distinct source/job; concurrent duplicate admission coalesced; actual failing test cannot issue a certificate');
+
+    local('set-role',account.email,'ADMINISTRATOR');
+    assert.equal((await context.request.get(base+`/projects/${journey.project}`)).status(),401);
+    await login();
+    checked.push('audited assignment generation invalidates old sessions even when the visible role is restored');
+    local('restart');
+    assert.equal((await context.request.get(base+`/projects/${journey.project}`)).status(),401);
+    await login();
+    await page.goto(journey.job_url);
+    assert((await page.locator('main').innerText()).includes('COMPLETED'));
+    const after = await context.request.get(base+downloadHref);
+    assert.equal(after.status(),200);
+    assert.deepEqual(await after.body(),fs.readFileSync(certificate));
+    assert.equal((await context.request.get(base+'/setup')).status(),410);
+    checked.push('restart preserves account/project/source/jobs/evidence/certificate; sessions expire and first-run remains closed');
+
+    fs.writeFileSync(path.join(output,'results.json'),JSON.stringify({checked,changed_commit:changedCommit,changed_job:jobs[0],certificate:verified},null,2));
+    console.log(JSON.stringify({checked,changed_commit:changedCommit,changed_job:jobs[0]}));
+  } finally {
+    await browser.close();
+  }
+})().catch(error=>{
+  console.error(error.message.replaceAll(account.password,'[REDACTED]'));
+  process.exit(1);
+});

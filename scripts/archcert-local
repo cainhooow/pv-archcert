@@ -1,0 +1,1197 @@
+#!/usr/bin/env python3
+"""Persistent loopback pilot installation; host provisioning is never target input."""
+
+import argparse
+import fcntl
+import getpass
+import hashlib
+import json
+import os
+from pathlib import Path
+import shlex
+import shutil
+import signal
+import socket
+import stat
+import subprocess
+import sys
+import tarfile
+import time
+import urllib.error
+import urllib.request
+import uuid
+
+ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_HOME = Path.home() / ".local/share/archcert-pilot"
+POSTGRES = "postgres@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336"
+BINARIES = [
+    "archcert",
+    "archcert-local-api",
+    "archcert-panel",
+    "archcert-controller",
+    "archcert-worker",
+    "archcert-gateway",
+]
+DIRECTORIES = [
+    "config",
+    "bootstrap",
+    "artifacts",
+    "sources",
+    "git",
+    "signing",
+    "public",
+    "workspaces",
+    "workspaces.runtime",
+    "audit",
+    "logs",
+    "backups",
+    "run",
+    "health",
+    "bin",
+    "database",
+]
+
+
+def run(argv, *, data=None, env=None, timeout=180, capture=True):
+    result = subprocess.run(
+        [str(a) for a in argv],
+        input=data,
+        env=env,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.PIPE if capture else None,
+        timeout=timeout,
+        cwd=ROOT,
+    )
+    if result.returncode:
+        # A subprocess may contain credentials in its diagnostics. Keep private logs local.
+        raise RuntimeError(
+            f"{Path(str(argv[0])).name} failed (exit {result.returncode}); inspect private installation logs"
+        )
+    return result.stdout if capture else b""
+
+
+def private_json(path, value):
+    replace(path, (json.dumps(value, indent=2) + "\n").encode())
+
+
+def replace(path, data):
+    temporary = path.parent / (".write-" + uuid.uuid4().hex)
+    with temporary.open("xb") as output:
+        os.chmod(temporary, 0o600)
+        output.write(data)
+        output.flush()
+        os.fsync(output.fileno())
+    os.replace(temporary, path)
+    descriptor = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def read(path):
+    metadata = path.lstat()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_mode & 0o077
+        or metadata.st_nlink != 1
+    ):
+        raise RuntimeError(f"private owned regular file required: {path}")
+    return json.loads(path.read_text())
+
+
+def home_path(value):
+    path = Path(value).expanduser().absolute()
+    if path.exists() and (path.is_symlink() or path.resolve() != path):
+        raise RuntimeError("installation path must be canonical without symlink ancestors")
+    if path == ROOT or ROOT in path.parents or path in ROOT.parents:
+        raise RuntimeError("installation data must be outside the source repository")
+    if any(character in str(path) for character in "'\"\\\n\r"):
+        raise RuntimeError("unsupported installation path characters")
+    return path
+
+
+def manifest(home):
+    return read(home / "installation.json")
+
+
+def environment(home, observation=False):
+    config = manifest(home)
+    password_path = home / (
+        "config/observation-password" if observation else "config/control-password"
+    )
+    if not password_path.exists():
+        raise RuntimeError(
+            "database role provisioning incomplete; run update with migration authority"
+        )
+    password = password_path.read_text().strip()
+    role = "local_observer" if observation else "local_control"
+    env = {"PATH": os.defpath, "HOME": str(Path.home()), "TMPDIR": str(home / "run")}
+    key = "ARCHCERT_OBSERVATION_DATABASE_URL" if observation else "ARCHCERT_DATABASE_URL"
+    env[key] = f"postgresql://{role}:{password}@127.0.0.1:{config['database_port']}/archcert"
+    return env
+
+
+def database(home, start=True):
+    config = manifest(home)
+    result = subprocess.run(
+        [
+            "docker",
+            "--context",
+            config["database_context"],
+            "container",
+            "inspect",
+            config["container"],
+        ],
+        capture_output=True,
+        timeout=15,
+    )
+    if result.returncode == 0:
+        inspected = json.loads(result.stdout)[0]
+        if (
+            inspected["Config"].get("Labels", {}).get("archcert.local.instance")
+            != config["instance"]
+        ):
+            raise RuntimeError("database ownership label mismatch; refusing to control it")
+        if not start:
+            run(["docker", "--context", config["database_context"], "stop", config["container"]])
+            return
+        run(["docker", "--context", config["database_context"], "start", config["container"]])
+    elif start:
+        run(
+            [
+                "docker",
+                "--context",
+                config["database_context"],
+                "run",
+                "-d",
+                "--name",
+                config["container"],
+                "--label",
+                f"archcert.local.instance={config['instance']}",
+                "--publish",
+                f"127.0.0.1:{config['database_port']}:5432",
+                "--mount",
+                f"type=bind,source={home}/database,target=/var/lib/postgresql",
+                "--mount",
+                f"type=bind,source={home}/config/database-password,target=/run/secrets/database-password,readonly",
+                "--env",
+                "POSTGRES_DB=archcert",
+                "--env",
+                "POSTGRES_PASSWORD_FILE=/run/secrets/database-password",
+                "--health-cmd",
+                "pg_isready -U postgres -d archcert",
+                "--health-interval",
+                "2s",
+                "--health-retries",
+                "30",
+                POSTGRES,
+            ]
+        )
+    else:
+        raise RuntimeError("database container missing; inspect persistent data before recovery")
+    for _ in range(60):
+        observed = (
+            run(
+                [
+                    "docker",
+                    "--context",
+                    config["database_context"],
+                    "inspect",
+                    "--format",
+                    "{{.State.Health.Status}}",
+                    config["container"],
+                ]
+            )
+            .decode()
+            .strip()
+        )
+        if observed == "healthy":
+            return
+        if observed == "unhealthy":
+            raise RuntimeError(
+                "PostgreSQL health failed; inspect selected database container locally"
+            )
+        time.sleep(1)
+    raise RuntimeError("PostgreSQL startup timeout")
+
+
+def sql(home, statement):
+    return run(
+        [
+            "docker",
+            "--context",
+            manifest(home)["database_context"],
+            "exec",
+            "-i",
+            "--user",
+            "postgres",
+            manifest(home)["container"],
+            "psql",
+            "-X",
+            "-q",
+            "-tA",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-U",
+            "postgres",
+            "-d",
+            "archcert",
+        ],
+        data=statement.encode(),
+    )
+
+
+def provision_roles(home, create=False):
+    passwords = {}
+    for role, filename in [
+        ("local_control", "control-password"),
+        ("local_observer", "observation-password"),
+    ]:
+        path = home / "config" / filename
+        if not path.exists():
+            replace(path, (uuid.uuid4().hex + uuid.uuid4().hex).encode())
+        passwords[role] = path.read_text().strip()
+        verb = "CREATE ROLE" if create else "ALTER ROLE"
+        sql(home, f"{verb} {role} LOGIN PASSWORD '{passwords[role]}';")
+    sql(
+        home,
+        "GRANT CONNECT ON DATABASE archcert TO local_control,local_observer; GRANT USAGE ON SCHEMA public TO local_control,local_observer; GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA public TO local_control; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO local_control; REVOKE INSERT,UPDATE ON _sqlx_migrations FROM local_control;",
+    )
+    tables = (
+        sql(home, "SELECT tablename FROM pg_tables WHERE schemaname='public';")
+        .decode()
+        .splitlines()
+    )
+    for table in tables:
+        if not table.replace("_", "").isalnum():
+            raise RuntimeError("unexpected table identifier")
+        if "audit" in table:
+            sql(home, f'REVOKE UPDATE ON "{table}" FROM local_control;')
+        if not table.startswith("local_"):
+            sql(home, f'GRANT SELECT ON "{table}" TO local_observer;')
+
+
+def local_admin(home, *arguments):
+    return run(
+        [home / "bin/archcert-local-api", "--config", home / "config/local-api.json", *arguments],
+        env=environment(home),
+    )
+
+
+def available_port(port):
+    with socket.socket() as stream:
+        stream.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        stream.bind(("127.0.0.1", port))
+
+
+def doctor(home):
+    results = {}
+    for executable in ["cargo", "rustc", "git", "docker", "python3", "ssh", "ssh-keygen"]:
+        results[executable] = shutil.which(executable) or "UNAVAILABLE"
+    results["sshd"] = "/usr/sbin/sshd" if Path("/usr/sbin/sshd").is_file() else "UNAVAILABLE"
+    for name, command in [
+        ("rust", ["rustc", "--version"]),
+        ("database_daemon", ["docker", "info", "--format", "{{.ServerVersion}}"]),
+    ]:
+        try:
+            results[name] = run(command, timeout=20).decode().strip()
+        except (OSError, RuntimeError, subprocess.TimeoutExpired):
+            results[name] = "UNAVAILABLE"
+    results["classification"] = "LOCAL SELF-HOSTED PILOT — DEVELOPMENT CERTIFICATION AUTHORITY"
+    results["target_runtime"] = (
+        "CONFIGURATION_REQUIRED (separate rootless daemon; database Docker context is not execution authority)"
+    )
+    if (home / "installation.json").exists():
+        results["installation"] = str(home)
+        results["source"] = manifest(home)["source_commit"]
+    print(json.dumps(results, indent=2))
+    return results
+
+
+def initialize(home, args):
+    if (home / "installation.json").exists():
+        raise RuntimeError(
+            "installation already exists; use up, migrate, renew-setup or recovery; init never resets it"
+        )
+    for port in [args.port, args.port + 1, args.database_port, args.ssh_port]:
+        available_port(port)
+    if len({args.port, args.port + 1, args.database_port, args.ssh_port}) != 4:
+        raise RuntimeError("service ports must be distinct")
+    if home.exists() and any(home.iterdir()):
+        raise RuntimeError(
+            "new installation requires an empty directory; preserve interrupted state for investigation"
+        )
+    home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    home.chmod(0o700)
+    for name in DIRECTORIES:
+        (home / name).mkdir(mode=0o700)
+    instance = str(uuid.uuid4())
+    suffix = instance[:8]
+    head = run(["git", "-C", ROOT, "rev-parse", "HEAD"]).decode().strip()
+    config = {
+        "instance": instance,
+        "source_repository": str(ROOT),
+        "source_commit": head,
+        "source_dirty": bool(run(["git", "-C", ROOT, "diff", "HEAD", "--name-only"]).strip()),
+        "port": args.port,
+        "database_port": args.database_port,
+        "ssh_port": args.ssh_port,
+        "database_context": run(["docker", "context", "show"]).decode().strip(),
+        "container": f"archcert-local-{suffix}-postgres",
+    }
+    private_json(home / "installation.json", config)
+    password = uuid.uuid4().hex + uuid.uuid4().hex
+    replace(home / "config/database-password", password.encode())
+    print(
+        "Building the existing trusted executables with the pinned toolchain and lockfile...",
+        flush=True,
+    )
+    run(["cargo", "build", "--workspace", "--locked"], timeout=1800, capture=False)
+    run(
+        ["cargo", "build", "-p", "archcert-storage", "--example", "migrate", "--locked"],
+        timeout=600,
+        capture=False,
+    )
+    for name in BINARIES:
+        shutil.copyfile(ROOT / "target/debug" / name, home / "bin" / name)
+        (home / "bin" / name).chmod(0o700)
+    shutil.copyfile(ROOT / "target/debug/examples/migrate", home / "bin/migrate")
+    (home / "bin/migrate").chmod(0o700)
+    database(home)
+    replace(home / "config/control-password", (uuid.uuid4().hex + uuid.uuid4().hex).encode())
+    replace(home / "config/observation-password", (uuid.uuid4().hex + uuid.uuid4().hex).encode())
+    migration_env = environment(home)
+    migration_env["ARCHCERT_DATABASE_URL"] = (
+        f"postgresql://postgres:{password}@127.0.0.1:{args.database_port}/archcert"
+    )
+    run([home / "bin/migrate"], env=migration_env)
+    provision_roles(home, create=True)
+    token = uuid.uuid4().hex + uuid.uuid4().hex
+    private_json(
+        home / "config/local-api.json",
+        {
+            "instance": instance,
+            "root": str(home),
+            "origin": f"http://127.0.0.1:{args.port}",
+            "listen": f"127.0.0.1:{args.port+1}",
+            "token_sha256": hashlib.sha256(token.encode()).hexdigest(),
+            "gateway_binary": str(home / "bin/archcert-gateway"),
+            "ssh_user": getpass.getuser(),
+            "ssh_port": args.ssh_port,
+            "image": None,
+            "authority_toml": (ROOT / "docs/policy/CONTROLLED_AUTHORITY.toml").read_text(),
+        },
+    )
+    private_json(
+        home / "config/local-client.json", {"endpoint": f"127.0.0.1:{args.port+1}", "token": token}
+    )
+    private_json(
+        home / "config/query.json",
+        {
+            "schema": 1,
+            "artifact_root": str(home / "artifacts"),
+            "source_public_keys": [],
+            "release_public_keys": [],
+            "recipes": [],
+        },
+    )
+    run(["/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", home / "git/host"])
+    replace(
+        home / "git/known_hosts",
+        (f"[127.0.0.1]:{args.ssh_port} " + (home / "git/host.pub").read_text()).encode(),
+    )
+    ssh_config = f"""Port {args.ssh_port}
+ListenAddress 127.0.0.1
+HostKey {home}/git/host
+PidFile {home}/run/sshd.pid
+AuthorizedKeysFile {home}/git/authorized_keys
+StrictModes yes
+UsePAM no
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+DisableForwarding yes
+AllowTcpForwarding no
+AllowAgentForwarding no
+X11Forwarding no
+PermitTunnel no
+PermitTTY no
+PermitUserRC no
+PermitUserEnvironment no
+MaxAuthTries 3
+MaxSessions 1
+MaxStartups 2:100:2
+LoginGraceTime 15
+AllowUsers {getpass.getuser()}
+LogLevel VERBOSE
+"""
+    replace(home / "git/sshd_config", ssh_config.encode())
+    local_admin(home, "init")
+    print(
+        f"Initialized persistent pilot at {home}. Run up, then open http://127.0.0.1:{args.port}/setup."
+    )
+    print(
+        "Obtain the setup secret locally with scripts/archcert-local setup-secret. It is never printed during init."
+    )
+
+
+def configure(home, args):
+    import re
+
+    if not re.fullmatch(r"[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}", args.image):
+        raise RuntimeError("authority image must be repository@sha256 with a full digest")
+    config = read(home / "config/local-api.json")
+    if config["image"] not in [None, args.image]:
+        raise RuntimeError(
+            "changing an installed authority image requires a new separately reviewed installation/profile"
+        )
+    config["image"] = args.image
+    private_json(home / "config/local-api.json", config)
+    if args.development_signing:
+        key = home / "signing/development.der"
+        public = home / "public/source.hex"
+        if not key.exists() and not public.exists():
+            run(
+                [
+                    home / "bin/archcert",
+                    "development-keygen",
+                    "--private-key",
+                    key,
+                    "--public-key",
+                    public,
+                ]
+            )
+        if not key.exists() or not public.exists():
+            raise RuntimeError("incomplete signing identity: preserve files and investigate")
+        query = read(home / "config/query.json")
+        query["source_public_keys"] = [public.read_text().strip()]
+        private_json(home / "config/query.json", query)
+    if args.docker or args.endpoint:
+        if (
+            not args.docker
+            or not args.endpoint
+            or not Path(args.docker).is_absolute()
+            or not args.endpoint.startswith("unix:///")
+        ):
+            raise RuntimeError(
+                "explicit absolute Docker executable and local rootless Unix endpoint required"
+            )
+        private_json(
+            home / "config/runtime.json",
+            {"docker": str(Path(args.docker).resolve()), "endpoint": args.endpoint},
+        )
+    local_admin(home, "publish")
+    print(
+        "Development authority selection recorded. Restart services to load the new selection. Runtime readiness is checked independently."
+    )
+
+
+def pid_running(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def supervisor_state(home):
+    path = home / "run/services.json"
+    return read(path) if path.exists() else {}
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file, code, message, headers, new_url):
+        return None
+
+
+def local_status(home):
+    client = read(home / "config/local-client.json")
+    address, port = client["endpoint"].rsplit(":", 1)
+    if (
+        address != "127.0.0.1"
+        or not port.isdigit()
+        or not 0 < int(port) <= 65535
+        or len(client["token"]) != 64
+    ):
+        raise RuntimeError("invalid private loopback client configuration")
+    request = urllib.request.Request(
+        "http://" + client["endpoint"] + "/local",
+        data=b'{"operation":"STATUS"}',
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + client["token"]},
+    )
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    with opener.open(request, timeout=2) as response:
+        return json.loads(response.read(131073))
+
+
+def start(home):
+    if (home / "run/update.pending").exists():
+        raise RuntimeError(
+            "interrupted update: complete update before startup; do not downgrade the migrated database"
+        )
+    state = supervisor_state(home)
+    if state.get("running") and state.get("supervisor") and pid_running(state["supervisor"]):
+        raise RuntimeError("supervisor already running; inspect status")
+    with (home / "run/supervisor.lock").open("a+") as coordination:
+        for attempt in range(50):
+            try:
+                fcntl.flock(coordination, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if attempt == 49:
+                    raise RuntimeError(
+                        "supervisor coordination is still held; inspect shutdown before restart"
+                    )
+                time.sleep(0.1)
+    database(home)
+    config = manifest(home)
+    for port in [config["port"], config["port"] + 1, config["ssh_port"]]:
+        available_port(port)
+    with (home / "logs/supervisor.log").open("ab") as log:
+        process = subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "--home", str(home), "__supervise"],
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+            cwd=home / "run",
+        )
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        state = supervisor_state(home)
+        if process.poll() is not None:
+            raise RuntimeError("supervisor startup failed; inspect private supervisor log")
+        if state.get("supervisor") == process.pid:
+            try:
+                observed = local_status(home)
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{config['port']}/healthz", timeout=1
+                ) as response:
+                    if response.status == 200 and observed["state"] in [
+                        "SETUP_PENDING",
+                        "INITIALIZED",
+                        "RECOVERY_REQUIRED",
+                    ]:
+                        break
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+                pass
+        time.sleep(0.1)
+    else:
+        raise RuntimeError(
+            "service startup not ready after 45 seconds; inspect private logs and status"
+        )
+    print(f"Started http://127.0.0.1:{config['port']}/local; use status for actual dependencies.")
+
+
+def stop(home, stop_database=True):
+    state = supervisor_state(home)
+    pid = state.get("supervisor")
+    if pid and pid_running(pid):
+        command = run(["/bin/ps", "-p", str(pid), "-o", "command="]).decode()
+        if "__supervise" not in command or str(home) not in command:
+            raise RuntimeError("PID identity mismatch; refusing to signal an unknown process")
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(150):
+            if not pid_running(pid) or not supervisor_state(home).get("running", False):
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError("supervisor shutdown uncertain; inspect before further action")
+    # SIGKILL can leave child sessions after the supervisor itself is gone.
+    # Signal only the recorded process group whose current command matches this installation.
+    for name, child in state.get("children", {}).items():
+        if not pid_running(child):
+            continue
+        inspected = subprocess.run(
+            ["/bin/ps", "-p", str(child), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        command = inspected.stdout
+        expected = (
+            str(home / "git/sshd_config")
+            if name == "git-ingress"
+            else str(
+                home
+                / "bin"
+                / {
+                    "local-api": "archcert-local-api",
+                    "panel": "archcert-panel",
+                    "controller": "archcert-controller",
+                }.get(name, "UNKNOWN")
+            )
+        )
+        if expected not in command or os.getpgid(child) != child:
+            raise RuntimeError(
+                "recorded child identity is uncertain; refusing to signal an unknown process"
+            )
+        os.killpg(child, signal.SIGTERM)
+    private_json(
+        home / "run/services.json", {"running": False, "supervisor": pid or 0, "children": {}}
+    )
+    if stop_database:
+        database(home, False)
+    print(
+        "Stopped selected installation. Persistent state, gates and unknown runtime resources retained."
+    )
+
+
+def supervise(home):
+    lock = (home / "run/supervisor.lock").open("a+")
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    config = manifest(home)
+    children = {}
+    stopping = False
+
+    def shutdown(_signum, _frame):
+        nonlocal stopping
+        stopping = True
+
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
+    commands = {
+        "local-api": [
+            home / "bin/archcert-local-api",
+            "--config",
+            home / "config/local-api.json",
+            "serve",
+        ],
+        "panel": [
+            home / "bin/archcert-panel",
+            "--config",
+            home / "config/panel.json",
+            "--query-config",
+            home / "config/query.json",
+            "--local-config",
+            home / "config/local-client.json",
+            "--listen",
+            f"127.0.0.1:{config['port']}",
+        ],
+        "git-ingress": ["/usr/sbin/sshd", "-D", "-e", "-f", home / "git/sshd_config"],
+    }
+    next_controller = 0
+    next_probe = 0
+    health = {
+        "runtime": "CONFIGURATION_REQUIRED",
+        "signing": "CONFIGURATION_REQUIRED",
+        "controller": "CONFIGURATION_REQUIRED",
+    }
+    try:
+        while not stopping:
+            for name, command in commands.items():
+                if name not in children or children[name].poll() is not None:
+                    with (home / f"logs/{name}.log").open("ab") as log:
+                        children[name] = subprocess.Popen(
+                            [str(a) for a in command],
+                            stdin=subprocess.DEVNULL,
+                            stdout=log,
+                            stderr=log,
+                            env=environment(home, observation=name == "panel"),
+                            start_new_session=True,
+                            cwd=home / "run",
+                        )
+            runtime_path = home / "config/runtime.json"
+            if runtime_path.exists() and time.monotonic() >= next_probe:
+                runtime = read(runtime_path)
+                try:
+                    run(
+                        [
+                            home / "bin/archcert-worker",
+                            "--docker",
+                            runtime["docker"],
+                            "--endpoint",
+                            runtime["endpoint"],
+                            "doctor",
+                        ],
+                        env={"PATH": os.defpath},
+                        timeout=25,
+                    )
+                    health["runtime"] = (
+                        "UNQUALIFIED"
+                        if sys.platform == "darwin"
+                        else "READY (observed; consult exact qualification scope)"
+                    )
+                    health["runtime_available"] = True
+                except (RuntimeError, subprocess.TimeoutExpired):
+                    health["runtime"] = (
+                        "UNAVAILABLE (worker doctor rejected the configured endpoint)"
+                    )
+                    health["runtime_available"] = False
+                next_probe = time.monotonic() + 30
+            key_ready = (home / "signing/development.der").is_file() and (
+                home / "public/source.hex"
+            ).is_file()
+            health["signing"] = (
+                "READY — DEVELOPMENT ONLY" if key_ready else "CONFIGURATION_REQUIRED"
+            )
+            controller = children.get("controller")
+            if controller and controller.poll() is not None:
+                health["controller"] = (
+                    "IDLE"
+                    if controller.returncode == 0
+                    else "ERROR — retained state requires inspection/reconciliation"
+                )
+                next_controller = time.monotonic() + 5
+                del children["controller"]
+            grants = read(home / "config/control.json")["grants"]
+            if not grants:
+                health["controller"] = (
+                    "READY — waiting for a registered project"
+                    if key_ready and health.get("runtime_available")
+                    else "CONFIGURATION_REQUIRED"
+                )
+            if (
+                grants
+                and key_ready
+                and health.get("runtime_available")
+                and "controller" not in children
+                and time.monotonic() >= next_controller
+            ):
+                runtime = read(runtime_path)
+                command = [
+                    home / "bin/archcert-controller",
+                    "--config",
+                    home / "config/control.json",
+                    "run-once",
+                    "--worker-binary",
+                    home / "bin/archcert-worker",
+                    "--workspace-root",
+                    home / "workspaces",
+                    "--runtime-state-root",
+                    home / "workspaces.runtime",
+                    "--docker",
+                    runtime["docker"],
+                    "--endpoint",
+                    runtime["endpoint"],
+                    "--development-key",
+                    home / "signing/development.der",
+                    "--public-key",
+                    home / "public/source.hex",
+                ]
+                with (home / "logs/controller.log").open("ab") as log:
+                    children["controller"] = subprocess.Popen(
+                        [str(a) for a in command],
+                        stdin=subprocess.DEVNULL,
+                        stdout=log,
+                        stderr=log,
+                        env=environment(home),
+                        start_new_session=True,
+                        cwd=home / "run",
+                    )
+                health["controller"] = "RUNNING — durable claims/leases/fencing apply"
+            health["observed_at_unix"] = int(time.time())
+            health["services"] = {
+                name: "READY" if process.poll() is None else "ERROR"
+                for name, process in children.items()
+            }
+            private_json(home / "health/readiness.json", health)
+            private_json(
+                home / "run/services.json",
+                {
+                    "running": True,
+                    "supervisor": os.getpid(),
+                    "children": {name: p.pid for name, p in children.items()},
+                },
+            )
+            time.sleep(1)
+    finally:
+        for process in children.values():
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGTERM)
+        for process in children.values():
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+        private_json(
+            home / "run/services.json",
+            {"running": False, "supervisor": os.getpid(), "children": {}},
+        )
+
+
+def status(home):
+    config = manifest(home)
+    state = supervisor_state(home)
+    report = {
+        "url": f"http://127.0.0.1:{config['port']}/local",
+        "home": str(home),
+        "source_commit": config["source_commit"],
+        "source_dirty_at_install": config["source_dirty"],
+        "supervisor_running": bool(
+            state.get("running") and pid_running(state.get("supervisor", 0))
+        ),
+    }
+    for route in ["healthz", "readyz"]:
+        try:
+            with urllib.request.urlopen(
+                report["url"].replace("/local", "/" + route), timeout=5
+            ) as response:
+                report[route] = response.status
+        except (urllib.error.URLError, TimeoutError):
+            report[route] = "UNAVAILABLE"
+    if (home / "health/readiness.json").exists():
+        report["last_observation"] = read(home / "health/readiness.json")
+        report["observation_age_seconds"] = (
+            int(time.time()) - report["last_observation"]["observed_at_unix"]
+        )
+    print(json.dumps(report, indent=2))
+
+
+def backup(home):
+    state = supervisor_state(home)
+    if (state.get("running") and pid_running(state.get("supervisor", 0))) or any(
+        pid_running(pid) for pid in state.get("children", {}).values()
+    ):
+        raise RuntimeError(
+            "stop this installation before a consistent backup; database will be started privately for pg_dump"
+        )
+    database(home)
+    if (
+        sql(
+            home,
+            "SELECT EXISTS(SELECT 1 FROM certification_jobs WHERE state IN ('RUNNING','EVALUATING','SIGNING')); ",
+        )
+        .decode()
+        .strip()
+        == "t"
+    ):
+        raise RuntimeError(
+            "backup requires quiescent jobs; reconcile durable attempts without deleting gates first"
+        )
+    destination = home / "backups" / time.strftime("backup-%Y%m%d-%H%M%S")
+    destination.mkdir(mode=0o700)
+    dump = run(
+        [
+            "docker",
+            "--context",
+            manifest(home)["database_context"],
+            "exec",
+            "--user",
+            "postgres",
+            manifest(home)["container"],
+            "pg_dump",
+            "-U",
+            "postgres",
+            "-d",
+            "archcert",
+            "-Fc",
+        ],
+        timeout=300,
+    )
+    replace(destination / "metadata.dump", dump)
+    with tarfile.open(destination / "private-state.tar", "w") as archive:
+        for name in [
+            "installation.json",
+            "config",
+            "bootstrap",
+            "artifacts",
+            "sources",
+            "git",
+            "public",
+            "signing",
+            "workspaces.runtime",
+            "audit",
+        ]:
+            archive.add(home / name, arcname=name, recursive=True)
+    checksums = {
+        p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in destination.iterdir()
+        if p.is_file()
+    }
+    private_json(
+        destination / "manifest.json",
+        {
+            "source_home": str(home),
+            "checksums": checksums,
+            "classification": "PRIVATE — includes credentials and development keys",
+        },
+    )
+    database(home, False)
+    print(destination)
+
+
+def update(home):
+    installed = manifest(home)
+    if "database_context" not in installed:
+        installed["database_context"] = run(["docker", "context", "show"]).decode().strip()
+        private_json(home / "installation.json", installed)
+    state = supervisor_state(home)
+    if state.get("running") and pid_running(state.get("supervisor", 0)):
+        raise RuntimeError("stop the installation and take a complete backup before update")
+    run(["cargo", "build", "--workspace", "--locked"], timeout=1800, capture=False)
+    run(
+        ["cargo", "build", "-p", "archcert-storage", "--example", "migrate", "--locked"],
+        timeout=600,
+        capture=False,
+    )
+    replace(
+        home / "run/update.pending",
+        b"Explicit migration/update in progress; no automatic downgrade.\n",
+    )
+    database(home)
+    config = manifest(home)
+    password = (home / "config/database-password").read_text().strip()
+    env = {"PATH": os.environ.get("PATH", os.defpath)}
+    env["ARCHCERT_DATABASE_URL"] = (
+        f"postgresql://postgres:{password}@127.0.0.1:{config['database_port']}/archcert"
+    )
+    run([ROOT / "target/debug/examples/migrate"], env=env)
+    provision_roles(home)
+    for name in BINARIES + ["migrate"]:
+        source = ROOT / "target/debug" / ("examples/migrate" if name == "migrate" else name)
+        replace(home / "bin" / name, source.read_bytes())
+        (home / "bin" / name).chmod(0o700)
+    config["source_commit"] = run(["git", "-C", ROOT, "rev-parse", "HEAD"]).decode().strip()
+    config["source_dirty"] = bool(run(["git", "-C", ROOT, "diff", "HEAD", "--name-only"]).strip())
+    config["cargo_lock_sha256"] = hashlib.sha256((ROOT / "Cargo.lock").read_bytes()).hexdigest()
+    config["binary_sha256"] = {
+        name: hashlib.sha256((home / "bin" / name).read_bytes()).hexdigest() for name in BINARIES
+    }
+    private_json(home / "installation.json", config)
+    local_admin(home, "publish")
+    (home / "run/update.pending").unlink()
+    print(
+        "Explicit migration and executable update completed. Run up; retained authority identities were not reinterpreted."
+    )
+
+
+def restore(home, args):
+    source = Path(args.backup).expanduser().resolve()
+    backup_manifest = read(source / "manifest.json")
+    for name, digest in backup_manifest["checksums"].items():
+        if (
+            name not in ["metadata.dump", "private-state.tar"]
+            or hashlib.sha256((source / name).read_bytes()).hexdigest() != digest
+        ):
+            raise RuntimeError("backup checksum mismatch")
+    initialize(home, args)
+    deployed = manifest(home)
+    skip = {
+        "installation.json",
+        "config/database-password",
+        "config/control-password",
+        "config/observation-password",
+        "config/runtime.json",
+        "git/sshd_config",
+        "git/known_hosts",
+    }
+    with tarfile.open(source / "private-state.tar", "r") as archive:
+        for member in archive:
+            parts = Path(member.name).parts
+            if member.name in skip:
+                continue
+            if (
+                member.name.startswith("/")
+                or ".." in parts
+                or not parts
+                or not (member.isdir() or member.isfile())
+            ):
+                raise RuntimeError("unsafe backup member; restoration stopped")
+            target = home / member.name
+            if member.isdir():
+                target.mkdir(mode=0o700, parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                with archive.extractfile(member) as incoming:
+                    replace(target, incoming.read())
+                target.chmod(member.mode & 0o700)
+    run(
+        [
+            "docker",
+            "--context",
+            manifest(home)["database_context"],
+            "exec",
+            "-i",
+            "--user",
+            "postgres",
+            deployed["container"],
+            "pg_restore",
+            "--clean",
+            "--if-exists",
+            "--no-owner",
+            "--no-acl",
+            "-U",
+            "postgres",
+            "-d",
+            "archcert",
+        ],
+        data=(source / "metadata.dump").read_bytes(),
+        timeout=300,
+    )
+    provision_roles(home)
+    api = read(home / "config/local-api.json")
+    api.update(
+        root=str(home),
+        origin=f"http://127.0.0.1:{args.port}",
+        listen=f"127.0.0.1:{args.port+1}",
+        gateway_binary=str(home / "bin/archcert-gateway"),
+        ssh_port=args.ssh_port,
+    )
+    private_json(home / "config/local-api.json", api)
+    client = read(home / "config/local-client.json")
+    client["endpoint"] = api["listen"]
+    private_json(home / "config/local-client.json", client)
+    query = read(home / "config/query.json")
+    query["artifact_root"] = str(home / "artifacts")
+    private_json(home / "config/query.json", query)
+    replace(
+        home / "git/known_hosts",
+        (f"[127.0.0.1]:{args.ssh_port} " + (home / "git/host.pub").read_text()).encode(),
+    )
+    local_admin(home, "publish")
+    print(
+        "Restored accounts, projects, exact source/evidence, trust and private custody into a new installation."
+    )
+    print(
+        "Execution remains disabled: review retained gates and explicitly configure the independent runtime before processing jobs."
+    )
+
+
+def main():
+    os.umask(0o077)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--home", default=os.environ.get("ARCHCERT_LOCAL_HOME", str(DEFAULT_HOME)))
+    sub = parser.add_subparsers(dest="command", required=True)
+    for name in [
+        "doctor",
+        "up",
+        "status",
+        "logs",
+        "down",
+        "restart",
+        "setup-secret",
+        "renew-setup",
+        "backup",
+        "publish",
+        "update",
+        "__supervise",
+    ]:
+        sub.add_parser(name)
+    git_configuration = sub.add_parser("git-config")
+    git_configuration.add_argument("--identity", required=True)
+    init = sub.add_parser("init")
+    init.add_argument("--port", type=int, default=8090)
+    init.add_argument("--database-port", type=int, default=55441)
+    init.add_argument("--ssh-port", type=int, default=22223)
+    restoration = sub.add_parser("restore")
+    restoration.add_argument("--backup", required=True)
+    restoration.add_argument("--port", type=int, default=8096)
+    restoration.add_argument("--database-port", type=int, default=55443)
+    restoration.add_argument("--ssh-port", type=int, default=22225)
+    authority = sub.add_parser("configure-authority")
+    authority.add_argument("--image", required=True)
+    authority.add_argument("--development-signing", action="store_true")
+    authority.add_argument("--docker")
+    authority.add_argument("--endpoint")
+    recovery = sub.add_parser("recover-password")
+    recovery.add_argument("email")
+    role = sub.add_parser("set-role")
+    role.add_argument("email")
+    role.add_argument(
+        "role", choices=["VIEWER", "OPERATOR", "REVIEWER", "ADMINISTRATOR", "DISABLED"]
+    )
+    args = parser.parse_args()
+    home = home_path(args.home)
+    if args.command == "doctor":
+        doctor(home)
+    elif args.command == "init":
+        initialize(home, args)
+    elif args.command == "restore":
+        restore(home, args)
+    else:
+        metadata = home.stat()
+        if metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+            raise RuntimeError("installation root must be private and owned by the operator")
+        if args.command == "up":
+            start(home)
+        elif args.command == "__supervise":
+            supervise(home)
+        elif args.command == "down":
+            stop(home)
+        elif args.command == "restart":
+            stop(home)
+            start(home)
+        elif args.command == "status":
+            status(home)
+        elif args.command == "logs":
+            for path in sorted((home / "logs").glob("*.log")):
+                print(f"{path} ({path.stat().st_size} bytes)")
+            print(
+                "Inspect these private files locally; do not publish credentials or hostile output."
+            )
+        elif args.command == "configure-authority":
+            configure(home, args)
+        elif args.command == "setup-secret":
+            if not sys.stdout.isatty():
+                raise RuntimeError(
+                    "setup-secret requires a local terminal; secrets are never printed into captured logs"
+                )
+            print((home / "bootstrap/setup-secret").read_text())
+        elif args.command == "renew-setup":
+            local_admin(home, "renew-setup")
+            print("Unconsumed setup secret renewed privately.")
+        elif args.command == "publish":
+            database(home)
+            local_admin(home, "publish")
+            print("Private projections reconstructed from durable records.")
+        elif args.command == "git-config":
+            config = manifest(home)
+            identity = Path(args.identity).expanduser().resolve(strict=True)
+            metadata = identity.stat()
+            if not identity.is_file() or metadata.st_mode & 0o077 or metadata.st_uid != os.getuid():
+                raise RuntimeError("Git identity must be a private owned regular file")
+            print(
+                shlex.join(
+                    [
+                        "/usr/bin/ssh",
+                        "-F",
+                        "/dev/null",
+                        "-p",
+                        str(config["ssh_port"]),
+                        "-o",
+                        "BatchMode=yes",
+                        "-o",
+                        "IdentitiesOnly=yes",
+                        "-o",
+                        "StrictHostKeyChecking=yes",
+                        "-o",
+                        f"UserKnownHostsFile={home}/git/known_hosts",
+                        "-i",
+                        str(identity),
+                    ]
+                )
+            )
+        elif args.command == "backup":
+            backup(home)
+        elif args.command == "update":
+            update(home)
+        elif args.command == "set-role":
+            local_admin(home, "set-role", args.email, args.role)
+            print("Audited role change; previous sessions are invalid.")
+        elif args.command == "recover-password":
+            password = getpass.getpass("New password (at least 12 characters): ")
+            if password != getpass.getpass("Confirm password: "):
+                raise RuntimeError("password confirmation mismatch")
+            path = home / "bootstrap" / ("password-" + uuid.uuid4().hex)
+            try:
+                replace(path, password.encode())
+                local_admin(home, "recover-password", args.email, "--password-file", path)
+            finally:
+                path.unlink(missing_ok=True)
+            print(
+                "Password recovered with an audit event; previous sessions invalidated. Setup remains closed."
+            )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
+        print(f"archcert-local: {error}", file=sys.stderr)
+        sys.exit(1)

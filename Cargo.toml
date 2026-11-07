@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "apps/archcert-local-api",
     "apps/archcertd",
     "apps/archcert-panel",
     "crates/archcert-glassmere",
@@ -62,3 +63,7 @@ expect_used = "deny"
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
+
+# Keep the local password KDF practical in the installed development build.
+[profile.dev.package.argon2]
+opt-level = 3
