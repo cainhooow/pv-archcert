@@ -1058,3 +1058,62 @@ fn ref_and_offset_deltas_decode_and_depth_expansion_budgets_apply() -> TestResul
 
     Ok(())
 }
+
+#[test]
+#[ignore = "requires an operator-selected real pack and exact commit"]
+fn real_repository_pack_measurement() -> TestResult {
+    use archcert_source::{GitObjectFormat, PackDecoding, PackLimits, PackedGitGateway};
+    let bytes = fs::read(std::env::var("ARCHCERT_MEASURE_PACK")?)?;
+    let commit = GitObjectId::parse(std::env::var("ARCHCERT_MEASURE_COMMIT")?)?;
+    let repository = RepositoryId::parse("archgti/archsite")?;
+    let started = std::time::Instant::now();
+    let limits = PackLimits {
+        max_pack_bytes: 128 * 1024 * 1024,
+        max_decoded_bytes: 512 * 1024 * 1024,
+        ..PackLimits::default()
+    };
+    let mut decoding = PackDecoding::default();
+    let decoded = PackedGitGateway::new_until(
+        repository.clone(),
+        &bytes,
+        GitObjectFormat::Sha1,
+        limits,
+        started + std::time::Duration::from_secs(120),
+        &mut decoding,
+    );
+    eprintln!("decoder_measurement={}", serde_json::to_string(&decoding)?);
+    let gateway = decoded?;
+    let source = ingest_source(
+        &gateway,
+        &mut MemorySourceStore::default(),
+        SourceSubmission {
+            project: ProjectId::new(),
+            repository,
+            requested_commit: commit,
+        },
+        SourceLimits {
+            max_total_bytes: 128 * 1024 * 1024,
+            ..SourceLimits::default()
+        },
+    )?;
+
+    assert_eq!(
+        source.snapshot.identity().commit,
+        source.evidence.submission.requested_commit
+    );
+    eprintln!(
+        "source_measurement={}",
+        serde_json::json!({
+            "pack_bytes": bytes.len(),
+            "pack_objects": u32::from_be_bytes(bytes[8..12].try_into()?),
+            "source_bytes": source.evidence.total_bytes,
+            "source_files": source.evidence.entry_count,
+            "object_visits": source.evidence.object_count,
+            "commit": source.snapshot.identity().commit,
+            "tree": source.snapshot.identity().tree,
+            "elapsed_ms": started.elapsed().as_millis(),
+        })
+    );
+
+    Ok(())
+}

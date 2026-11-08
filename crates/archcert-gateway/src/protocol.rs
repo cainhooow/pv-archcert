@@ -1,4 +1,4 @@
-use crate::IngressError;
+use crate::{IngressError, input_error};
 use archcert_domain::{GitObjectId, source::SourcePath};
 use archcert_source::GitObjectFormat;
 use gix_packetline::{
@@ -42,24 +42,20 @@ pub(crate) struct ReceiveCommand {
 
 fn packet(input: &mut impl Read) -> Result<Vec<u8>, IngressError> {
     let mut prefix = [0; 4];
-    input
-        .read_exact(&mut prefix)
-        .map_err(|_| IngressError::Rejected)?;
-    let wanted = match decode::hex_prefix(&prefix).map_err(|_| IngressError::Rejected)? {
+    input.read_exact(&mut prefix).map_err(input_error)?;
+    let wanted = match decode::hex_prefix(&prefix).map_err(|_| IngressError::Protocol)? {
         PacketLineOrWantedSize::Line(PacketLineRef::Flush) => 0,
-        PacketLineOrWantedSize::Line(_) => return Err(IngressError::Rejected),
+        PacketLineOrWantedSize::Line(_) => return Err(IngressError::Protocol),
         PacketLineOrWantedSize::Wanted(n) => usize::from(n),
     };
 
     if wanted > 4096 {
-        return Err(IngressError::Limit);
+        return Err(IngressError::Protocol);
     }
 
     let mut bytes = prefix.to_vec();
     bytes.resize(wanted + 4, 0);
-    input
-        .read_exact(&mut bytes[4..])
-        .map_err(|_| IngressError::Rejected)?;
+    input.read_exact(&mut bytes[4..]).map_err(input_error)?;
 
     Ok(bytes)
 }
@@ -70,10 +66,10 @@ pub(crate) fn read_command(
 ) -> Result<ReceiveCommand, IngressError> {
     let first = packet(input)?;
     let mut raw = Vec::new();
-    let shallow = match decode::all_at_once(&first).map_err(|_| IngressError::Rejected)? {
+    let shallow = match decode::all_at_once(&first).map_err(|_| IngressError::Protocol)? {
         PacketLineRef::Data(bytes) if bytes.starts_with(b"shallow ") => {
             let oid = std::str::from_utf8(&bytes[8..])
-                .map_err(|_| IngressError::Rejected)?
+                .map_err(|_| IngressError::Protocol)?
                 .trim_end_matches('\n');
 
             if oid.len() != format.width()
@@ -81,7 +77,7 @@ pub(crate) fn read_command(
                     .bytes()
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
             {
-                return Err(IngressError::Rejected);
+                return Err(IngressError::Protocol);
             }
 
             let oid = oid.to_owned();
@@ -96,14 +92,14 @@ pub(crate) fn read_command(
         first
     };
     raw.extend_from_slice(&command_packet);
-    let line = decode::all_at_once(&command_packet).map_err(|_| IngressError::Rejected)?;
+    let line = decode::all_at_once(&command_packet).map_err(|_| IngressError::Protocol)?;
     let PacketLineRef::Data(bytes) = line else {
-        return Err(IngressError::Rejected);
+        return Err(IngressError::Protocol);
     };
     let text = std::str::from_utf8(bytes)
-        .map_err(|_| IngressError::Rejected)?
+        .map_err(|_| IngressError::Protocol)?
         .trim_end_matches('\n');
-    let (update, capabilities) = text.split_once('\0').ok_or(IngressError::Rejected)?;
+    let (update, capabilities) = text.split_once('\0').ok_or(IngressError::Protocol)?;
 
     for cap in capabilities.split(' ').filter(|c| !c.is_empty()) {
         if ![
@@ -120,7 +116,7 @@ pub(crate) fn read_command(
                 && cap.len() <= 128
                 && cap.bytes().all(|b| b.is_ascii_graphic()))
         {
-            return Err(IngressError::Rejected);
+            return Err(IngressError::Protocol);
         }
     }
 
@@ -128,7 +124,7 @@ pub(crate) fn read_command(
         .split(' ')
         .any(|c| matches!(c, "report-status" | "report-status-v2"))
     {
-        return Err(IngressError::Rejected);
+        return Err(IngressError::Protocol);
     }
 
     let parts: Vec<_> = update.split(' ').collect();
@@ -141,13 +137,13 @@ pub(crate) fn read_command(
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         || parts[1].bytes().all(|b| b == b'0')
     {
-        return Err(IngressError::Rejected);
+        return Err(IngressError::Protocol);
     }
 
     let reference = parts[2];
     let branch = reference
         .strip_prefix("refs/heads/")
-        .ok_or(IngressError::Rejected)?;
+        .ok_or(IngressError::Protocol)?;
 
     if reference.len() > 256
         || SourcePath::from_bytes(branch.as_bytes()).is_err()
@@ -157,20 +153,20 @@ pub(crate) fn read_command(
             .split('/')
             .any(|p| p.starts_with('.') || p.ends_with(".lock"))
     {
-        return Err(IngressError::Rejected);
+        return Err(IngressError::Protocol);
     }
 
-    let commit = GitObjectId::parse(parts[1]).map_err(|_| IngressError::Rejected)?;
+    let commit = GitObjectId::parse(parts[1]).map_err(|_| IngressError::Protocol)?;
 
     if shallow.as_ref().is_some_and(|id| id != commit.as_str()) {
-        return Err(IngressError::Rejected);
+        return Err(IngressError::Protocol);
     }
 
     let reference = reference.to_owned();
     let flush = packet(input)?;
 
     if flush != b"0000" {
-        return Err(IngressError::Rejected);
+        return Err(IngressError::Protocol);
     }
 
     raw.extend_from_slice(&flush);

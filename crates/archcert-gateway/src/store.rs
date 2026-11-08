@@ -1,10 +1,7 @@
 //! Replaceable bounded development storage. No database/job scheduler.
 
 use crate::{IngressError, IngressEvidence, unavailable};
-use archcert_domain::{
-    ingress::SourceSubmissionId,
-    source::{SourceLimits, SourceSnapshot},
-};
+use archcert_domain::{ingress::SourceSubmissionId, source::SourceSnapshot};
 use archcert_source::{read_snapshot, write_snapshot};
 use rustix::fs::{FlockOperation, Mode, OFlags, flock, openat};
 use std::{
@@ -201,7 +198,13 @@ impl DevelopmentSubmissionStore {
 
         let root = private_root(path)?;
         let lock = regular(&root, ".receive-lock", OFlags::RDWR | OFlags::CREATE)?;
-        flock(&lock, FlockOperation::NonBlockingLockExclusive).map_err(|_| IngressError::Limit)?;
+        flock(&lock, FlockOperation::NonBlockingLockExclusive).map_err(|error| {
+            if error == rustix::io::Errno::WOULDBLOCK {
+                IngressError::Limit
+            } else {
+                IngressError::Unavailable
+            }
+        })?;
 
         Ok(Self {
             root,
@@ -244,6 +247,7 @@ impl DevelopmentSubmissionStore {
         &mut self,
         snapshot: Option<&SourceSnapshot>,
         evidence: &IngressEvidence,
+        deadline: Option<std::time::Instant>,
     ) -> Result<(), IngressError> {
         // Quarantine occupies one slot until receive returns. One publication can
         // coexist with it; the next receive counts only retained attempts.
@@ -268,7 +272,9 @@ impl DevelopmentSubmissionStore {
         let bytes = serde_json::to_vec_pretty(evidence).map_err(unavailable)?;
 
         if bytes.len() > 65536 {
-            return Err(IngressError::Limit);
+            return Err(IngressError::Failure(crate::IngressFailure::new(
+                crate::IngressCode::IngressInternalError,
+            )));
         }
 
         let mut file = regular(
@@ -292,6 +298,14 @@ impl DevelopmentSubmissionStore {
             return Err(IngressError::Unavailable);
         }
 
+        // Staging and fsync may consume the remaining session. Never publish an
+        // accepted snapshot after that deadline; rejection evidence remains writable.
+        if snapshot.is_some() && deadline.is_some_and(|end| std::time::Instant::now() >= end) {
+            return Err(IngressError::Failure(crate::IngressFailure::new(
+                crate::IngressCode::IngressSessionTimeout,
+            )));
+        }
+
         // Authority-only root and random UUID prevent candidate path selection.
         fs::rename(temporary.path(), self.path.join(destination)).map_err(unavailable)?;
 
@@ -303,6 +317,15 @@ impl DevelopmentSubmissionStore {
         snapshot: &SourceSnapshot,
         evidence: &IngressEvidence,
     ) -> Result<(), IngressError> {
+        self.accept_with_deadline(snapshot, evidence, None)
+    }
+
+    fn accept_with_deadline(
+        &mut self,
+        snapshot: &SourceSnapshot,
+        evidence: &IngressEvidence,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<(), IngressError> {
         snapshot
             .verify(&snapshot.identity().snapshot_sha256)
             .map_err(unavailable)?;
@@ -311,11 +334,11 @@ impl DevelopmentSubmissionStore {
             return Err(IngressError::Rejected);
         }
 
-        self.publish(Some(snapshot), evidence)
+        self.publish(Some(snapshot), evidence, deadline)
     }
 
     pub(crate) fn reject(&mut self, evidence: &IngressEvidence) -> Result<(), IngressError> {
-        self.publish(None, evidence)
+        self.publish(None, evidence, None)
     }
 
     /// Retrieves one exact accepted submission, rehashing bytes and comparing the
@@ -379,11 +402,20 @@ fn load_submission(
 
     let file = regular(&root, "snapshot.bin", OFlags::RDONLY)?;
 
-    if file.metadata().map_err(unavailable)?.len() > 72 * 1024 * 1024 {
+    // Admission limits are frozen per submission. Current host settings never
+    // reinterpret historical source bytes or prevent independent accepted reload.
+    let capacity = evidence
+        .diagnostics
+        .capacity
+        .unwrap_or_default()
+        .validate()?;
+    let artifact_cap = capacity.source_limits.max_total_bytes + 8 * 1024 * 1024 + 24;
+
+    if file.metadata().map_err(unavailable)?.len() > artifact_cap {
         return Err(IngressError::Unavailable);
     }
 
-    let snapshot = read_snapshot(file, SourceLimits::default()).map_err(unavailable)?;
+    let snapshot = read_snapshot(file, capacity.source_limits).map_err(unavailable)?;
 
     if !consistent(&snapshot, &evidence) {
         return Err(IngressError::Rejected);
@@ -399,6 +431,15 @@ impl crate::SubmissionStore for DevelopmentSubmissionStore {
         evidence: &IngressEvidence,
     ) -> Result<(), IngressError> {
         DevelopmentSubmissionStore::accept(self, snapshot, evidence)
+    }
+
+    fn accept_before(
+        &mut self,
+        snapshot: &SourceSnapshot,
+        evidence: &IngressEvidence,
+        deadline: std::time::Instant,
+    ) -> Result<(), IngressError> {
+        self.accept_with_deadline(snapshot, evidence, Some(deadline))
     }
 
     fn reject(&mut self, evidence: &IngressEvidence) -> Result<(), IngressError> {
@@ -458,6 +499,83 @@ mod tests {
         std::os::unix::fs::symlink(&config, &config_link)?;
 
         assert!(read_private_configuration(&config_link).is_err());
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod publication_deadline_tests {
+    use super::*;
+    use archcert_domain::{
+        GitObjectId, ProjectId,
+        ingress::{DeviceKeyId, GitActorId},
+        source::RepositoryId,
+    };
+
+    #[test]
+    fn expired_publication_leaves_only_rejection_evidence() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let directory = tempfile::tempdir()?;
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))?;
+        let path = directory.path().canonicalize()?;
+        let mut store = DevelopmentSubmissionStore::open(&path, 2)?;
+        let project = ProjectId::new();
+        let repository = RepositoryId::parse("test/source")?;
+        let snapshot = SourceSnapshot::seal(
+            project,
+            repository.clone(),
+            GitObjectId::parse("a".repeat(40))?,
+            GitObjectId::parse("b".repeat(40))?,
+            Vec::new(),
+            1,
+            0,
+        )?;
+        let id = SourceSubmissionId::new();
+        let evidence = IngressEvidence {
+            diagnostics: Default::default(),
+            submission: id.clone(),
+            actor: GitActorId::parse("00000000-0000-4000-8000-000000000001".into())?,
+            device: DeviceKeyId::parse("c".repeat(64))?,
+            project,
+            repository,
+            transport: "SSH_PUBLIC_KEY".into(),
+            received_refs: Vec::new(),
+            requested_commit: None,
+            source: None,
+            object_format: archcert_source::GitObjectFormat::Sha1,
+            pack_sha256: None,
+            pack_bytes: 0,
+            pack_objects: 0,
+            pack_limits: Default::default(),
+            git_adapter: None,
+            lfs_unresolved: 0,
+            submodules_unresolved: 0,
+            external_sources: Vec::new(),
+            source_schema: 1,
+            resolution: None,
+            completeness: None,
+            status: "REJECTED".into(),
+            received_at: 0,
+            accepted_at: None,
+            events: vec![crate::IngressEvent::GitSubmissionRejected],
+            candidate: format!("refs/archcert/candidates/{project}/{id}"),
+        };
+        let expired = std::time::Instant::now() - std::time::Duration::from_secs(1);
+
+        let result = store.publish(Some(&snapshot), &evidence, Some(expired));
+
+        assert!(
+            matches!(result, Err(IngressError::Failure(failure)) if failure.code == crate::IngressCode::IngressSessionTimeout)
+        );
+        assert!(!path.join(id.to_string()).exists());
+
+        store.reject(&evidence)?;
+
+        assert!(path.join(id.to_string()).join("evidence.json").is_file());
+        assert!(!path.join(id.to_string()).join("snapshot.bin").exists());
+        assert!(store.load(&id).is_err());
+        assert_eq!(fs::read_dir(&path)?.count(), 2);
 
         Ok(())
     }

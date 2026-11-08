@@ -1,0 +1,21 @@
+{
+  "pack_limits": {
+    "max_pack_bytes": 134217728,
+    "max_objects": 25000,
+    "max_object_bytes": 9437184,
+    "max_decoded_bytes": 268435456,
+    "max_delta_depth": 32,
+    "max_expansion_ratio": 4096
+  },
+  "source_limits": {
+    "max_files": 10000,
+    "max_total_bytes": 134217728,
+    "max_blob_bytes": 8388608,
+    "max_tree_depth": 32,
+    "max_objects": 25000,
+    "max_object_bytes": 9437184,
+    "max_object_work_bytes": 268435456
+  },
+  "session_seconds": 120,
+  "max_submissions": 32
+}

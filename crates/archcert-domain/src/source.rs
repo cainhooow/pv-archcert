@@ -56,6 +56,9 @@ pub enum SourceError {
     /// A configured authority resource budget was exhausted.
     #[error("source resource limit exceeded: {0:?}")]
     LimitExceeded(ResourceLimit),
+    /// The authority-selected ingress wall-time budget expired.
+    #[error("source ingress session deadline exceeded")]
+    SessionTimeout,
     /// Local access failed; diagnostic OS details are deliberately not evidence.
     #[error("repository access failure")]
     RepositoryAccessFailure,
@@ -76,6 +79,8 @@ pub enum SourceError {
 /// Authority-controlled budget that caused a rejection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ResourceLimit {
+    /// Complete incoming Git pack bytes, including framing and checksum.
+    PackBytes,
     /// Delta ancestry exceeded the authority limit before decoding.
     DeltaDepth,
     /// Resolved object expansion exceeded the authority ratio.
@@ -96,8 +101,9 @@ pub enum ResourceLimit {
     ObjectWorkBytes,
 }
 
-/// Development budgets; operators must select deployment-specific bounds.
-#[derive(Debug, Clone, Copy, Serialize)]
+/// Authority-selected source budgets; historical defaults remain unchanged.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SourceLimits {
     /// Maximum leaf entries.
     pub max_files: u64,
@@ -126,6 +132,26 @@ impl Default for SourceLimits {
             max_object_bytes: 9 * 1024 * 1024,
             max_object_work_bytes: 256 * 1024 * 1024,
         }
+    }
+}
+
+impl SourceLimits {
+    /// Rejects unlimited, zero and overflow-prone capacity before processing input.
+    /// These ceilings bound this implementation; deployment admission may be stricter.
+    pub fn validate(self) -> Result<Self, SourceError> {
+        if !(1..=10_000).contains(&self.max_files)
+            || !(1..=128 * 1024 * 1024).contains(&self.max_total_bytes)
+            || !(1..=8 * 1024 * 1024).contains(&self.max_blob_bytes)
+            || !(1..=32).contains(&self.max_tree_depth)
+            || !(1..=25_000).contains(&self.max_objects)
+            || !(1..=9 * 1024 * 1024).contains(&self.max_object_bytes)
+            || !(1..=512 * 1024 * 1024).contains(&self.max_object_work_bytes)
+            || self.max_blob_bytes > self.max_object_bytes
+        {
+            return Err(SourceError::UnsupportedRepository);
+        }
+
+        Ok(self)
     }
 }
 

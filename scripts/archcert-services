@@ -526,6 +526,28 @@ def configure(home, args):
     )
 
 
+def configure_ingress(home, args):
+    state = supervisor_state(home)
+    if state.get("running") and pid_running(state.get("supervisor", 0)):
+        raise RuntimeError("stop ArchCert before changing host ingress capacity")
+
+    # The installed gateway validates private ownership, strict JSON and all
+    # shared implementation ceilings before the host projection can change.
+    capacity = json.loads(
+        run([
+            home / "bin/archcert-gateway",
+            "validate-capacity",
+            "--config",
+            Path(args.capacity).resolve(),
+        ])
+    )
+    config = read(home / "config/platform.json")
+    config["ingress"] = capacity
+    private_json(home / "config/platform.json", config)
+    platform_admin(home, "publish")
+    print("Host ingress capacity recorded and projected. Run up to load it.")
+
+
 def pid_running(pid):
     try:
         os.kill(pid, 0)
@@ -1034,6 +1056,7 @@ def update(home):
         source = built / ("examples/migrate" if name == "migrate" else name)
         replace(home / "bin" / name, source.read_bytes())
         (home / "bin" / name).chmod(0o700)
+    config["source_repository"] = str(ROOT)
     config["source_commit"] = run(["git", "-C", ROOT, "rev-parse", "HEAD"]).decode().strip()
     config["source_dirty"] = bool(run(["git", "-C", ROOT, "diff", "HEAD", "--name-only"]).strip())
     config["cargo_lock_sha256"] = hashlib.sha256((ROOT / "Cargo.lock").read_bytes()).hexdigest()
@@ -1187,6 +1210,8 @@ def main():
     restoration.add_argument("--port", type=int, default=8096)
     restoration.add_argument("--database-port", type=int, default=55443)
     restoration.add_argument("--ssh-port", type=int, default=22225)
+    ingress = sub.add_parser("configure-ingress")
+    ingress.add_argument("--capacity", required=True)
     authority = sub.add_parser("configure-authority")
     authority.add_argument("--image", required=True)
     authority.add_argument("--development-signing", action="store_true")
@@ -1228,6 +1253,8 @@ def main():
             print(
                 "Inspect these private files locally; do not publish credentials or hostile output."
             )
+        elif args.command == "configure-ingress":
+            configure_ingress(home, args)
         elif args.command == "configure-authority":
             configure(home, args)
         elif args.command == "setup-secret":

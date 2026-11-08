@@ -27,6 +27,7 @@ pub(super) fn replace(path: &Path, bytes: &[u8]) -> Result<()> {
 
 impl Service {
     pub(super) async fn publish(&self) -> Result<()> {
+        self.config.ingress.validate()?;
         let _lock = self.publication.lock().await;
         // A database advisory transaction lock also serializes host recovery processes.
         let mut tx = self.pool.begin().await?;
@@ -136,16 +137,10 @@ impl Service {
             "git_executable": "/usr/bin/git",
             "store": self.config.root.join("sources"),
             "devices": devices.values().collect::<Vec<_>>(),
-            "pack_limits": {
-                "max_pack_bytes": 67108864,
-                "max_objects": 25000,
-                "max_object_bytes": 9437184,
-                "max_decoded_bytes": 268435456,
-                "max_delta_depth": 32,
-                "max_expansion_ratio": 4096,
-            },
-            "session_seconds": 30,
-            "max_submissions": 32,
+            "pack_limits": self.config.ingress.pack_limits,
+            "source_limits": self.config.ingress.source_limits,
+            "session_seconds": self.config.ingress.session_seconds,
+            "max_submissions": self.config.ingress.max_submissions,
         });
         let control = json!({
             "source_store": self.config.root.join("sources"),

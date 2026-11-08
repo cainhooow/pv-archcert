@@ -61,6 +61,7 @@ impl Fixture {
                 development_http: true,
                 token_sha256: digest_bytes("b".repeat(64).as_bytes()).as_str().into(),
                 gateway_binary: "/usr/bin/true".into(),
+                ingress: Default::default(),
                 ssh_user: "local".into(),
                 ssh_port: 22223,
                 image: Some("python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f".into()),
@@ -495,5 +496,42 @@ async fn login_budget_survives_reconstruction_and_migration_failure_denies_setup
         .fetch_one(&fixture.service.pool)
         .await?;
     assert_eq!(count, 0);
+    fixture.close().await
+}
+
+#[tokio::test]
+#[ignore = "requires real isolated PostgreSQL schemas"]
+async fn host_capacity_survives_projection_and_credential_regeneration() -> Result<()> {
+    let mut fixture = Fixture::open().await?;
+    let capacity: archcert_gateway::IngressCapacity = serde_json::from_str(include_str!(
+        "../../../../docs/source-ingress/archsite-capacity-v1.json"
+    ))?;
+    Arc::get_mut(&mut fixture.service)
+        .ok_or_else(invalid)?
+        .config
+        .ingress = capacity;
+    fixture.setup().await?;
+    let path = fixture.service.config.root.join("config/gateway.json");
+    let expected = serde_json::to_value(capacity)?;
+
+    assert_eq!(
+        serde_json::to_value(archcert_gateway::read_configuration(&path)?.capacity())?,
+        expected
+    );
+
+    fixture.service.publish().await?;
+    let password = fixture.service.config.root.join("bootstrap/new-password");
+    publication::replace(&password, b"a different test password")?;
+    fixture
+        .service
+        .recover_password("operator@example.local", &password)
+        .await?;
+
+    assert_eq!(
+        serde_json::to_value(archcert_gateway::read_configuration(&path)?.capacity())?,
+        expected
+    );
+    assert_eq!(fixture.service.instance_state().await?, "INITIALIZED");
+
     fixture.close().await
 }

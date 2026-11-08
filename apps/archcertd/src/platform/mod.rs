@@ -57,6 +57,8 @@ struct Configuration {
     development_http: bool,
     token_sha256: String,
     gateway_binary: PathBuf,
+    #[serde(default)]
+    ingress: archcert_gateway::IngressCapacity,
     ssh_user: String,
     ssh_port: u16,
     image: Option<String>,
@@ -96,6 +98,7 @@ pub(super) fn store_error(error: anyhow::Error) -> archcert_application::jobs::J
 impl Service {
     pub(super) async fn open(path: &Path) -> Result<Arc<Self>> {
         let config: Configuration = serde_json::from_slice(&read_private(path, 65536)?)?;
+        config.ingress.validate()?;
         let origin: axum::http::Uri = config.origin.parse()?;
         ensure!(
             origin.authority().is_some() && origin.path() == "/" && origin.query().is_none(),

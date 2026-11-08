@@ -1,7 +1,7 @@
 //! Explicit system Git adapter. All candidate bytes are independently validated
 //! before receive-pack; Git provides maintained advertisement/report semantics.
 
-use crate::{IngressError, unavailable};
+use crate::{IngressCode, IngressError, IngressFailure, unavailable};
 use archcert_domain::GitObjectId;
 use archcert_source::GitObjectFormat;
 use serde::{Deserialize, Serialize};
@@ -28,10 +28,16 @@ pub(crate) struct SystemGit {
     root: PathBuf,
     deadline: Instant,
     observed: ObservedGit,
+    max_pack_bytes: u64,
 }
 
 impl SystemGit {
-    pub fn new(executable: &Path, root: &Path, seconds: u64) -> Result<Self, IngressError> {
+    pub fn new(
+        executable: &Path,
+        root: &Path,
+        deadline: Instant,
+        max_pack_bytes: u64,
+    ) -> Result<Self, IngressError> {
         if !executable.is_absolute() {
             return Err(IngressError::Unavailable);
         }
@@ -39,7 +45,8 @@ impl SystemGit {
         let mut git = Self {
             executable: executable.into(),
             root: root.into(),
-            deadline: Instant::now() + Duration::from_secs(seconds),
+            deadline,
+            max_pack_bytes,
             observed: ObservedGit {
                 executable: executable.into(),
                 version: String::new(),
@@ -96,8 +103,6 @@ impl SystemGit {
                 "-c",
                 "receive.autogc=false",
                 "-c",
-                "receive.maxInputSize=67108864",
-                "-c",
                 "receive.denyDeletes=true",
                 "-c",
                 "receive.shallowUpdate=true",
@@ -107,6 +112,10 @@ impl SystemGit {
                 "receive.fsckObjects=true",
                 "-c",
                 "transfer.fsckObjects=true",
+            ])
+            .args([
+                "-c",
+                &format!("receive.maxInputSize={}", self.max_pack_bytes),
             ]);
         cmd
     }
@@ -123,13 +132,19 @@ impl SystemGit {
             .spawn()
             .map_err(unavailable)?;
         let status = loop {
+            let timed_out = Instant::now() > self.deadline;
+
             if stdout.metadata().map_err(unavailable)?.len() > 65536
                 || stderr.metadata().map_err(unavailable)?.len() > 65536
-                || Instant::now() > self.deadline
+                || timed_out
             {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(IngressError::Limit);
+                return Err(IngressError::Failure(IngressFailure::new(if timed_out {
+                    IngressCode::IngressSessionTimeout
+                } else {
+                    IngressCode::IngressInternalError
+                })));
             }
 
             if let Some(status) = child.try_wait().map_err(unavailable)? {
@@ -143,7 +158,9 @@ impl SystemGit {
             || stdout.metadata().map_err(unavailable)?.len() > 65536
             || stderr.metadata().map_err(unavailable)?.len() > 65536
         {
-            return Err(IngressError::Rejected);
+            return Err(IngressError::Failure(IngressFailure::new(
+                IngressCode::IngressInternalError,
+            )));
         }
 
         stdout.rewind().map_err(unavailable)?;
@@ -216,7 +233,12 @@ mod tests {
     #[test]
     fn command_environment_and_hooks_are_constructed() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
-        let git = SystemGit::new(Path::new("/usr/bin/git"), root.path(), 10)?;
+        let git = SystemGit::new(
+            Path::new("/usr/bin/git"),
+            root.path(),
+            Instant::now() + Duration::from_secs(10),
+            128 * 1024 * 1024,
+        )?;
         let cmd = git.command();
         let env: std::collections::BTreeMap<_, _> = cmd
             .get_envs()
@@ -247,6 +269,10 @@ mod tests {
             Some(&Some("/dev/null".into()))
         );
         assert!(cmd.get_args().any(|a| a == "core.hooksPath=/dev/null"));
+        assert!(
+            cmd.get_args()
+                .any(|a| a == "receive.maxInputSize=134217728")
+        );
         assert_eq!(
             env.get("HOME"),
             Some(&Some(root.path().to_string_lossy().into_owned()))

@@ -237,6 +237,16 @@ Onboarding uses SHA-1 Git repositories; no arbitrary web `git clone`, GitHub imp
 remote credentials, submodule fetching or LFS acquisition is offered. Refer to
 [Northgate](docs/source-ingress/README.md) for its full contract.
 
+Northgate ingress capacity is selected by the host, with explicit pack, decoded
+work, snapshot, file/blob/depth/visit and deadline bounds. Use
+`archcert-services configure-ingress --capacity PRIVATE_CAPACITY_JSON` after
+stopping services; the helper validates and regenerates the existing gateway
+projection. Rejected pushes return stable `NORTHGATE:` codes on SSH stderr and
+retain bounded diagnostic evidence. See the [capacity and troubleshooting
+guide](docs/source-ingress/README.md#authority-owned-capacity). A selected-commit
+shallow push preserves the original commit/tree while omitting ancestry.
+Source acceptance does not qualify a Next.js/TypeScript/Bun certification profile.
+
 ## Request and inspect certification
 
 Refresh **ArchCert platform** after pushing. Accepted-source entries show full

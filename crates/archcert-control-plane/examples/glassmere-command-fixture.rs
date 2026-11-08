@@ -149,6 +149,7 @@ fn retain_source(
         1_700_000_000,
     )?;
     let evidence = IngressEvidence {
+        diagnostics: Default::default(),
         submission: submission.clone(),
         actor: actor.clone(),
         device: DeviceKeyId::parse("c".repeat(64))?,

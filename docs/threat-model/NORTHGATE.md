@@ -36,3 +36,12 @@ command/forwarding denial, malicious command/ref/pack data, environment/hook
 canaries, delta/byte/count limits, source identity differential, immutable replay,
 store tampering, LFS mismatch and disallowed submodule locations. Existing M1
 path/type/hash/UTF-8/NFC/collision/symlink/mode and M2–M4B gates remain authoritative.
+
+Operational diagnostics use a closed authority-generated code vocabulary and
+numeric measurements. Candidate content, raw Git stderr, private paths and OS
+errors never enter client diagnostics. Pack-prefix progress, last reached stage
+and monotonic elapsed time share the existing bounded per-submission evidence;
+no independent log service or unbounded rejection stream is added. Historical
+opaque rejections remain unknown. Timeout and actual byte-cap exhaustion are
+preserved separately from malformed-object errors. Git stdout remains exclusively
+protocol output, and successful report-status still follows immutable publication.

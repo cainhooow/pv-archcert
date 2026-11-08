@@ -158,3 +158,24 @@ See [Ravenport](../architecture/RAVENPORT_OPERATIONS.md),
 [Glassmere provisioning](../glassmere/PROVISIONING.md),
 [release operations](../release/README.md), [runner qualification](../qualification/NATIVE_LINUX_RUNNER.md)
 and the [original engineering reference](ENGINEERING_REFERENCE.md).
+
+## Northgate ingress capacity
+
+Host capacity lives in private `config/platform.json` under `ingress`; the API
+regenerates `config/gateway.json` from that selection. Do not edit the generated
+file. Use `scripts/archcert-services down`, then
+`scripts/archcert-services configure-ingress --capacity /absolute/private/capacity.json`,
+then `scripts/archcert-services up`. The private JSON must pass the installed
+gateway's `validate-capacity --config` check. Keep the input in a canonical private
+0700 directory with a 0600 regular single-link file outside candidate control.
+Updates, backups/restores, grant publication and credential rotation preserve this
+host selection. The API validates it before projection; malformed configuration
+fails closed. The helper requires stopped services so live publication cannot
+race a host setting change.
+
+See [Northgate capacity](../source-ingress/README.md#authority-owned-capacity) for
+fields, ceilings, measurements, shallow semantics and diagnostic codes. Existing
+accepted source uses its retained limits during independent reload even when
+current admission budgets change. Source acceptance still does not grant runtime,
+policy or certification support. Archive a full development store deliberately;
+never delete evidence or candidate objects to make a push pass.

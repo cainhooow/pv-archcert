@@ -2,6 +2,10 @@
 //! authorize repositories. No execution, policy, certificate or signing dependency.
 #![cfg(unix)]
 
+mod capacity;
+
+mod diagnostics;
+
 mod git;
 
 mod inspection;
@@ -11,6 +15,10 @@ mod protocol;
 mod resolution;
 
 mod store;
+
+pub use capacity::{IngressCapacity, read_capacity};
+
+pub use diagnostics::{IngressCode, IngressDiagnostics, IngressFailure};
 
 pub use resolution::{
     LfsGrant, ResolutionConfiguration, ResolutionEvidence, ResolutionReference, SubmoduleGrant,
@@ -26,7 +34,8 @@ use archcert_domain::{
     source::{RepositoryId, SourceLimits, SourceStatus, digest_bytes},
 };
 use archcert_source::{
-    GitObjectFormat, MemorySourceStore, PackLimits, PackedGitGateway, receive_pack,
+    GitObjectFormat, MemorySourceStore, PackDecoding, PackLimits, PackReception, PackedGitGateway,
+    receive_pack_until,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -40,8 +49,9 @@ use thiserror::Error;
 /// no-follow directories/files. Never reads a target repository or ambient config.
 pub fn read_configuration(path: &std::path::Path) -> Result<GatewayConfiguration, IngressError> {
     let bytes = store::read_private_configuration(path)?;
-    let config: GatewayConfiguration = serde_json::from_slice(&bytes).map_err(unavailable)?;
-    config.validate()?;
+    let config: GatewayConfiguration =
+        serde_json::from_slice(&bytes).map_err(|_| IngressError::Configuration)?;
+    config.validate().map_err(|_| IngressError::Configuration)?;
 
     Ok(config)
 }
@@ -49,6 +59,12 @@ pub fn read_configuration(path: &std::path::Path) -> Result<GatewayConfiguration
 /// Bounded client-visible failure categories; no candidate bytes or OS diagnostics.
 #[derive(Debug, Error)]
 pub enum IngressError {
+    /// Trusted JSON or its capacity selection was invalid.
+    #[error("INGRESS_CONFIGURATION_INVALID")]
+    Configuration,
+    /// Classified safe failure with optional numeric measurements.
+    #[error("{0}")]
+    Failure(IngressFailure),
     /// Key is absent, disabled or not registered.
     #[error("AUTHENTICATION_DENIED")]
     Authentication,
@@ -58,7 +74,10 @@ pub enum IngressError {
     /// Only one literal Git receive command is supported.
     #[error("RECEIVE_COMMAND_DENIED")]
     Command,
-    /// Protocol, ref or object validation failed.
+    /// The supported packet-line receive protocol was rejected.
+    #[error("INGRESS_PROTOCOL_REJECTED")]
+    Protocol,
+    /// Input or binding validation failed without a more specific established cause.
     #[error("SOURCE_REJECTED")]
     Rejected,
     /// Capacity/deadline/admission exhausted.
@@ -67,6 +86,14 @@ pub enum IngressError {
     /// Authority storage or configured adapter is unavailable.
     #[error("INGRESS_UNAVAILABLE")]
     Unavailable,
+}
+
+pub(crate) fn input_error(error: std::io::Error) -> IngressError {
+    if error.kind() == std::io::ErrorKind::TimedOut {
+        IngressError::Failure(IngressFailure::new(IngressCode::IngressSessionTimeout))
+    } else {
+        IngressError::Protocol
+    }
 }
 
 fn unavailable<E>(_: E) -> IngressError {
@@ -124,6 +151,9 @@ pub struct GatewayConfiguration {
     pub devices: Vec<AuthorizedDevice>,
     /// Finite pack budgets.
     pub pack_limits: PackLimits,
+    /// Selected-closure limits provisioned outside target control.
+    #[serde(default)]
+    pub source_limits: SourceLimits,
     /// Live-input and total acceptance deadline, also bounding Git subprocesses.
     pub session_seconds: u64,
     /// Retained attempts, including rejection records. No eviction by candidates.
@@ -131,15 +161,23 @@ pub struct GatewayConfiguration {
 }
 
 impl GatewayConfiguration {
+    /// Captures the exact trusted limits for retention and independent restoration.
+    pub fn capacity(&self) -> IngressCapacity {
+        IngressCapacity {
+            pack_limits: self.pack_limits,
+            source_limits: self.source_limits,
+            session_seconds: self.session_seconds,
+            max_submissions: self.max_submissions,
+        }
+    }
+
     /// Validates trusted configuration and prevents ambiguous duplicate grants.
     pub fn validate(&self) -> Result<(), IngressError> {
-        self.pack_limits.validate().map_err(unavailable)?;
+        self.capacity().validate()?;
 
         if !self.git_executable.is_absolute()
             || !self.store.is_absolute()
             || self.devices.len() > 256
-            || !(1..=120).contains(&self.session_seconds)
-            || !(1..=32).contains(&self.max_submissions)
         {
             return Err(IngressError::Unavailable);
         }
@@ -304,6 +342,9 @@ fn external_evidence(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IngressEvidence {
+    /// Supplemental operational diagnostics; historical records retain unknown values.
+    #[serde(default)]
+    pub diagnostics: IngressDiagnostics,
     /// Fresh reception identity, distinct across replay.
     pub submission: SourceSubmissionId,
     /// Authenticated actor.
@@ -372,6 +413,15 @@ pub trait SubmissionStore {
         evidence: &IngressEvidence,
     ) -> Result<(), IngressError>;
 
+    /// Publishes only if the authority deadline still permits atomic acceptance.
+    /// Adapters must check again after staging writes, immediately before publication.
+    fn accept_before(
+        &mut self,
+        snapshot: &archcert_domain::source::SourceSnapshot,
+        evidence: &IngressEvidence,
+        deadline: std::time::Instant,
+    ) -> Result<(), IngressError>;
+
     /// Records rejection without creating accepted source.
     fn reject(&mut self, evidence: &IngressEvidence) -> Result<(), IngressError>;
 
@@ -392,7 +442,12 @@ pub fn receive(
 
     let mut store = DevelopmentSubmissionStore::open(&config.store, config.max_submissions)?;
     let id = SourceSubmissionId::new();
+    let started = std::time::Instant::now();
     let mut evidence = IngressEvidence {
+        diagnostics: IngressDiagnostics {
+            capacity: Some(config.capacity()),
+            ..IngressDiagnostics::default()
+        },
         submission: id.clone(),
         actor: actor.actor.clone(),
         device: device.clone(),
@@ -435,6 +490,13 @@ pub fn receive(
         &mut evidence,
     );
 
+    evidence.diagnostics.elapsed_ms =
+        Some(started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
+
+    if let Err(error) = &result {
+        evidence.diagnostics.failure = Some(error.diagnostic());
+    }
+
     if result.is_err() && store.load(&id).is_err() {
         evidence.status = "REJECTED".into();
         evidence.accepted_at = None;
@@ -460,14 +522,23 @@ fn receive_inner(
     evidence: &mut IngressEvidence,
 ) -> Result<(), IngressError> {
     let started = std::time::Instant::now();
+    let expires = started + std::time::Duration::from_secs(config.session_seconds);
     let deadline = || {
         if started.elapsed() > std::time::Duration::from_secs(config.session_seconds) {
-            Err(IngressError::Limit)
+            Err(IngressError::Failure(IngressFailure::new(
+                IngressCode::IngressSessionTimeout,
+            )))
         } else {
             Ok(())
         }
     };
-    let git = git::SystemGit::new(&config.git_executable, staging, config.session_seconds)?;
+    evidence.diagnostics.stage = Some("GIT_ADVERTISEMENT".into());
+    let git = git::SystemGit::new(
+        &config.git_executable,
+        staging,
+        expires,
+        config.pack_limits.max_pack_bytes,
+    )?;
     evidence.git_adapter = Some(git.observed().clone());
     git.init(grant.object_format)?;
     let advertisement = git.advertise()?;
@@ -475,13 +546,33 @@ fn receive_inner(
     output.write_all(&advertisement).map_err(unavailable)?;
     output.flush().map_err(unavailable)?;
 
+    evidence.diagnostics.stage = Some("RECEIVE_COMMAND".into());
     let command = protocol::read_command(&mut input, grant.object_format)?;
     evidence.received_refs.push(command.reference.clone());
     evidence.requested_commit = Some(command.commit.clone());
     evidence.events.push(IngressEvent::GitRefReceived);
 
-    let pack =
-        receive_pack(&mut input, grant.object_format, config.pack_limits).map_err(rejected)?;
+    evidence.diagnostics.stage = Some("PACK_RECEPTION".into());
+    let mut reception = PackReception::default();
+    let received = receive_pack_until(
+        &mut input,
+        grant.object_format,
+        config.pack_limits,
+        &mut reception,
+        Some(expires),
+    );
+    evidence.diagnostics.reception = Some(reception);
+    let pack = received.map_err(|error| {
+        let mut failure =
+            IngressFailure::source(error, config.source_limits, Some(config.pack_limits));
+        failure.observed = match failure.code {
+            IngressCode::IngressPackTooLarge => Some(reception.bytes),
+            IngressCode::IngressObjectCountExceeded => reception.objects.map(u64::from),
+            IngressCode::IngressObjectWorkExceeded => Some(reception.inflated_bytes),
+            _ => None,
+        };
+        IngressError::Failure(failure)
+    })?;
     evidence.pack_bytes = pack.len() as u64;
     evidence.pack_sha256 = Some(digest_bytes(&pack));
     evidence.pack_objects = u32::from_be_bytes(pack[8..12].try_into().map_err(rejected)?);
@@ -490,22 +581,41 @@ fn receive_inner(
         IngressEvent::GitObjectValidationStarted,
     ]);
 
-    let gateway = PackedGitGateway::new(
+    evidence.diagnostics.stage = Some("PACK_VALIDATION".into());
+    let mut decoding = PackDecoding::default();
+    let decoded = PackedGitGateway::new_until(
         grant.repository.clone(),
         &pack,
         grant.object_format,
         config.pack_limits,
-    )
-    .map_err(rejected)?;
+        expires,
+        &mut decoding,
+    );
+    evidence.diagnostics.decoding = Some(decoding);
+    let gateway = decoded.map_err(|error| {
+        let mut failure =
+            IngressFailure::source(error, config.source_limits, Some(config.pack_limits));
+
+        if failure.code == IngressCode::IngressObjectWorkExceeded {
+            failure.observed = Some(decoding.work_bytes);
+        }
+
+        IngressError::Failure(failure)
+    })?;
+
+    evidence.diagnostics.stage = Some("SOURCE_VALIDATION".into());
 
     // ArchCert validates before Git's second decoder can observe the buffered pack.
     gateway
         .quarantine(&grant.repository)
         .map_err(rejected)?
-        .validate(&command.commit, SourceLimits::default())
-        .map_err(rejected)?;
+        .validate(&command.commit, config.source_limits)
+        .map_err(|error| {
+            IngressError::Failure(IngressFailure::source(error, config.source_limits, None))
+        })?;
     deadline()?;
 
+    evidence.diagnostics.stage = Some("GIT_RECEIVE".into());
     let response = git.receive(&command.raw, &pack, &command.reference, &command.commit)?;
 
     let source = ingest_source(
@@ -516,10 +626,17 @@ fn receive_inner(
             repository: grant.repository.clone(),
             requested_commit: command.commit,
         },
-        SourceLimits::default(),
+        config.source_limits,
     )
-    .map_err(rejected)?;
+    .map_err(|rejection| {
+        IngressError::Failure(IngressFailure::source(
+            rejection.error,
+            config.source_limits,
+            None,
+        ))
+    })?;
 
+    evidence.diagnostics.source_bytes = Some(source.evidence.total_bytes);
     evidence.source = Some(source.snapshot.identity().clone());
     evidence.completeness = Some(source.snapshot.status());
     evidence.external_sources = external_evidence(&source.snapshot);
@@ -543,7 +660,10 @@ fn receive_inner(
     evidence.accepted_at = Some(now()?);
     evidence.events.push(IngressEvent::SourceSnapshotAccepted);
 
-    store.accept(&source.snapshot, evidence)?;
+    evidence.diagnostics.stage = Some("IMMUTABLE_PUBLICATION".into());
+    evidence.diagnostics.elapsed_ms =
+        Some(started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
+    store.accept_before(&source.snapshot, evidence, expires)?;
 
     // Git's report-status is withheld until immutable source storage succeeds.
     output.write_all(&response).map_err(unavailable)?;
@@ -571,6 +691,7 @@ mod tests {
                 }],
             }],
             pack_limits: PackLimits::default(),
+            source_limits: SourceLimits::default(),
             session_seconds: 10,
             max_submissions: 2,
         })

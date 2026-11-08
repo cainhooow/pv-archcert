@@ -684,3 +684,15 @@ operations, unavailable in this onboarding path. macOS/Colima execution is a
 DEVELOPMENT CERTIFICATION AUTHORITY and does not establish native Linux
 qualification. See [deployment operations](../operations/DEPLOYMENT.md).
 M9 remains INCOMPLETE. M10, M11, Pre-Genesis and Genesis remain NOT STARTED.
+
+## Bounded Northgate capacity
+
+[ADR 0072](../adr/0072-northgate-capacity-and-diagnostics.md) adds one strict private
+host selection for pack, selected-source and session budgets. The existing API
+projects it into Northgate configuration; Git's input cap and independent source
+validation use the same selection. Each submission retains its applied capacity
+for later independent reload. Historical omitted settings preserve the original
+limits and canonical identities. Safe classified stderr and bounded per-submission
+diagnostics distinguish timeout, capacity, invalid input and unavailable storage.
+A process-local selected-commit shallow boundary preserves exact Git identity;
+source acceptance establishes no new certification-profile or milestone support.

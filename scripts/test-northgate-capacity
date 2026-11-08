@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Real SSH capacity regressions for the existing Northgate pipeline."""
+import argparse
+import json
+from pathlib import Path
+import runpy
+import subprocess
+
+ROOT = Path(__file__).resolve().parent.parent
+fixture_module = runpy.run_path(str(ROOT / "scripts/test-northgate"))
+NorthgateFixture = fixture_module["NorthgateFixture"]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/archcert-gateway")
+    args = parser.parse_args()
+    fixture = NorthgateFixture(args.binary)
+    checks = 0
+
+    try:
+        repo = fixture.root / "capacity-candidate"
+        repo.mkdir(mode=0o700)
+        fixture.git(repo, "init", "--template=", "--initial-branch=candidate")
+        # Candidate configuration cannot select authority capacity.
+        content = b"max_total_bytes = 134217728\n"
+        (repo / "archcert.toml").write_bytes(content)
+        fixture.git(repo, "add", "archcert.toml")
+        fixture.git(repo, "commit", "-m", "capacity fixture")
+        original = json.loads(fixture.config.read_text())
+        source = {
+            "max_files": 10000,
+            "max_total_bytes": 67108864,
+            "max_blob_bytes": 8388608,
+            "max_tree_depth": 32,
+            "max_objects": 25000,
+            "max_object_bytes": 9437184,
+            "max_object_work_bytes": 268435456,
+        }
+        original["source_limits"] = source
+
+        def configure(source_changes=None, pack_changes=None, **changes):
+            config = json.loads(json.dumps(original))
+            config["source_limits"].update(source_changes or {})
+            config["pack_limits"].update(pack_changes or {})
+            config.update(changes)
+            fixture.config.write_text(json.dumps(config))
+
+        def push(expected=None):
+            nonlocal checks
+            before = {s["submission"] for s in fixture.submissions()}
+            result = fixture.git(repo, "push", fixture.endpoint, "HEAD:refs/heads/candidate", ok=False)
+            after = [s for s in fixture.submissions() if s["submission"] not in before]
+            assert len(after) == 1, after
+            evidence = after[0]
+
+            if expected is None:
+                assert result.returncode == 0 and b"SOURCE ACCEPTED" in result.stderr, result.stderr
+                assert evidence["status"] == "ACCEPTED"
+                assert evidence["diagnostics"]["failure"] is None
+                # Actual accepted bytes must reload under the retained capacity.
+                shown = fixture_module["run"](
+                    [fixture.binary, "show", "--store", fixture.store, evidence["submission"]]
+                )
+                assert json.loads(shown.stdout)["source"] == evidence["source"]
+            else:
+                assert result.returncode != 0 and expected.encode() in result.stderr, result.stderr
+                assert evidence["status"] == "REJECTED"
+                assert evidence["diagnostics"]["failure"]["code"] == expected
+                assert not (fixture.store / evidence["submission"] / "snapshot.bin").exists()
+                assert b"bad line length" not in result.stderr
+
+            checks += 1
+            return evidence
+
+        configure({"max_total_bytes": len(content) + 1})
+        below = push()
+        configure({"max_total_bytes": len(content)})
+        exact = push()
+        assert below["source"] == exact["source"]
+        assert below["submission"] != exact["submission"]
+
+        # A process-local shallow boundary preserves exact commit and tree bytes.
+        shallow = fixture.authority / "selected.shallow"
+        shallow.write_bytes(fixture.git(repo, "rev-parse", "HEAD").stdout)
+        fixture.environment["GIT_SHALLOW_FILE"] = str(shallow)
+        configure()
+        shallow_source = push()
+        assert shallow_source["source"] == below["source"]
+        del fixture.environment["GIT_SHALLOW_FILE"]
+
+        configure({"max_total_bytes": len(content) - 1})
+        push("SOURCE_SNAPSHOT_TOO_LARGE")
+        configure({"max_blob_bytes": len(content) - 1})
+        push("SOURCE_BLOB_TOO_LARGE")
+        configure(pack_changes={"max_pack_bytes": below["pack_bytes"] - 1})
+        push("INGRESS_PACK_TOO_LARGE")
+        configure(pack_changes={"max_objects": below["pack_objects"] - 1})
+        push("INGRESS_OBJECT_COUNT_EXCEEDED")
+        configure({"max_object_work_bytes": 1}, {"max_decoded_bytes": 1})
+        push("INGRESS_OBJECT_WORK_EXCEEDED")
+        configure({"max_objects": 2})
+        push("SOURCE_OBJECT_VISITS_EXCEEDED")
+        configure({"max_blob_bytes": 1, "max_object_bytes": 1}, {"max_object_bytes": 1})
+        push("INGRESS_OBJECT_TOO_LARGE")
+
+        (repo / "nested/deep").mkdir(parents=True)
+        (repo / "nested/deep/file").write_bytes(b"source")
+        fixture.git(repo, "add", "nested")
+        fixture.git(repo, "commit", "-m", "nested source")
+        configure({"max_tree_depth": 1})
+        push("SOURCE_TREE_DEPTH_EXCEEDED")
+        configure({"max_files": 1})
+        push("SOURCE_FILE_COUNT_EXCEEDED")
+        configure()
+        push()
+
+        # Empty input held open reaches the configured deadline, rather than EOF.
+        configure(session_seconds=1)
+        stalled = subprocess.Popen(
+            [*fixture.ssh, f"{fixture.user}@127.0.0.1", "git-receive-pack 'company/fixture.git'"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            stalled.wait(timeout=15)
+            _, error = stalled.communicate(timeout=5)
+            assert b"INGRESS_SESSION_TIMEOUT" in error, error
+            assert any(
+                s["diagnostics"]["failure"]["code"] == "INGRESS_SESSION_TIMEOUT"
+                for s in fixture.submissions()
+                if s["diagnostics"].get("failure")
+            )
+            checks += 1
+        finally:
+            if stalled.poll() is None:
+                stalled.kill()
+                stalled.communicate(timeout=5)
+
+        # No storage slot can be manufactured by target bytes or an extra push.
+        configure(max_submissions=1)
+        result = fixture.git(repo, "push", fixture.endpoint, "HEAD:refs/heads/candidate", ok=False)
+        assert result.returncode != 0 and b"INGRESS_CAPACITY_EXHAUSTED" in result.stderr
+        checks += 1
+
+        # Malformed authority config and unavailable storage fail before reception.
+        config = json.loads(fixture.config.read_text())
+        config["source_limits"]["max_total_bytes"] = 0
+        fixture.config.write_text(json.dumps(config))
+        result = fixture.git(repo, "push", fixture.endpoint, "HEAD:refs/heads/candidate", ok=False)
+        assert result.returncode != 0 and b"INGRESS_CONFIGURATION_INVALID" in result.stderr
+        checks += 1
+
+        configure(store=str(fixture.root / "absent-store"))
+        result = fixture.git(repo, "push", fixture.endpoint, "HEAD:refs/heads/candidate", ok=False)
+        assert result.returncode != 0 and b"INGRESS_STORAGE_UNAVAILABLE" in result.stderr
+        checks += 1
+
+        print(f"Northgate real SSH capacity and diagnostic checks: {checks} passed")
+    finally:
+        fixture.close()
+
+
+if __name__ == "__main__":
+    main()

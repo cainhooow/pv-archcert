@@ -32,3 +32,21 @@ fn real_ssh_git_push_and_authentication_restrictions() -> Result<(), Box<dyn std
 
     Ok(())
 }
+
+#[test]
+fn real_ssh_capacity_and_actionable_rejections() -> Result<(), Box<dyn std::error::Error>> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let result = std::process::Command::new("python3")
+        .arg(root.join("scripts/test-northgate-capacity"))
+        .args(["--binary", env!("CARGO_BIN_EXE_archcert-gateway")])
+        .current_dir(root)
+        .output()?;
+
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    Ok(())
+}

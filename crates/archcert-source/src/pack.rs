@@ -16,7 +16,28 @@ use std::{
     sync::Arc,
 };
 
-fn malformed<E>(_: E) -> SourceError {
+fn malformed(error: std::io::Error) -> SourceError {
+    if error.kind() == std::io::ErrorKind::TimedOut {
+        SourceError::SessionTimeout
+    } else if error.get_ref().is_some_and(|e| e.is::<PackByteLimit>()) {
+        limit(ResourceLimit::PackBytes)
+    } else {
+        SourceError::MalformedGitObject
+    }
+}
+
+#[derive(Debug)]
+struct PackByteLimit;
+
+impl std::fmt::Display for PackByteLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("pack byte budget exhausted")
+    }
+}
+
+impl std::error::Error for PackByteLimit {}
+
+fn invalid<E>(_: E) -> SourceError {
     SourceError::MalformedGitObject
 }
 
@@ -105,6 +126,7 @@ impl PackLimits {
             || self.max_object_bytes > 32 * 1024 * 1024
             || self.max_decoded_bytes == 0
             || self.max_decoded_bytes > 1024 * 1024 * 1024
+            || self.max_delta_depth == 0
             || self.max_delta_depth > 64
             || self.max_expansion_ratio == 0
             || self.max_expansion_ratio > 4096
@@ -116,13 +138,26 @@ impl PackLimits {
     }
 }
 
-struct Capture<R> {
+/// Measurements collected even when pack reception fails. A prefix has no complete digest.
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackReception {
+    /// Bytes inspected by framing, including one verified excess byte at the cap.
+    pub bytes: u64,
+    /// Entry count from the parsed pack header, when available.
+    pub objects: Option<u32>,
+    /// Sum of declared inflated entry sizes inspected so far.
+    pub inflated_bytes: u64,
+}
+
+struct Capture<'a, R> {
+    observation: &'a mut PackReception,
     inner: R,
     bytes: Vec<u8>,
     cap: u64,
 }
 
-impl<R: BufRead> Read for Capture<R> {
+impl<R: BufRead> Read for Capture<'_, R> {
     fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
         if out.is_empty() {
             return Ok(0);
@@ -140,12 +175,18 @@ impl<R: BufRead> Read for Capture<R> {
     }
 }
 
-impl<R: BufRead> BufRead for Capture<R> {
+impl<R: BufRead> BufRead for Capture<'_, R> {
     fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
         let remaining = self.cap.saturating_sub(self.bytes.len() as u64) as usize;
 
         if remaining == 0 {
-            return Err(std::io::Error::other("pack byte limit"));
+            if self.inner.fill_buf()?.is_empty() {
+                return Ok(&[]);
+            }
+
+            // Inspect one actual excess byte without retaining an unbounded suffix.
+            self.observation.bytes = self.cap + 1;
+            return Err(std::io::Error::other(PackByteLimit));
         }
 
         let input = self.inner.fill_buf()?;
@@ -160,6 +201,7 @@ impl<R: BufRead> BufRead for Capture<R> {
         }
 
         self.inner.consume(n);
+        self.observation.bytes = self.bytes.len() as u64;
     }
 }
 
@@ -172,15 +214,40 @@ pub fn receive_pack(
     format: GitObjectFormat,
     limits: PackLimits,
 ) -> Result<Vec<u8>, SourceError> {
+    receive_pack_observed(reader, format, limits, &mut PackReception::default())
+}
+
+/// Receives a pack while retaining bounded progress measurements on failure.
+pub fn receive_pack_observed(
+    reader: impl BufRead,
+    format: GitObjectFormat,
+    limits: PackLimits,
+    observation: &mut PackReception,
+) -> Result<Vec<u8>, SourceError> {
+    receive_pack_until(reader, format, limits, observation, None)
+}
+
+/// Applies the session deadline during framing and fixed-buffer inflation too.
+pub fn receive_pack_until(
+    reader: impl BufRead,
+    format: GitObjectFormat,
+    limits: PackLimits,
+    observation: &mut PackReception,
+    deadline: Option<std::time::Instant>,
+) -> Result<Vec<u8>, SourceError> {
+    *observation = PackReception::default();
     let limits = limits.validate()?;
     let mut input = Capture {
+        observation,
         inner: reader,
         bytes: Vec::new(),
         cap: limits.max_pack_bytes,
     };
     let mut header = [0; data::header::SIZE];
     input.read_exact(&mut header).map_err(malformed)?;
-    let (_, count) = data::header::decode(&header).map_err(malformed)?;
+    let (_, count) = data::header::decode(&header).map_err(invalid)?;
+
+    input.observation.objects = Some(count);
 
     if count > limits.max_objects {
         return Err(limit(ResourceLimit::Objects));
@@ -189,6 +256,7 @@ pub fn receive_pack(
     let mut total = 0u64;
 
     for _ in 0..count {
+        check_deadline(deadline)?;
         let offset = input.bytes.len() as u64;
         let entry =
             data::Entry::from_read(&mut input, offset, format.width() / 2).map_err(malformed)?;
@@ -201,6 +269,8 @@ pub fn receive_pack(
             .checked_add(entry.decompressed_size)
             .ok_or(limit(ResourceLimit::ObjectWorkBytes))?;
 
+        input.observation.inflated_bytes = total;
+
         if total > limits.max_decoded_bytes {
             return Err(limit(ResourceLimit::ObjectWorkBytes));
         }
@@ -209,6 +279,7 @@ pub fn receive_pack(
         let mut output = [0; 8192];
 
         loop {
+            check_deadline(deadline)?;
             let before_in = decoder.total_in();
             let before_out = decoder.total_out();
             let status = decoder
@@ -217,7 +288,7 @@ pub fn receive_pack(
                     &mut output,
                     FlushDecompress::None,
                 )
-                .map_err(malformed)?;
+                .map_err(invalid)?;
             input.consume((decoder.total_in() - before_in) as usize);
 
             if decoder.total_out() > entry.decompressed_size {
@@ -249,6 +320,24 @@ pub fn receive_pack(
     Ok(input.bytes)
 }
 
+fn check_deadline(deadline: Option<std::time::Instant>) -> Result<(), SourceError> {
+    if deadline.is_some_and(|end| std::time::Instant::now() >= end) {
+        return Err(SourceError::SessionTimeout);
+    }
+
+    Ok(())
+}
+
+/// Decoder work measured according to the existing conservative accounting algorithm.
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackDecoding {
+    /// Inflated entry bytes plus resolution ancestry work charged before decoding.
+    pub work_bytes: u64,
+    /// Successfully verified pack entries, including duplicate identities.
+    pub resolved_objects: u32,
+}
+
 /// Immutable, independently decoded pack, suitable for the existing source port.
 /// No Git executable is involved in object validation or source hashing.
 pub struct PackedGitGateway {
@@ -269,21 +358,47 @@ impl PackedGitGateway {
         format: GitObjectFormat,
         limits: PackLimits,
     ) -> Result<Self, SourceError> {
+        Self::new_until(
+            repository,
+            bytes,
+            format,
+            limits,
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
+            &mut PackDecoding::default(),
+        )
+    }
+
+    /// Decodes under the same absolute authority deadline as input and system Git.
+    pub fn new_until(
+        repository: RepositoryId,
+        bytes: &[u8],
+        format: GitObjectFormat,
+        limits: PackLimits,
+        deadline: std::time::Instant,
+        observation: &mut PackDecoding,
+    ) -> Result<Self, SourceError> {
+        *observation = PackDecoding::default();
         let limits = limits.validate()?;
-        let started = std::time::Instant::now();
+        check_deadline(Some(deadline))?;
 
         if bytes.len() as u64 > limits.max_pack_bytes {
-            return Err(limit(ResourceLimit::ObjectWorkBytes));
+            return Err(limit(ResourceLimit::PackBytes));
         }
 
-        let framed = receive_pack(std::io::Cursor::new(bytes), format, limits)?;
+        let framed = receive_pack_until(
+            std::io::Cursor::new(bytes),
+            format,
+            limits,
+            &mut PackReception::default(),
+            Some(deadline),
+        )?;
 
         if framed.len() != bytes.len() {
             return Err(SourceError::MalformedGitObject);
         }
 
         let file = data::File::from_data(framed, "quarantined.pack".into(), format.kind())
-            .map_err(malformed)?
+            .map_err(invalid)?
             .with_alloc_limit_bytes(Some(
                 (limits.max_object_bytes * 2 + limits.max_decoded_bytes.min(32 * 1024 * 1024))
                     as usize,
@@ -294,18 +409,16 @@ impl PackedGitGateway {
         let mut work = 0u64;
 
         for _ in 0..file.num_objects() {
-            if started.elapsed() > std::time::Duration::from_secs(30) {
-                return Err(limit(ResourceLimit::ObjectWorkBytes));
-            }
+            check_deadline(Some(deadline))?;
 
-            let entry = file.entry(offset).map_err(malformed)?;
+            let entry = file.entry(offset).map_err(invalid)?;
             work = work
                 .checked_add(entry.decompressed_size)
                 .ok_or(limit(ResourceLimit::ObjectWorkBytes))?;
             let mut out = vec![0; entry.decompressed_size as usize];
             let consumed = file
                 .decompress_entry(&entry, &mut inflate, &mut out)
-                .map_err(malformed)?;
+                .map_err(invalid)?;
             offset = entry
                 .data_offset
                 .checked_add(consumed as u64)
@@ -332,9 +445,7 @@ impl PackedGitGateway {
             let mut progress = false;
 
             for (&at, (stored_entry, compressed)) in &entries {
-                if started.elapsed() > std::time::Duration::from_secs(30) {
-                    return Err(limit(ResourceLimit::ObjectWorkBytes));
-                }
+                check_deadline(Some(deadline))?;
 
                 let entry = stored_entry.clone();
                 let compressed = *compressed;
@@ -386,7 +497,7 @@ impl PackedGitGateway {
                 };
                 let header = file
                     .decode_header(entry.clone(), &mut inflate, &resolve_header)
-                    .map_err(malformed)?;
+                    .map_err(invalid)?;
 
                 if header.object_size > limits.max_object_bytes {
                     return Err(limit(ResourceLimit::ObjectBytes));
@@ -408,6 +519,8 @@ impl PackedGitGateway {
                     .checked_add(chain_work)
                     .ok_or(limit(ResourceLimit::ObjectWorkBytes))?;
 
+                observation.work_bytes = work;
+
                 if work > limits.max_decoded_bytes {
                     return Err(limit(ResourceLimit::ObjectWorkBytes));
                 }
@@ -428,7 +541,7 @@ impl PackedGitGateway {
                         &resolve,
                         &mut gix_pack::cache::Never,
                     )
-                    .map_err(malformed)?;
+                    .map_err(invalid)?;
 
                 if out.len() as u64 != header.object_size || outcome.num_deltas != depth {
                     return Err(SourceError::MalformedGitObject);
@@ -450,6 +563,7 @@ impl PackedGitGateway {
                 identities.entry(oid).or_insert(entry);
                 resolved.insert(at, (depth, chain_work));
                 pending.remove(&at);
+                observation.resolved_objects += 1;
                 progress = true;
             }
 
@@ -519,5 +633,111 @@ impl SourceQuarantine for PackQuarantine {
         limits: SourceLimits,
     ) -> Result<ValidatedSource, SourceError> {
         validate_objects(self.0.as_ref(), commit, limits)
+    }
+}
+
+#[cfg(test)]
+mod reception_tests {
+    use super::*;
+    use flate2::{Compression, write::ZlibEncoder};
+    use std::io::Write;
+
+    fn pack() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let mut bytes = data::header::encode(data::Version::V2, 1).to_vec();
+        Header::Blob.write_to(3, &mut bytes)?;
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(b"abc")?;
+        bytes.extend(encoder.finish()?);
+        bytes.extend(sha1::Sha1::digest(bytes.clone()));
+
+        Ok(bytes)
+    }
+
+    #[test]
+    fn exact_pack_capacity_and_rejected_prefix_are_distinguished()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let bytes = pack()?;
+        let mut observation = PackReception::default();
+        let limits = PackLimits {
+            max_pack_bytes: bytes.len() as u64,
+            ..PackLimits::default()
+        };
+
+        assert_eq!(
+            receive_pack_observed(
+                std::io::Cursor::new(&bytes),
+                GitObjectFormat::Sha1,
+                limits,
+                &mut observation
+            )?,
+            bytes
+        );
+        assert_eq!(observation.bytes, bytes.len() as u64);
+        assert_eq!(observation.objects, Some(1));
+
+        let limits = PackLimits {
+            max_pack_bytes: bytes.len() as u64 - 1,
+            ..limits
+        };
+        let result = receive_pack_observed(
+            std::io::Cursor::new(&bytes),
+            GitObjectFormat::Sha1,
+            limits,
+            &mut observation,
+        );
+
+        assert_eq!(result, Err(limit(ResourceLimit::PackBytes)));
+        assert_eq!(observation.bytes, bytes.len() as u64);
+
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_declared_entry_and_count_reject_before_allocation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut bytes = data::header::encode(data::Version::V2, 1).to_vec();
+        Header::Blob.write_to(u64::MAX, &mut bytes)?;
+        let mut observation = PackReception::default();
+
+        assert_eq!(
+            receive_pack_observed(
+                std::io::Cursor::new(&bytes),
+                GitObjectFormat::Sha1,
+                PackLimits::default(),
+                &mut observation
+            ),
+            Err(limit(ResourceLimit::ObjectBytes))
+        );
+
+        let header = data::header::encode(data::Version::V2, 25_001);
+
+        assert_eq!(
+            receive_pack_observed(
+                std::io::Cursor::new(header),
+                GitObjectFormat::Sha1,
+                PackLimits::default(),
+                &mut observation
+            ),
+            Err(limit(ResourceLimit::Objects))
+        );
+        assert_eq!(observation.objects, Some(25_001));
+        assert_eq!(observation.bytes, 12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn timeout_is_preserved_instead_of_malformed_object() {
+        assert_eq!(
+            malformed(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "untrusted detail"
+            )),
+            SourceError::SessionTimeout
+        );
+        assert_eq!(
+            malformed(std::io::Error::other("untrusted detail")),
+            SourceError::MalformedGitObject
+        );
     }
 }

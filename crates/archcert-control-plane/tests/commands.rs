@@ -263,6 +263,7 @@ async fn fixture(reviewed: bool) -> Result<Fixture> {
         1_700_000_000,
     )?;
     let evidence = IngressEvidence {
+        diagnostics: Default::default(),
         submission: submission.clone(),
         actor: grant.actor.clone(),
         device: DeviceKeyId::parse("c".repeat(64))?,

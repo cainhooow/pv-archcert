@@ -13,7 +13,10 @@ mod pack;
 pub use loose::LocalGitGateway;
 
 #[cfg(unix)]
-pub use pack::{GitObjectFormat, PackLimits, PackedGitGateway, receive_pack};
+pub use pack::{
+    GitObjectFormat, PackDecoding, PackLimits, PackReception, PackedGitGateway, receive_pack,
+    receive_pack_observed, receive_pack_until,
+};
 
 mod artifact;
 

@@ -19,6 +19,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Validates a private host capacity selection without changing any state.
+    ValidateCapacity {
+        /// Authority-owned capacity JSON outside target control.
+        #[arg(long)]
+        config: PathBuf,
+    },
     /// Exports source-only v1 Protobuf observations to stdout (not canonical bytes).
     ExportProto {
         /// Private development source store root.
@@ -85,6 +91,10 @@ impl Read for DeadlineInput {
 
 fn run() -> Result<()> {
     match Cli::parse().command {
+        Command::ValidateCapacity { config } => {
+            let capacity = archcert_gateway::read_capacity(&config)?;
+            println!("{}", serde_json::to_string_pretty(&capacity)?);
+        }
         Command::ExportProto { store, submission } => {
             let store = DevelopmentSubmissionStore::open(&store, 32)?;
             let source = store.load(&SourceSubmissionId::parse(&submission)?)?;
@@ -137,8 +147,17 @@ fn run() -> Result<()> {
 }
 
 fn main() {
-    if run().is_err() {
-        eprintln!("NORTHGATE: source receive or inspection failed");
+    if let Err(error) = run() {
+        let diagnostic = error
+            .downcast_ref::<archcert_gateway::IngressError>()
+            .map(archcert_gateway::IngressError::diagnostic);
+
+        match diagnostic {
+            Some(failure) => eprintln!("NORTHGATE: {failure}"),
+            None => eprintln!(
+                "NORTHGATE: INGRESS_INTERNAL_ERROR; inspect authority configuration and retained evidence"
+            ),
+        }
         std::process::exit(1);
     }
 }

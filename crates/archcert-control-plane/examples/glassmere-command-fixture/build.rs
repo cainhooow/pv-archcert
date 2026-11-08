@@ -182,6 +182,7 @@ pub(super) async fn import(root: &Path) -> Result {
     }
     let submission = SourceSubmissionId::new();
     let evidence = IngressEvidence {
+        diagnostics: Default::default(),
         submission: submission.clone(),
         actor: historical.actor.clone(),
         device: DeviceKeyId::parse(
