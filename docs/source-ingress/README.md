@@ -284,3 +284,24 @@ reproduces the 30-second receive deadline before its first pack byte; replaying 
 already-built 95,281,675-byte / 21,271-object historical pack reaches the 64 MiB cap
 first. The selected snapshot independently exceeds 64 MiB. Preserve this distinction
 when diagnosing the incident; do not report snapshot size as its proven first cause.
+
+### Certification prerequisites remain separate
+
+The development execution catalog has a generic `node` family allowing `node`,
+`npm`, `pnpm` and `corepack`. That catalog entry is not an authorized ArchSite
+certification recipe and does not allow `bun`. Product onboarding currently projects
+one host-selected `python` grant. ArchSite's original incident commit declares
+`bun@1.4.3`, Next.js `16.4.1` and TypeScript `^6.0.3`; none of its scripts were
+executed during ingress. Do not submit it under the Python plan or infer passing
+checks from complete source acceptance.
+
+A later certification change needs an explicitly authorized Bun/Next.js/TypeScript
+command recipe and policy, digest-pinned toolchain image, approved dependency
+preparation with denied runtime network, and real runner qualification. It must
+also address certification source transfer explicitly: the current worker restores
+source with historical 64 MiB defaults and the generic immutable artifact adapter
+has a 64 MiB per-artifact bound. This ingress change expands neither contract.
+Northgate's accepted-source reader independently reloads the larger retained
+snapshot, while the later job/artifact/worker pipeline remains outside this
+qualification. Record `SOURCE ACCEPTED` and `CERTIFICATION PROFILE UNSUPPORTED`
+for this pilot; no certification job, eligibility or certificate is implied.
