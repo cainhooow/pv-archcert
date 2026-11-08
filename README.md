@@ -356,7 +356,7 @@ update migrates their configuration in place without reopening account creation.
 | --- | --- |
 | PostgreSQL unavailable | Check selected Docker context/container and private logs; restore connectivity. Setup must remain closed. |
 | Failed migration or corrupt configuration | Preserve files and pending markers. Investigate version/checksum and logs; use explicit update/recovery, never delete the database. |
-| Onboarding denied/expired | Use the correct loopback Origin and local secret; renew only before initialization. INITIALIZED requires normal login. |
+| Onboarding denied/expired | The recovery page explains invalid/expired setup secrets. Run `renew-setup`, retrieve the current secret with `setup-secret` in a local terminal, and reopen `/setup`. Renewal is allowed only before initialization; INITIALIZED requires normal login. |
 | Forgotten password | Use audited `recover-password` locally. It cannot reopen bootstrap. |
 | Port conflict | Choose distinct free ports on a new empty installation; preserve existing services. |
 | Git authentication failure | Use the registered key, exact remote, generated SSH options and pinned host key; inspect ingress logs. |

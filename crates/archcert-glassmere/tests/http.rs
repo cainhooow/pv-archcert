@@ -6,6 +6,9 @@ mod readiness;
 #[path = "http/build.rs"]
 mod build;
 
+#[path = "http/platform.rs"]
+mod platform;
+
 use archcert_application::glassmere::commands::*;
 use archcert_application::{glassmere::*, jobs::JobStoreError};
 use archcert_domain::{ProjectId, source::digest_bytes};

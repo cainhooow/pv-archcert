@@ -102,8 +102,35 @@ async fn setup(State(panel): State<Arc<Panel>>, Form(form): Form<Setup>) -> Resp
         .await
     {
         Ok(_) => Redirect::to("/login").into_response(),
-        Err(error) => query_error(error),
+        Err(error) => setup_error(&panel, error),
     }
+}
+
+fn setup_error(panel: &Panel, error: JobStoreError) -> Response {
+    let (status, message) = match error {
+        JobStoreError::Unauthorized => (
+            StatusCode::UNAUTHORIZED,
+            "The setup secret is invalid or expired, or initial registration has already closed. If setup is still pending, run scripts/archcert-services renew-setup, then scripts/archcert-services setup-secret in your local terminal. Return to setup and enter the new secret. If an administrator already exists, sign in instead.",
+        ),
+        JobStoreError::Conflict => (
+            StatusCode::CONFLICT,
+            "Another registration request may have completed setup. Try signing in with the account you registered. Initial registration cannot create a second administrator.",
+        ),
+        error => return query_error(error),
+    };
+
+    // Never echo submitted secrets or redisplay an account-creation form after
+    // a rejected request. The setup route independently checks durable state.
+    let mut response = html(
+        panel,
+        "Registration not completed",
+        &format!(
+            "<section class=login><p role=alert>{message}</p><p>Passwords and setup secrets are not retained in this page. Re-enter them only on the setup form.</p><p><a href=/setup>Return to setup</a> · <a href=/login>Sign in</a></p></section>"
+        ),
+        None,
+    );
+    *response.status_mut() = status;
+    response
 }
 
 fn authenticated(
